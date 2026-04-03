@@ -1,0 +1,12 @@
+use aztec::{
+    macros::notes::note,
+    protocol::traits::{Deserialize, Packable, Serialize},
+};
+
+#[derive(Eq, Serialize, Deserialize, Packable)]
+#[note]
+pub struct StatusNote {
+    pub revocation_secret: Field,
+    pub claims_hash: Field,
+    pub credential_type: u8,
+}

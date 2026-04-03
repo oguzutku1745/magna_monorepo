@@ -1,0 +1,10 @@
+{
+  "name": "@magna/lib",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "echo \"Noir library build handled via nargo\"",
+    "test": "echo \"Noir tests to be added in CI\"",
+    "lint": "echo \"No lint configured\""
+  }
+}

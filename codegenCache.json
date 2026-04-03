@@ -1,0 +1,30 @@
+{
+  "magna_verify_meter_hook-MagnaVerifyMeterHook.json": {
+    "contractName": "MagnaVerifyMeterHook",
+    "hash": "bb3411a31fc085b27bc50c237c950e13a9f82873c049a9823dd393ef3423eece"
+  },
+  "magna_verify_meter_hook_instant-MagnaVerifyMeterHookInstant.json": {
+    "contractName": "MagnaVerifyMeterHookInstant",
+    "hash": "b4ce9d158745a6409a3373880bb86606cb72a23388c91d022a63fd7d84b6b612"
+  },
+  "magna_issuer-MagnaIssuer.json": {
+    "contractName": "MagnaIssuer",
+    "hash": "9f9c196df91ac450000434599d516f8e5edb589a4ce2c6ae19f4d8e7c471c8fe"
+  },
+  "magna_consumer-MagnaConsumer.json": {
+    "contractName": "MagnaConsumer",
+    "hash": "a2c68aabbf925371ab23e8799c00218aa3759920ddbcab7a641aa48ce03a8e20"
+  },
+  "magna_company_sponsor-MagnaCompanySponsor.json": {
+    "contractName": "MagnaCompanySponsor",
+    "hash": "3bf36ccee64a59d94cdaf75d6f8aa8df1b2f8f58444bdb835290f840939c1d1f"
+  },
+  "magna_company_rights_registry-MagnaCompanyRightsRegistry.json": {
+    "contractName": "MagnaCompanyRightsRegistry",
+    "hash": "582f718c598c8c64a9ef89ee6ca7888e064c87537da271cd32e4c34dd1f94181"
+  },
+  "magna_rights_purchase_l2-MagnaRightsPurchaseL2.json": {
+    "contractName": "MagnaRightsPurchaseL2",
+    "hash": "12ab86ded35bb483bd48e95a08d8875b2581cc6f2cebc4eb7b40554feaccd6b6"
+  }
+}

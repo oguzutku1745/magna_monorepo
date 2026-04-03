@@ -1,0 +1,14 @@
+{
+  "name": "@magna/reference-dapp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@magna/client": "0.1.0"
+  },
+  "scripts": {
+    "build": "echo \"Static reference app\"",
+    "test": "echo \"No tests configured\"",
+    "lint": "echo \"No lint configured\""
+  }
+}

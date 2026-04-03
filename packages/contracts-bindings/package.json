@@ -1,0 +1,13 @@
+{
+  "name": "@magna/contracts-bindings",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "build": "echo \"Generated bindings package (no build step)\"",
+    "test": "echo \"No tests configured\"",
+    "lint": "echo \"No lint configured\""
+  }
+}

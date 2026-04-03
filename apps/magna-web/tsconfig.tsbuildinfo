@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/lib/aztec.ts","./src/lib/browser-polyfills.ts","./src/lib/env.spec.ts","./src/lib/env.ts","./src/lib/magna.spec.ts","./src/lib/magna.ts","./src/lib/passkey.spec.ts","./src/lib/passkey.ts","./src/lib/wallet.ts"],"version":"5.9.3"}

@@ -1,0 +1,10 @@
+pub mod setup;
+mod issuance_tests;
+mod verify_tests;
+mod recovery_tests;
+mod entrypoint_tests;
+mod root_linked_tests;
+mod sponsorship_tests;
+mod instagram_tests;
+pub mod generated_golden_vectors;
+mod golden_vectors_tests;

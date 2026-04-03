@@ -1,0 +1,22 @@
+{
+  "version": "1",
+  "domainSeparators": {
+    "claims": "0x4D414743",
+    "revocation": "0x4D415247",
+    "ghost": "0x4D414748"
+  },
+  "inputs": {
+    "schemaVersion": 1,
+    "credentialType": 1,
+    "nationalityAlpha3": "CAN",
+    "minAgeProven": 21,
+    "expiryTs": "1893456000",
+    "revocationSecret": "700",
+    "uniqueIdentifierField": "0x0123456789abcdef"
+  },
+  "outputs": {
+    "claimsHash": "10880147918856782488068909366336209471148257952328592858445600480948578306801",
+    "revocationNullifier": "7370071108435081914129093848765719243676864858628479488232109689038950796840",
+    "ghostSeed": "2135043267113077479662583570444290566838512477708566341925878150838630415736"
+  }
+}
