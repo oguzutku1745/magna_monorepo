@@ -31,7 +31,10 @@ import type {
 
 type AztecContract = {
   address?: unknown;
-  methods: Record<string, (...args: unknown[]) => { send: (opts: { from: string; fee?: unknown }) => Promise<unknown> }>;
+  methods: Record<
+    string,
+    (...args: unknown[]) => { send: (opts: { from: string; fee?: unknown; additionalScopes?: unknown[] }) => Promise<unknown> }
+  >;
 };
 type BoundContract = ContractLike;
 type SendableContract = AztecContract | BoundContract;
@@ -40,6 +43,7 @@ export type MagnaClientConfig = {
   orchestratorAddress: string;
   issuerContract: SendableContract;
   companySponsorContract?: SendableContract;
+  companySponsorContracts?: SendableContract[];
   hasher?: Hasher;
 };
 
@@ -51,13 +55,57 @@ export class MagnaClient {
   private readonly orchestratorAddress: string;
   private readonly issuerContract: AztecContract;
   private readonly companySponsorContract?: AztecContract;
+  private readonly companySponsorContracts: AztecContract[];
+  private readonly companySponsorContractsByAddress: Map<string, AztecContract>;
   private readonly hasher: Hasher;
 
   constructor(config: MagnaClientConfig) {
     this.orchestratorAddress = config.orchestratorAddress;
     this.issuerContract = config.issuerContract;
     this.companySponsorContract = config.companySponsorContract;
+    this.companySponsorContracts = config.companySponsorContracts ?? [];
+    this.companySponsorContractsByAddress = new Map();
+    if (this.companySponsorContract?.address) {
+      this.companySponsorContractsByAddress.set(String(this.companySponsorContract.address), this.companySponsorContract);
+    }
+    for (const sponsor of this.companySponsorContracts) {
+      if (sponsor?.address) {
+        this.companySponsorContractsByAddress.set(String(sponsor.address), sponsor);
+      }
+    }
     this.hasher = config.hasher ?? poseidon2FieldHasher;
+  }
+
+  private resolveCompanySponsorContract(
+    sponsorContractOverride?: SendableContract,
+  ): AztecContract {
+    const sponsorContract =
+      sponsorContractOverride ??
+      this.companySponsorContract ??
+      this.companySponsorContracts[0];
+    if (!sponsorContract) {
+      const knownSponsors = Array.from(this.companySponsorContractsByAddress.keys());
+      throw new Error(
+        `companySponsorContract is required for sponsored Magna login` +
+          (knownSponsors.length > 0 ? ` (known configured sponsors: ${knownSponsors.join(", ")})` : ""),
+      );
+    }
+    if (!sponsorContract.address) {
+      throw new Error(
+        "companySponsorContract.address is required for sponsored Magna login",
+      );
+    }
+    return sponsorContract;
+  }
+
+  private buildCompanySponsorSendOptions(from: string, sponsorContract: AztecContract) {
+    const sponsorAddress = sponsorContract.address as never;
+    return {
+      from,
+      fee: buildCompanySponsorFeeConfig(sponsorAddress),
+      // External fee payers still need sponsor-scoped note visibility during proving.
+      additionalScopes: [sponsorAddress],
+    };
   }
 
   deriveGhost(input: GhostDerivationInput) {
@@ -215,17 +263,10 @@ export class MagnaClient {
       .send({ from });
   }
 
-  async loginWithCompanySponsor(input: VerifyPassportInput, from: string) {
-    if (!this.companySponsorContract) {
-      throw new Error("companySponsorContract is required for sponsored Magna login");
-    }
-    if (!this.companySponsorContract.address) {
-      throw new Error("companySponsorContract.address is required for sponsored Magna login");
-    }
-
+  async loginWithCompanySponsor(input: VerifyPassportInput, from: string, sponsorContractOverride?: SendableContract) {
+    const sponsorContract = this.resolveCompanySponsorContract(sponsorContractOverride);
     const policy = normalizePolicy(input.policy);
-    const fee = buildCompanySponsorFeeConfig(this.companySponsorContract.address as never);
-    return this.companySponsorContract.methods
+    return sponsorContract.methods
       .sponsored_verify(
         policy,
         input.hintedCredentialNote,
@@ -234,20 +275,13 @@ export class MagnaClient {
         input.claimsWitness.nationalityAlpha3Packed,
         input.sponsorSlot ?? 0,
       )
-      .send({ from, fee });
+      .send(this.buildCompanySponsorSendOptions(from, sponsorContract));
   }
 
-  async loginWithInstagramCompanySponsor(input: VerifyInstagramInput, from: string) {
-    if (!this.companySponsorContract) {
-      throw new Error("companySponsorContract is required for sponsored Magna login");
-    }
-    if (!this.companySponsorContract.address) {
-      throw new Error("companySponsorContract.address is required for sponsored Magna login");
-    }
-
+  async loginWithInstagramCompanySponsor(input: VerifyInstagramInput, from: string, sponsorContractOverride?: SendableContract) {
+    const sponsorContract = this.resolveCompanySponsorContract(sponsorContractOverride);
     const policy = normalizePolicy(input.policy);
-    const fee = buildCompanySponsorFeeConfig(this.companySponsorContract.address as never);
-    return this.companySponsorContract.methods
+    return sponsorContract.methods
       .sponsored_verify_instagram(
         policy,
         input.hintedCredentialNote,
@@ -255,20 +289,13 @@ export class MagnaClient {
         input.claimsWitness.handleHash,
         input.sponsorSlot ?? 0,
       )
-      .send({ from, fee });
+      .send(this.buildCompanySponsorSendOptions(from, sponsorContract));
   }
 
-  async loginWithLinkedCompanySponsor(input: VerifyLinkedPassportInput, from: string) {
-    if (!this.companySponsorContract) {
-      throw new Error("companySponsorContract is required for sponsored Magna login");
-    }
-    if (!this.companySponsorContract.address) {
-      throw new Error("companySponsorContract.address is required for sponsored Magna login");
-    }
-
+  async loginWithLinkedCompanySponsor(input: VerifyLinkedPassportInput, from: string, sponsorContractOverride?: SendableContract) {
+    const sponsorContract = this.resolveCompanySponsorContract(sponsorContractOverride);
     const policy = normalizePolicy(input.policy);
-    const fee = buildCompanySponsorFeeConfig(this.companySponsorContract.address as never);
-    return this.companySponsorContract.methods
+    return sponsorContract.methods
       .sponsored_verify_linked(
         policy,
         input.hintedRootStatusNote,
@@ -279,20 +306,17 @@ export class MagnaClient {
         input.claimsWitness.nationalityAlpha3Packed,
         input.sponsorSlot ?? 0,
       )
-      .send({ from, fee });
+      .send(this.buildCompanySponsorSendOptions(from, sponsorContract));
   }
 
-  async loginWithLinkedInstagramCompanySponsor(input: VerifyLinkedInstagramInput, from: string) {
-    if (!this.companySponsorContract) {
-      throw new Error("companySponsorContract is required for sponsored Magna login");
-    }
-    if (!this.companySponsorContract.address) {
-      throw new Error("companySponsorContract.address is required for sponsored Magna login");
-    }
-
+  async loginWithLinkedInstagramCompanySponsor(
+    input: VerifyLinkedInstagramInput,
+    from: string,
+    sponsorContractOverride?: SendableContract,
+  ) {
+    const sponsorContract = this.resolveCompanySponsorContract(sponsorContractOverride);
     const policy = normalizePolicy(input.policy);
-    const fee = buildCompanySponsorFeeConfig(this.companySponsorContract.address as never);
-    return this.companySponsorContract.methods
+    return sponsorContract.methods
       .sponsored_verify_linked_instagram(
         policy,
         input.hintedRootStatusNote,
@@ -302,7 +326,7 @@ export class MagnaClient {
         input.claimsWitness.handleHash,
         input.sponsorSlot ?? 0,
       )
-      .send({ from, fee });
+      .send(this.buildCompanySponsorSendOptions(from, sponsorContract));
   }
 
   async refreshRootAuthority(input: RefreshRootAuthorityInput) {

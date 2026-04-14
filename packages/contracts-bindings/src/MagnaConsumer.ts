@@ -3,7 +3,7 @@
 
 /* eslint-disable */
 import { AztecAddress, CompleteAddress } from '@aztec/aztec.js/addresses';
-import { type AbiType, type AztecAddressLike, type ContractArtifact, EventSelector, decodeFromAbi, type EthAddressLike, type FieldLike, type FunctionSelectorLike, loadContractArtifact, loadContractArtifactForPublic, type NoirCompiledContract, type U128Like, type WrappedFieldLike } from '@aztec/aztec.js/abi';
+import { type AbiType, type AztecAddressLike, type ContractArtifact, EventSelector, decodeFromAbi, type EthAddressLike, type FieldLike, type FunctionSelectorLike, loadContractArtifact, loadContractArtifactForPublic, type NoirCompiledContract, type OptionLike, type U128Like, type WrappedFieldLike } from '@aztec/aztec.js/abi';
 import { Contract, ContractBase, ContractFunctionInteraction, type ContractMethod, type ContractStorageLayout, DeployMethod } from '@aztec/aztec.js/contracts';
 import { EthAddress } from '@aztec/aztec.js/addresses';
 import { Fr, Point } from '@aztec/aztec.js/fields';
@@ -118,7 +118,7 @@ gated_login_count: {
     login_with_magna: ((policy: { credential_type: (bigint | number), constraints: { claim_id: (bigint | number), op: (bigint | number), value: FieldLike }[] }, hinted_credential: { note: { claims_hash: FieldLike, credential_type: (bigint | number), expiry_ts: (bigint | number) }, contract_address: AztecAddressLike, owner: AztecAddressLike, randomness: FieldLike, storage_slot: FieldLike, metadata: { stage: (bigint | number), maybe_note_nonce: FieldLike } }, hinted_status: { note: { revocation_secret: FieldLike, claims_hash: FieldLike, credential_type: (bigint | number) }, contract_address: AztecAddressLike, owner: AztecAddressLike, randomness: FieldLike, storage_slot: FieldLike, metadata: { stage: (bigint | number), maybe_note_nonce: FieldLike } }, min_age_proven: (bigint | number), nationality_alpha3_packed: FieldLike, sponsor_slot: (bigint | number)) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
     /** offchain_receive(messages: struct) */
-    offchain_receive: ((messages: { ciphertext: FieldLike[], recipient: AztecAddressLike, tx_hash: { _is_some: boolean, _value: FieldLike }, anchor_block_timestamp: (bigint | number) }[]) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
+    offchain_receive: ((messages: { ciphertext: FieldLike[], recipient: AztecAddressLike, tx_hash: OptionLike<FieldLike>, anchor_block_timestamp: (bigint | number) }[]) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
     /** public_dispatch(selector: field) */
     public_dispatch: ((selector: FieldLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;

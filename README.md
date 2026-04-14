@@ -55,8 +55,8 @@ This repository contains the implementation of Magna v1:
 - Root revocation still kills every linked descendant.
 - Passport expiry pauses linked authority until `refresh_root_authority(...)` refreshes the authority note and
   remints the current linked passport lineage under the same `root_commitment`.
-- Legacy rootless passport flows still exist as compatibility paths, but the rooted passport authority flow is the
-  canonical model for linked credentials.
+- Rooted passport onboarding is the canonical default path (`register_rooted_passport` + linked verify paths).
+- Legacy rootless passport flows are compatibility-only and must be explicitly selected.
 - Sponsored verify bounds remain credential-scoped today, not root-scoped.
 
 ## Status
@@ -84,6 +84,9 @@ Full details are documented in:
 
 - `root_commitment` derivation is version-1 stable and currently derived client-side from the scoped
   zkPassport `uniqueIdentifier` during onboarding.
+- Ghost derivation is now versioned to avoid silent recovery breakage:
+  - `v1_legacy_unscoped`: compatibility path for existing rootless lineage.
+  - `v2_scoped`: canonical path for rooted onboarding (scope-aware by credential type).
 - Passport renewal/replacement does not assume the renewed document reproduces the same zkPassport
   `uniqueIdentifier`; the long-lived Magna root is refreshed through a separate rooted authority note instead.
 - If upstream identity primitives later move to salted or vOPRF-backed identifiers, Magna should add an

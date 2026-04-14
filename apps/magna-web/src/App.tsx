@@ -1,24 +1,54 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import QRCode from "react-qr-code";
 import {
+  type ContractCompatibilityMatrix,
+  CredentialType,
   createDefaultPassportClaimsForm,
   createDefaultPolicyForm,
+  deriveGhostAccountPreview,
   issuePassportWithDevOrchestrator,
+  type L1TopUpOutcome,
+  type L2TopUpOutcome,
   MagnaBrowserClient,
   type PassportHints,
   type PassportClaimsForm,
   type PolicyForm,
+  type RootedPassportHints,
+  type SponsorRuntimeStatus,
+  type SponsorRightsSnapshot,
+  isRootedPassportHints,
 } from "./lib/magna";
-import { getPasskeyCapability, createPasskeySpikeCredential, type PasskeyCapability, type PasskeySpikeResult } from "./lib/passkey";
-import { getAppEnv } from "./lib/env";
 import {
+  assertPasskeyCredential,
+  createPasskeyCredential,
+  getPasskeyCapability,
+  type PasskeyCapability,
+  type PasskeyCredentialRecord,
+} from "./lib/passkey";
+import { getAppEnv } from "./lib/env";
+import { getChainInfo } from "./lib/aztec";
+import {
+  bindExternalProviderDisconnect,
   beginExternalWalletConnection,
   confirmExternalWalletConnection,
   createManagedWalletSession,
-  discoverExternalWallets,
+  createPasskeyWalletSession,
+  ensureGhostAccountLifecycle,
+  startExternalWalletDiscovery,
+  type ExternalWalletDiscovery,
+  type GhostAccountLifecycleResult,
   type ManagedAccountFlavor,
   type PendingExternalWalletConnection,
+  type WalletProvider,
   type WalletSession,
 } from "./lib/wallet";
+import {
+  startPassportZkRequest,
+  verifyAndIssueThroughBackend,
+  type ActiveZkPassportRequest,
+  type VerifyAndIssueResponse as ZkPassportIssueResponse,
+  type ZkPassportLifecycleEvent,
+} from "./lib/zkpassport";
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -29,6 +59,14 @@ function errorMessage(error: unknown): string {
 
 function nowStamp(): string {
   return new Date().toLocaleTimeString();
+}
+
+function logExternalWalletUi(step: string, details?: Record<string, unknown>) {
+  if (details) {
+    console.info("[magna][external-wallet-ui]", step, details);
+    return;
+  }
+  console.info("[magna][external-wallet-ui]", step);
 }
 
 function readReceiptValue(receipt: unknown, key: string): string | undefined {
@@ -83,13 +121,125 @@ function describeTxOutcome(
   return parts.join(" ");
 }
 
+function formatHex(value: bigint): string {
+  return `0x${value.toString(16)}`;
+}
+
+const CHAIN_FINGERPRINT_STORAGE_KEY = "magna-web:chain-fingerprint:v1";
+const PASSKEY_RECORD_STORAGE_KEY = "magna-web:passkey-record:v1";
+const LAST_ISSUED_PASSPORT_STORAGE_KEY = "magna-web:last-issued-passport:v1";
+
+type ActivityLogEntry = {
+  id: number;
+  message: string;
+};
+
+type LastIssuedPassportRef = {
+  ownerAddress: string;
+  claimsHash: string;
+  mode: "passport" | "rooted";
+  rootCommitment?: string;
+  ghostOwner?: string;
+  ghostDerivationVersion?: string;
+};
+
+function fingerprintFromChainContext(
+  chain: { chainId: string; version: string },
+  env: ReturnType<typeof getAppEnv>,
+): string {
+  return JSON.stringify({
+    chainId: chain.chainId,
+    version: chain.version,
+    nodeUrl: env.aztecNodeUrl,
+    issuerAddress: env.issuerAddress ?? "",
+    rightsRegistryAddress: env.rightsRegistryAddress ?? "",
+    rightsPurchaseL2Address: env.rightsPurchaseL2Address ?? "",
+    companySponsorAddresses: [...env.companySponsorAddresses].sort(),
+  });
+}
+
+function loadStoredPasskeyRecord(): PasskeyCredentialRecord | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(PASSKEY_RECORD_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as Partial<PasskeyCredentialRecord>;
+    if (typeof parsed.credentialId !== "string" || !parsed.credentialId) {
+      return null;
+    }
+    return {
+      credentialId: parsed.credentialId,
+      rpId: typeof parsed.rpId === "string" ? parsed.rpId : "unknown",
+      userName: typeof parsed.userName === "string" ? parsed.userName : "magna-passkey-user",
+      authenticatorAttachment:
+        typeof parsed.authenticatorAttachment === "string" ? parsed.authenticatorAttachment : undefined,
+      publicKeyAlgorithm: typeof parsed.publicKeyAlgorithm === "number" ? parsed.publicKeyAlgorithm : undefined,
+      transports: Array.isArray(parsed.transports)
+        ? parsed.transports.filter((entry): entry is string => typeof entry === "string")
+        : [],
+      createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : new Date().toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function loadStoredLastIssuedPassportRef(): LastIssuedPassportRef | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(LAST_ISSUED_PASSPORT_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as Partial<LastIssuedPassportRef>;
+    if (
+      typeof parsed.ownerAddress !== "string" ||
+      !parsed.ownerAddress ||
+      typeof parsed.claimsHash !== "string" ||
+      !parsed.claimsHash ||
+      (parsed.mode !== "passport" && parsed.mode !== "rooted")
+    ) {
+      return null;
+    }
+    return {
+      ownerAddress: parsed.ownerAddress,
+      claimsHash: parsed.claimsHash,
+      mode: parsed.mode,
+      rootCommitment: typeof parsed.rootCommitment === "string" ? parsed.rootCommitment : undefined,
+      ghostOwner: typeof parsed.ghostOwner === "string" ? parsed.ghostOwner : undefined,
+      ghostDerivationVersion:
+        typeof parsed.ghostDerivationVersion === "string" ? parsed.ghostDerivationVersion : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function App() {
   const env = useMemo(() => getAppEnv(), []);
+  const configuredSponsors = useMemo(() => env.companySponsors, [env]);
+
+  // Warm up the Schnorr WASM on mount so the first real ghost-address derivation
+  // from user input is instant rather than blocked on a cold WASM initialisation.
+  useEffect(() => {
+    void deriveGhostAccountPreview({
+      uniqueIdentifier: "__warmup__",
+      credentialType: CredentialType.Passport,
+    }).catch(() => {});
+  }, []);
+
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>("App initialized.");
   const [error, setError] = useState<string | null>(null);
-  const [activityLog, setActivityLog] = useState<string[]>([]);
-  const [providers, setProviders] = useState<Awaited<ReturnType<typeof discoverExternalWallets>>>([]);
+  const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([]);
+  const [providers, setProviders] = useState<WalletProvider[]>([]);
+  const [isDiscovering, setIsDiscovering] = useState(false);
   const [pendingConnection, setPendingConnection] = useState<PendingExternalWalletConnection | null>(null);
   const [session, setSession] = useState<WalletSession | null>(null);
   const [selectedAccount, setSelectedAccount] = useState<string>("");
@@ -98,9 +248,45 @@ export function App() {
   const [ghostOwner, setGhostOwner] = useState<string>("");
   const [claimsForm, setClaimsForm] = useState<PassportClaimsForm>(createDefaultPassportClaimsForm);
   const [policyForm, setPolicyForm] = useState<PolicyForm>(createDefaultPolicyForm);
-  const [hints, setHints] = useState<PassportHints | null>(null);
+  const [hints, setHints] = useState<PassportHints | RootedPassportHints | null>(null);
+  const [selectedSponsorAddress, setSelectedSponsorAddress] = useState<string>(
+    env.activeCompanySponsorAddress ?? env.companySponsors[0]?.address ?? "",
+  );
+  const [rightsSponsorAddress, setRightsSponsorAddress] = useState<string>(
+    env.activeCompanySponsorAddress ?? env.companySponsors[0]?.address ?? "",
+  );
+  const [sponsorRuntimeStatuses, setSponsorRuntimeStatuses] = useState<SponsorRuntimeStatus[]>([]);
+  const [gatewayCandidateAddress, setGatewayCandidateAddress] = useState<string>("");
+  const [rightsTopUpAmount, setRightsTopUpAmount] = useState<string>("1");
+  const [rightsPackageId, setRightsPackageId] = useState<string>("");
+  const [rightsExtraPolicyHash, setRightsExtraPolicyHash] = useState<string>("");
+  const [rightsSnapshot, setRightsSnapshot] = useState<SponsorRightsSnapshot | null>(null);
+  const [lastL1TopUpOutcome, setLastL1TopUpOutcome] = useState<L1TopUpOutcome | null>(null);
+  const [lastTopUpOutcome, setLastTopUpOutcome] = useState<L2TopUpOutcome | null>(null);
+  const [compatibilityMatrix, setCompatibilityMatrix] = useState<ContractCompatibilityMatrix | null>(null);
+  const [ghostIdentifierInput, setGhostIdentifierInput] = useState<string>("");
+  const [ghostCredentialType, setGhostCredentialType] = useState<CredentialType>(CredentialType.Passport);
+  const [ghostMaterialPreview, setGhostMaterialPreview] = useState<{
+    address: string;
+    scope: string;
+    seedField: string;
+    rootCommitment: string;
+  } | null>(null);
   const [passkeyCapability, setPasskeyCapability] = useState<PasskeyCapability | null>(null);
-  const [passkeyResult, setPasskeyResult] = useState<PasskeySpikeResult | null>(null);
+  const [passkeyRecord, setPasskeyRecord] = useState<PasskeyCredentialRecord | null>(() => loadStoredPasskeyRecord());
+  const [chainIdentityLabel, setChainIdentityLabel] = useState<string>("unknown");
+  const [chainResetNotice, setChainResetNotice] = useState<string | null>(null);
+  const [activeZkRequest, setActiveZkRequest] = useState<ActiveZkPassportRequest | null>(null);
+  const [zkPassportStage, setZkPassportStage] = useState<string>("idle");
+  const [zkPassportProofCount, setZkPassportProofCount] = useState<number>(0);
+  const [zkPassportLastIssue, setZkPassportLastIssue] = useState<ZkPassportIssueResponse | null>(null);
+  const [ghostLifecycle, setGhostLifecycle] = useState<GhostAccountLifecycleResult | null>(null);
+  const [lastIssuedPassportRef, setLastIssuedPassportRef] = useState<LastIssuedPassportRef | null>(() =>
+    loadStoredLastIssuedPassportRef(),
+  );
+  const discoveryRef = useRef<ExternalWalletDiscovery | null>(null);
+  const providerDisconnectCleanupRef = useRef<(() => void) | null>(null);
+  const nextActivityLogIdRef = useRef(0);
 
   useEffect(() => {
     void getPasskeyCapability().then(setPasskeyCapability).catch(() => {
@@ -113,20 +299,166 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    void getChainInfo(env.aztecNodeUrl)
+      .then(info => {
+        if (cancelled) return;
+        const chain = {
+          chainId: info.chainId.toString(),
+          version: info.version.toString(),
+        };
+        setChainIdentityLabel(`chainId=${chain.chainId} rollupVersion=${chain.version}`);
+        if (typeof window === "undefined") {
+          return;
+        }
+        const nextFingerprint = fingerprintFromChainContext(chain, env);
+        const previousFingerprint = window.localStorage.getItem(CHAIN_FINGERPRINT_STORAGE_KEY);
+        if (previousFingerprint && previousFingerprint !== nextFingerprint) {
+          setChainResetNotice(
+            "Detected a chain/deployment change since your previous session. Recreate the in-app wallet session to avoid stale PXE state.",
+          );
+          window.localStorage.removeItem(LAST_ISSUED_PASSPORT_STORAGE_KEY);
+          setLastIssuedPassportRef(null);
+          setGhostLifecycle(null);
+        }
+        window.localStorage.setItem(CHAIN_FINGERPRINT_STORAGE_KEY, nextFingerprint);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setChainIdentityLabel("unavailable");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [env]);
+
+  useEffect(() => {
     if (!session) {
       setSelectedAccount("");
+      setGhostLifecycle(null);
       return;
     }
     setSelectedAccount(session.activeAccount.address);
   }, [session]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (!lastIssuedPassportRef) {
+      window.localStorage.removeItem(LAST_ISSUED_PASSPORT_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(LAST_ISSUED_PASSPORT_STORAGE_KEY, JSON.stringify(lastIssuedPassportRef));
+  }, [lastIssuedPassportRef]);
+
+  useEffect(() => {
+    if (!chainResetNotice || !session || session.kind === "external") {
+      return;
+    }
+    void session.disconnect().catch(() => undefined).finally(() => {
+      setSession(null);
+      setHints(null);
+      setGhostLifecycle(null);
+      setLastIssuedPassportRef(null);
+      setPendingConnection(null);
+    });
+  }, [chainResetNotice, session]);
+
+  useEffect(() => {
+    setHints(null);
+  }, [selectedAccount, claimsForm.nationalityAlpha3, claimsForm.ageThreshold, claimsForm.passportExpiryDate]);
+
+  useEffect(() => {
+    if (!rightsSponsorAddress && selectedSponsorAddress) {
+      setRightsSponsorAddress(selectedSponsorAddress);
+    }
+  }, [rightsSponsorAddress, selectedSponsorAddress]);
+
+  useEffect(() => {
+    if (configuredSponsors.length === 0) {
+      return;
+    }
+    if (!selectedSponsorAddress) {
+      setSelectedSponsorAddress(configuredSponsors[0].address);
+    }
+    if (!rightsSponsorAddress) {
+      setRightsSponsorAddress(configuredSponsors[0].address);
+    }
+  }, [configuredSponsors, rightsSponsorAddress, selectedSponsorAddress]);
+
+  useEffect(() => {
+    return () => {
+      discoveryRef.current?.cancel();
+      providerDisconnectCleanupRef.current?.();
+      pendingConnection?.pending.cancel();
+    };
+  }, [pendingConnection]);
+
+  useEffect(() => {
+    return () => {
+      activeZkRequest?.cancel();
+    };
+  }, [activeZkRequest]);
+
   const activeAccount = useMemo(
     () => session?.accounts.find(account => account.address === selectedAccount) ?? session?.activeAccount ?? null,
     [selectedAccount, session],
   );
+  const externalSession = session?.kind === "external" ? session : null;
+  const connectedExternalProviderId = externalSession?.metadata?.providerId ?? null;
+  const operatorFeePayerAddress = useMemo(() => {
+    const feePayer = session?.metadata?.feePayer?.trim();
+    return feePayer && feePayer.startsWith("0x") ? feePayer : null;
+  }, [session]);
+  const hasL1FundingConfig = useMemo(
+    () =>
+      Boolean(env.l1RpcUrl && env.l1RightsPortalAddress && env.l1PaymentTokenAddress && env.l1BuyerPrivateKey),
+    [env],
+  );
+  useEffect(() => {
+    let cancelled = false;
+    const uniqueIdentifier = ghostIdentifierInput.trim();
+    if (!uniqueIdentifier) {
+      setGhostOwner("");
+      return;
+    }
+    void deriveGhostAccountPreview({
+      uniqueIdentifier,
+      credentialType: CredentialType.Passport,
+      derivationVersion: "v1_legacy_unscoped",
+    })
+      .then(preview => {
+        if (!cancelled) {
+          setGhostOwner(preview.address);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setGhostOwner("");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [ghostIdentifierInput]);
+  const userClient = useMemo(
+    () => (session && activeAccount ? new MagnaBrowserClient(session.wallet, env, activeAccount.address) : null),
+    [activeAccount, env, session],
+  );
+  const operatorClient = useMemo(
+    () => (session && operatorFeePayerAddress ? new MagnaBrowserClient(session.wallet, env, operatorFeePayerAddress) : null),
+    [env, operatorFeePayerAddress, session],
+  );
 
   const appendLog = (message: string) => {
-    setActivityLog(current => [`[${nowStamp()}] ${message}`, ...current].slice(0, 10));
+    const entry = {
+      id: nextActivityLogIdRef.current,
+      message: `[${nowStamp()}] ${message}`,
+    };
+    nextActivityLogIdRef.current += 1;
+    setActivityLog(current => [entry, ...current].slice(0, 10));
   };
 
   const runAction = async <T,>(label: string, work: () => Promise<T>): Promise<T | undefined> => {
@@ -142,7 +474,7 @@ export function App() {
     } catch (caught) {
       const message = errorMessage(caught);
       setError(`${label}: ${message}`);
-      setStatusMessage(`${label} failed.`);
+      setStatusMessage(`${label} failed: ${message}`);
       appendLog(`${label} failed: ${message}`);
       return undefined;
     } finally {
@@ -150,47 +482,163 @@ export function App() {
     }
   };
 
-  const createUserClient = (): MagnaBrowserClient => {
-    if (!session || !activeAccount) {
+  const clearProviderDisconnectHandler = () => {
+    providerDisconnectCleanupRef.current?.();
+    providerDisconnectCleanupRef.current = null;
+  };
+
+  const cancelPendingConnection = () => {
+    if (!pendingConnection) return;
+    pendingConnection.pending.cancel();
+    setPendingConnection(null);
+  };
+
+  const requireUserClient = (): MagnaBrowserClient => {
+    if (!userClient) {
       throw new Error("Connect an Aztec wallet or create a managed account first.");
     }
-    return new MagnaBrowserClient(session.wallet, env, activeAccount.address);
+    return userClient;
+  };
+
+  const requireTopUpClient = (): MagnaBrowserClient => {
+    return operatorClient ?? requireUserClient();
   };
 
   const handleDiscoverWallets = async () => {
-    const found = await runAction("Discover external wallets", async () => {
-      const nextProviders = await discoverExternalWallets(env.aztecNodeUrl, env.appId);
-      setProviders(nextProviders);
-      return nextProviders;
-    });
-    if (found && found.length === 0) {
-      setStatusMessage("No compatible extension wallet approved the discovery request.");
+    logExternalWalletUi("discover:click");
+    discoveryRef.current?.cancel();
+    discoveryRef.current = null;
+    cancelPendingConnection();
+    setProviders([]);
+    setIsDiscovering(true);
+    setError(null);
+    setStatusMessage("Discover external wallets started...");
+    appendLog("Discover external wallets started");
+    try {
+      const discovery = await startExternalWalletDiscovery(env.aztecNodeUrl, env.appId, {
+        timeoutMs: env.walletDiscoveryTimeoutMs,
+        allowList: env.walletExtensionAllowList,
+        blockList: env.walletExtensionBlockList,
+        onWalletDiscovered: provider => {
+          logExternalWalletUi("discover:providerDiscovered", {
+            providerId: provider.id,
+            providerName: provider.name,
+            providerType: provider.type,
+          });
+          setProviders(current => {
+            if (current.some(existing => existing.id === provider.id)) {
+              return current;
+            }
+            return [...current, provider];
+          });
+          setStatusMessage(`Wallet discovered: ${provider.name}. You can connect immediately.`);
+          appendLog(`Wallet discovered: ${provider.name}`);
+        },
+      });
+      discoveryRef.current = discovery;
+      void discovery.done
+        .then(nextProviders => {
+          logExternalWalletUi("discover:done", { providerCount: nextProviders.length });
+          if (discoveryRef.current !== discovery) {
+            return;
+          }
+          discoveryRef.current = null;
+          setProviders(nextProviders);
+          setIsDiscovering(false);
+          if (nextProviders.length === 0) {
+            setStatusMessage("No compatible extension wallet approved the discovery request.");
+            appendLog("Discover external wallets completed with no providers");
+            return;
+          }
+          const suffix = nextProviders.length === 1 ? "" : "s";
+          setStatusMessage(`Wallet discovery completed with ${nextProviders.length} provider${suffix}.`);
+          appendLog(`Discover external wallets completed with ${nextProviders.length} provider${suffix}`);
+        })
+        .catch(caught => {
+          logExternalWalletUi("discover:error", { message: errorMessage(caught) });
+          if (discoveryRef.current !== discovery) {
+            return;
+          }
+          discoveryRef.current = null;
+          setIsDiscovering(false);
+          const message = errorMessage(caught);
+          setError(`Discover external wallets: ${message}`);
+          setStatusMessage(`Discover external wallets failed: ${message}`);
+          appendLog(`Discover external wallets failed: ${message}`);
+        });
+    } catch (caught) {
+      logExternalWalletUi("discover:setupError", { message: errorMessage(caught) });
+      setIsDiscovering(false);
+      const message = errorMessage(caught);
+      setError(`Discover external wallets: ${message}`);
+      setStatusMessage(`Discover external wallets failed: ${message}`);
+      appendLog(`Discover external wallets failed: ${message}`);
     }
   };
 
   const handleBeginExternalConnection = async (providerIndex: number) => {
     const provider = providers[providerIndex];
     if (!provider) return;
+    logExternalWalletUi("secureChannel:click", {
+      providerIndex,
+      providerId: provider.id,
+      providerName: provider.name,
+    });
+    discoveryRef.current?.cancel();
+    discoveryRef.current = null;
+    setIsDiscovering(false);
+    cancelPendingConnection();
     const connection = await runAction(`Open secure channel with ${provider.name}`, async () =>
       beginExternalWalletConnection(provider, env.appId),
     );
     if (connection) {
+      logExternalWalletUi("secureChannel:ready", {
+        providerId: provider.id,
+        providerName: provider.name,
+        emojiGrid: connection.emojiGrid,
+      });
       setPendingConnection(connection);
+      setStatusMessage(
+        "Secure channel established. Compare the emoji grid with your wallet, then finish the connection here to request wallet permissions and load your granted accounts.",
+      );
     }
   };
 
   const handleConfirmExternalConnection = async () => {
     if (!pendingConnection) return;
-    const connected = await runAction("Confirm external wallet connection", async () =>
-      confirmExternalWalletConnection(pendingConnection),
+    const connection = pendingConnection;
+    logExternalWalletUi("confirm:click", {
+      providerId: connection.provider.id,
+      providerName: connection.provider.name,
+    });
+    const connected = await runAction("Finish external wallet connection", async () =>
+      confirmExternalWalletConnection(connection),
     );
     if (connected) {
+      logExternalWalletUi("confirm:sessionReady", {
+        providerId: connection.provider.id,
+        providerName: connection.provider.name,
+        activeAccount: connected.activeAccount.address,
+        accountCount: connected.accounts.length,
+      });
+      clearProviderDisconnectHandler();
+      providerDisconnectCleanupRef.current = bindExternalProviderDisconnect(connection.provider, () => {
+        logExternalWalletUi("provider:disconnect", {
+          providerId: connection.provider.id,
+          providerName: connection.provider.name,
+        });
+        setSession(null);
+        setHints(null);
+        setGhostLifecycle(null);
+        setPendingConnection(null);
+        setStatusMessage("Wallet disconnected unexpectedly. Reconnect to continue.");
+        appendLog("External wallet disconnected");
+      });
       setSession(connected);
       setPendingConnection(null);
       setHints(null);
-      if (!ghostOwner) {
-        setGhostOwner(connected.activeAccount.address);
-      }
+      setStatusMessage(`External wallet connected. Active account: ${connected.activeAccount.address}`);
+      appendLog(`External wallet connected: ${connected.activeAccount.address}`);
     }
   };
 
@@ -200,14 +648,18 @@ export function App() {
         nodeUrl: env.aztecNodeUrl,
         alias: managedAlias.trim() || "magna-user",
         flavor: managedFlavor,
+        ephemeral: false,
         localTestAccountIndex: env.localTestAccountIndex,
         bootstrapWithLocalTestAccount: env.enableLocalTestBootstrap,
+        deployWithLocalTestAccount: env.enableLocalTestBootstrap,
       }),
     );
     if (created) {
+      clearProviderDisconnectHandler();
+      setChainResetNotice(null);
       setSession(created);
       setHints(null);
-      setGhostOwner(created.activeAccount.address);
+      setGhostLifecycle(null);
     }
   };
 
@@ -215,19 +667,263 @@ export function App() {
     if (!session) return;
     await runAction("Disconnect wallet session", async () => {
       await session.disconnect();
+      clearProviderDisconnectHandler();
+      discoveryRef.current?.cancel();
+      discoveryRef.current = null;
       setSession(null);
       setHints(null);
+      setGhostLifecycle(null);
       setPendingConnection(null);
     });
   };
 
-  const handlePasskeySpike = async () => {
-    const result = await runAction("Create browser passkey spike credential", async () =>
-      createPasskeySpikeCredential(`magna-${Date.now()}`),
-    );
-    if (result) {
-      setPasskeyResult(result);
+  const handleCreateOrUsePasskeyWallet = async () => {
+    if (!passkeyCapability?.isSupported) {
+      setError("Passkeys are not supported in this browser.");
+      return;
     }
+    const result = await runAction("Create/use Magna passkey wallet", async () => {
+      const existingRecord = passkeyRecord;
+      const record =
+        existingRecord ??
+        (await createPasskeyCredential(
+          (managedAlias.trim() || "magna-user")
+            .toLowerCase()
+            .replace(/[^a-z0-9._-]/g, "-")
+            .slice(0, 48),
+        ));
+      await assertPasskeyCredential(record.credentialId);
+      const session = await createPasskeyWalletSession({
+        nodeUrl: env.aztecNodeUrl,
+        alias: managedAlias.trim() || "magna-user",
+        credentialId: record.credentialId,
+        localTestAccountIndex: env.localTestAccountIndex,
+        deployWithLocalTestAccount: env.enableLocalTestBootstrap,
+      });
+      return { record, session };
+    });
+    if (result) {
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(PASSKEY_RECORD_STORAGE_KEY, JSON.stringify(result.record));
+      }
+      setPasskeyRecord(result.record);
+      clearProviderDisconnectHandler();
+      setChainResetNotice(null);
+      setSession(result.session);
+      setHints(null);
+      setGhostLifecycle(null);
+    }
+  };
+
+  const handleForgetPasskeyWallet = () => {
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(PASSKEY_RECORD_STORAGE_KEY);
+    }
+    setPasskeyRecord(null);
+    appendLog("Cleared stored passkey wallet binding");
+  };
+
+  const handleStartZkPassportIssuance = async () => {
+    if (!activeAccount) {
+      setError("Choose an active account before starting zkPassport issuance.");
+      return;
+    }
+    if (!env.verificationApiUrl) {
+      setError("Set VITE_MAGNA_VERIFICATION_API_URL to enable zkPassport issuance.");
+      return;
+    }
+    const verificationApiUrl = env.verificationApiUrl;
+    const ageThreshold = Number.parseInt(claimsForm.ageThreshold, 10);
+    if (!Number.isFinite(ageThreshold)) {
+      setError("zkPassport age threshold must be a valid integer.");
+      return;
+    }
+    if (activeZkRequest) {
+      activeZkRequest.cancel();
+      setActiveZkRequest(null);
+    }
+
+    setError(null);
+    setGhostLifecycle(null);
+    setZkPassportProofCount(0);
+    setZkPassportStage("creating_request");
+    setStatusMessage("Creating zkPassport request...");
+    appendLog("Create zkPassport request started");
+    if (env.zkPassportDevMode) {
+      appendLog("zkPassport dev mode enabled (mock proofs allowed)");
+    }
+
+    try {
+      const request = await startPassportZkRequest({
+        ageThreshold,
+        metadata: {
+          name: env.zkPassportRequestName,
+          logo: env.zkPassportRequestLogo,
+          purpose: env.zkPassportRequestPurpose,
+          scope: env.zkPassportRequestScope,
+        },
+        devMode: env.zkPassportDevMode,
+        onEvent: (event: ZkPassportLifecycleEvent) => {
+          switch (event.type) {
+            case "request_created":
+              setZkPassportStage("awaiting_scan");
+              setStatusMessage("zkPassport request created. Scan QR code or open the deep link.");
+              appendLog(`zkPassport request created: ${event.requestId}`);
+              break;
+            case "bridge_connected":
+              setStatusMessage("zkPassport bridge connected.");
+              appendLog("zkPassport bridge connected");
+              break;
+            case "request_received":
+              setZkPassportStage("request_received");
+              setStatusMessage("zkPassport request received on mobile app.");
+              appendLog("zkPassport request received on mobile app");
+              break;
+            case "generating_proof":
+              setZkPassportStage("generating_proof");
+              setStatusMessage("zkPassport is generating proof(s).");
+              appendLog("zkPassport generating proof(s)");
+              break;
+            case "proof_generated":
+              setZkPassportStage("proof_generated");
+              setZkPassportProofCount(event.proofCount);
+              setStatusMessage(`zkPassport proof generated (${event.proofCount}).`);
+              appendLog(`zkPassport proof generated (${event.proofCount})`);
+              break;
+            case "result_received":
+              setZkPassportStage("result_received");
+              setStatusMessage("zkPassport returned results. Submitting to verification API.");
+              appendLog(`zkPassport result received (verified=${event.verified})`);
+              break;
+          }
+        },
+      });
+      setActiveZkRequest(request);
+
+      void request.completion
+        .then(async (completion) => {
+          if (completion.status === "rejected") {
+            setActiveZkRequest(null);
+            setZkPassportStage("rejected");
+            setStatusMessage("zkPassport request rejected by user.");
+            appendLog("zkPassport request rejected");
+            return;
+          }
+
+          const uniqueIdentifier = completion.uniqueIdentifier;
+          let preparedGhost: GhostAccountLifecycleResult | null = null;
+          if (
+            env.zkPassportPrimaryIssuanceMode === "rooted" &&
+            uniqueIdentifier &&
+            session &&
+            session.kind !== "external"
+          ) {
+            setZkPassportStage("preparing_rooted_ghost");
+            const preparedGhostResult = await runAction("Prepare rooted ghost account", async () => {
+              try {
+                return await ensureGhostAccountLifecycle({
+                  wallet: session.wallet,
+                  uniqueIdentifier,
+                  credentialType: CredentialType.Passport,
+                  derivationVersion: env.zkPassportGhostDerivationVersion,
+                  deploymentFromAddress: operatorFeePayerAddress ?? activeAccount.address,
+                });
+              } catch (primaryError) {
+                if (!env.enableLocalTestBootstrap) {
+                  throw primaryError;
+                }
+                appendLog("Ghost account deploy with preferred payer failed, retrying with local test payer.");
+                return await ensureGhostAccountLifecycle({
+                  wallet: session.wallet,
+                  uniqueIdentifier,
+                  credentialType: CredentialType.Passport,
+                  derivationVersion: env.zkPassportGhostDerivationVersion,
+                  deployWithLocalTestAccount: true,
+                  localTestAccountIndex: env.localTestAccountIndex,
+                });
+              }
+            });
+            if (!preparedGhostResult) {
+              setActiveZkRequest(null);
+              setZkPassportStage("ghost_prepare_failed");
+              return;
+            }
+            preparedGhost = preparedGhostResult;
+            setGhostLifecycle(preparedGhost);
+            appendLog(
+              `Ghost account prepared (${preparedGhost.deploymentStatus}). address=${preparedGhost.address} derivation=${preparedGhost.derivationVersion}`,
+            );
+          }
+
+          setZkPassportStage("submitting_to_backend");
+          const issued = await runAction("Verify zkPassport proofs + issue Magna passport", async () =>
+            verifyAndIssueThroughBackend(verificationApiUrl, {
+              proofs: completion.proofs,
+              originalQuery: completion.originalQuery,
+              queryResult: completion.queryResult,
+              activeOwner: activeAccount.address,
+              ageThreshold,
+              mode: env.zkPassportPrimaryIssuanceMode,
+              ghostDerivationVersion: env.zkPassportGhostDerivationVersion,
+            }),
+          );
+          if (!issued) {
+            setZkPassportStage("backend_failed");
+            return;
+          }
+          setActiveZkRequest(null);
+          setZkPassportLastIssue(issued);
+          setLastIssuedPassportRef({
+            ownerAddress: activeAccount.address,
+            claimsHash: issued.claimsHash,
+            mode: issued.mode,
+            rootCommitment: issued.mode === "rooted" ? issued.rootCommitment : undefined,
+            ghostOwner: issued.ghostOwner,
+            ghostDerivationVersion: issued.ghostDerivationVersion,
+          });
+          setZkPassportStage("issued");
+          setGhostOwner(issued.ghostOwner);
+          setClaimsForm(current => ({
+            ...current,
+            nationalityAlpha3: issued.normalizedClaims.nationalityAlpha3,
+            ageThreshold: String(issued.normalizedClaims.minAgeProven),
+            passportExpiryDate: issued.normalizedClaims.passportExpiryDate,
+          }));
+          setStatusMessage(`zkPassport verified and credential issued. Claims hash: ${issued.claimsHash}`);
+          appendLog(`zkPassport issuance completed. Claims hash: ${issued.claimsHash}`);
+          if (preparedGhost && preparedGhost.address !== issued.ghostOwner) {
+            throw new Error(
+              `Ghost derivation mismatch: backend=${issued.ghostOwner} frontend=${preparedGhost.address}`,
+            );
+          }
+        })
+        .catch((caught) => {
+          const message = errorMessage(caught);
+          setActiveZkRequest(null);
+          setZkPassportStage("error");
+          setError(`zkPassport flow failed: ${message}`);
+          setStatusMessage(`zkPassport flow failed: ${message}`);
+          appendLog(`zkPassport flow failed: ${message}`);
+        });
+    } catch (caught) {
+      const message = errorMessage(caught);
+      setActiveZkRequest(null);
+      setZkPassportStage("error");
+      setError(`Create zkPassport request failed: ${message}`);
+      setStatusMessage(`Create zkPassport request failed: ${message}`);
+      appendLog(`Create zkPassport request failed: ${message}`);
+    }
+  };
+
+  const handleCancelZkPassportRequest = () => {
+    if (!activeZkRequest) {
+      return;
+    }
+    activeZkRequest.cancel();
+    setActiveZkRequest(null);
+    setZkPassportStage("cancelled");
+    setStatusMessage("Cancelled zkPassport request.");
+    appendLog("Cancelled zkPassport request");
   };
 
   const handleIssuePassport = async () => {
@@ -235,14 +931,40 @@ export function App() {
       setError("Choose an active account before issuing a credential.");
       return;
     }
+    const uniqueIdentifier = ghostIdentifierInput.trim();
+    if (!uniqueIdentifier) {
+      const message = "Provide a scoped unique identifier so the ghost wallet address can be derived.";
+      setError(message);
+      setStatusMessage(`Issue passport credential via dev orchestrator blocked: ${message}`);
+      appendLog(`Issue passport credential via dev orchestrator blocked: ${message}`);
+      return;
+    }
+    if (ghostOwner && ghostOwner === activeAccount.address) {
+      const message = "Derived ghost wallet address must differ from the active owner address.";
+      setError(message);
+      setStatusMessage(`Issue passport credential via dev orchestrator blocked: ${message}`);
+      appendLog(`Issue passport credential via dev orchestrator blocked: ${message}`);
+      return;
+    }
     const result = await runAction("Issue passport credential via dev orchestrator", async () =>
-      issuePassportWithDevOrchestrator(env, {
-        activeOwner: activeAccount.address,
-        ghostOwner: ghostOwner.trim() || activeAccount.address,
-        claimsForm,
-      }),
+      issuePassportWithDevOrchestrator(
+        env,
+        {
+          activeOwner: activeAccount.address,
+          ghostUniqueIdentifier: uniqueIdentifier,
+          claimsForm,
+        },
+        session ? { wallet: session.wallet } : undefined,
+      ),
     );
     if (result) {
+      setLastIssuedPassportRef({
+        ownerAddress: activeAccount.address,
+        claimsHash: result.claimsHash,
+        mode: "passport",
+        ghostOwner: ghostOwner || undefined,
+        ghostDerivationVersion: "v1_legacy_unscoped",
+      });
       setStatusMessage(`Issued credential. Claims hash: ${result.claimsHash}`);
     }
   };
@@ -252,10 +974,29 @@ export function App() {
       setError("Choose an active account before fetching hinted notes.");
       return;
     }
+    if (activeZkRequest) {
+      setError("Wait for the current zkPassport issuance request to finish before fetching hinted notes.");
+      return;
+    }
     const result = await runAction("Fetch Magna hinted notes", async () => {
-      const client = createUserClient();
+      const client = requireUserClient();
       await client.syncOrchestratorSender();
-      const nextHints = await client.fetchPassportHints(activeAccount.address, claimsForm);
+      const issuedRef =
+        lastIssuedPassportRef && lastIssuedPassportRef.ownerAddress === activeAccount.address ? lastIssuedPassportRef : null;
+      const rootedIssue =
+        issuedRef?.mode === "rooted" && issuedRef.rootCommitment
+          ? { ...issuedRef, rootCommitment: issuedRef.rootCommitment }
+          : null;
+      const nextHints =
+        rootedIssue
+          ? await client.fetchRootedPassportHintsByClaimsHash(
+              activeAccount.address,
+              rootedIssue.rootCommitment,
+              rootedIssue.claimsHash,
+            )
+          : issuedRef
+            ? await client.fetchPassportHintsByClaimsHash(activeAccount.address, issuedRef.claimsHash)
+            : await client.fetchPassportHints(activeAccount.address, claimsForm);
       setHints(nextHints);
       return nextHints;
     });
@@ -270,7 +1011,10 @@ export function App() {
       return;
     }
     const result = await runAction("Run Magna verify", async () => {
-      const client = createUserClient();
+      const client = requireUserClient();
+      if (isRootedPassportHints(hints)) {
+        return await client.verifyRootedPassport(claimsForm, policyForm, hints);
+      }
       return await client.verifyPassport(claimsForm, policyForm, hints);
     });
     if (result) {
@@ -283,12 +1027,187 @@ export function App() {
       setError("Fetch hinted notes before calling sponsored verify.");
       return;
     }
+    if (!selectedSponsorAddress) {
+      setError("Select a configured sponsor gateway before calling sponsored verify.");
+      return;
+    }
     const result = await runAction("Run Magna sponsored verify", async () => {
-      const client = createUserClient();
-      return await client.verifyPassportWithCompanySponsor(claimsForm, policyForm, hints);
+      const client = requireUserClient();
+      if (isRootedPassportHints(hints)) {
+        return await client.verifyRootedPassportWithCompanySponsor(claimsForm, policyForm, hints, selectedSponsorAddress);
+      }
+      return await client.verifyPassportWithCompanySponsor(claimsForm, policyForm, hints, selectedSponsorAddress);
     });
     if (result) {
       setStatusMessage(describeTxOutcome("Sponsored verify transaction", result));
+    }
+  };
+
+  const handleRefreshRootAuthority = async () => {
+    if (!hints || !isRootedPassportHints(hints)) {
+      setError("Fetch rooted hinted notes before refreshing rooted authority.");
+      return;
+    }
+    const ghostOwnerAddress = zkPassportLastIssue?.ghostOwner ?? lastIssuedPassportRef?.ghostOwner ?? ghostLifecycle?.address;
+    if (!ghostOwnerAddress) {
+      setError("Rooted authority refresh requires a known ghost owner address.");
+      return;
+    }
+    const actor = operatorClient ?? requireUserClient();
+    const result = await runAction("Refresh rooted passport authority", async () => {
+      return await actor.refreshRootAuthority(ghostOwnerAddress, claimsForm, hints);
+    });
+    if (result) {
+      setStatusMessage(describeTxOutcome("Refresh rooted authority transaction", result));
+    }
+  };
+
+  const handleRecoverRoot = async () => {
+    if (!session || session.kind === "external" || !hints || !isRootedPassportHints(hints)) {
+      setError("Root recovery requires an in-app session and rooted hinted notes.");
+      return;
+    }
+    if (!activeAccount) {
+      setError("Choose an active account before root recovery.");
+      return;
+    }
+    const ghostOwnerAddress = zkPassportLastIssue?.ghostOwner ?? lastIssuedPassportRef?.ghostOwner ?? ghostLifecycle?.address;
+    if (!ghostOwnerAddress) {
+      setError("Root recovery requires a known ghost owner address.");
+      return;
+    }
+    const result = await runAction("Recover rooted passport lineage", async () => {
+      const ghostClient = new MagnaBrowserClient(session.wallet, env, ghostOwnerAddress);
+      const hintedRootRecovery = await ghostClient.fetchRootRecoveryHint(ghostOwnerAddress, hints.rootCommitment);
+      return await ghostClient.recoverRoot(hintedRootRecovery, activeAccount.address);
+    });
+    if (result) {
+      setStatusMessage(describeTxOutcome("Root recovery transaction", result));
+    }
+  };
+
+  const handleReadSponsorRights = async () => {
+    if (!rightsSponsorAddress) {
+      setError("Select a sponsor address before reading rights state.");
+      return;
+    }
+    const result = await runAction("Read sponsor rights state", async () => {
+      const client = requireUserClient();
+      return await client.readSponsorRightsSnapshot(rightsSponsorAddress);
+    });
+    if (result) {
+      setRightsSnapshot(result);
+      setStatusMessage(
+        `Sponsor rights loaded. Remaining=${result.remainingVerifies.toString()} ` +
+          `Consumed=${result.consumedVerifies.toString()}.`,
+      );
+    }
+  };
+
+  const handleTopUpSponsorRightsFromL1 = async () => {
+    if (!rightsSponsorAddress) {
+      setError("Select a sponsor address before topping up rights.");
+      return;
+    }
+    const result = await runAction("Top up sponsor rights via L1 purchase + L2 claim", async () => {
+      const client = requireTopUpClient();
+      return await client.topUpSponsorRightsFromL1Purchase({
+        sponsorAddress: rightsSponsorAddress,
+        rightsAmount: rightsTopUpAmount,
+        packageId: rightsPackageId.trim() || undefined,
+        extraPolicyHash: rightsExtraPolicyHash.trim() || undefined,
+      });
+    });
+    if (result) {
+      setLastL1TopUpOutcome(result);
+      const client = requireTopUpClient();
+      const snapshot = await client.waitForSponsorRightsSnapshotPurchaseSync(rightsSponsorAddress, result.purchaseId);
+      setRightsSnapshot(snapshot);
+      setStatusMessage(
+        `${describeTxOutcome("L1 top-up claim transaction", result)} ` +
+          `Updated rights snapshot. Remaining=${snapshot.remainingVerifies.toString()} ` +
+          `Consumed=${snapshot.consumedVerifies.toString()}.`,
+      );
+    }
+  };
+
+  const handleTopUpSponsorRights = async () => {
+    if (!rightsSponsorAddress) {
+      setError("Select a sponsor address before topping up rights.");
+      return;
+    }
+    const result = await runAction("Top up sponsor rights via L2 purchase", async () => {
+      const client = requireTopUpClient();
+      return await client.topUpSponsorRightsFromL2Payment({
+        sponsorAddress: rightsSponsorAddress,
+        rightsAmount: rightsTopUpAmount,
+        packageId: rightsPackageId.trim() || undefined,
+      });
+    });
+    if (result) {
+      setLastTopUpOutcome(result);
+      const client = requireTopUpClient();
+      const snapshot = await client.waitForSponsorRightsSnapshotPurchaseSync(rightsSponsorAddress, result.purchaseId);
+      setRightsSnapshot(snapshot);
+      setStatusMessage(
+        `${describeTxOutcome("L2 top-up transaction", result)} ` +
+          `Updated rights snapshot. Remaining=${snapshot.remainingVerifies.toString()} ` +
+          `Consumed=${snapshot.consumedVerifies.toString()}.`,
+      );
+    }
+  };
+
+  const handleInspectContractCompatibility = async () => {
+    const result = await runAction("Inspect contract compatibility", async () => {
+      const client = requireUserClient();
+      const compatibilityMatrix = client.getContractCompatibilityMatrix();
+      const runtimeStatuses = await client.getSponsorRuntimeStatuses();
+      return { compatibilityMatrix, runtimeStatuses };
+    });
+    if (result) {
+      setCompatibilityMatrix(result.compatibilityMatrix);
+      setSponsorRuntimeStatuses(result.runtimeStatuses);
+    }
+  };
+
+  const handleAddSponsorGateway = async () => {
+    const candidate = gatewayCandidateAddress.trim();
+    if (!candidate) {
+      setError("Provide a sponsor gateway address to add.");
+      return;
+    }
+    const result = await runAction("Add sponsor gateway on issuer", async () => {
+      const client = requireUserClient();
+      return await client.addCompanySponsorGateway(candidate);
+    });
+    if (result) {
+      setStatusMessage(describeTxOutcome("Add sponsor gateway transaction", result));
+      setGatewayCandidateAddress("");
+      const client = requireUserClient();
+      const statuses = await client.getSponsorRuntimeStatuses();
+      setSponsorRuntimeStatuses(statuses);
+    }
+  };
+
+  const handleDeriveGhostContext = async () => {
+    if (!ghostIdentifierInput.trim()) {
+      setError("Provide a scoped unique identifier field to derive ghost context.");
+      return;
+    }
+    const result = await runAction("Derive ghost material and root commitment", async () => {
+      return await deriveGhostAccountPreview({
+        uniqueIdentifier: ghostIdentifierInput.trim(),
+        credentialType: ghostCredentialType,
+        derivationVersion: env.zkPassportGhostDerivationVersion,
+      });
+    });
+    if (result) {
+      setGhostMaterialPreview({
+        address: result.address,
+        scope: result.material.scope,
+        seedField: formatHex(result.material.seedField),
+        rootCommitment: formatHex(result.rootCommitment),
+      });
     }
   };
 
@@ -296,54 +1215,187 @@ export function App() {
     <main className="app-shell">
       <section className="hero-card">
         <p className="eyebrow">Magna x Aztec</p>
-        <h1>Browser onboarding, credential readiness, and verification</h1>
+        <h1>Magna Browser Console</h1>
         <p className="body-copy">
-          This app implements the first Magna browser slice: external wallet connection via wallet-sdk,
-          managed embedded-wallet onboarding for local development, passkey spike capture, and user-side
-          Magna verification flows backed by the repo’s existing SDK and bindings.
+          This screen combines wallet onboarding, local-dev issuance, user verification, operator sponsorship tools,
+          and admin diagnostics. Nothing below is a single linear user journey, so the layout is grouped by role and
+          workflow instead of presenting everything as one flat dashboard.
         </p>
-        <div className="status-banner">{statusMessage}</div>
-        {error ? <div className="error-banner">{error}</div> : null}
+        <div className="hero-map">
+          <div className="hero-map-card">
+            <p className="label">1. Setup</p>
+            <p className="muted-text">Inspect runtime wiring, connect an external wallet, or create/use the passkey in-app wallet.</p>
+          </div>
+          <div className="hero-map-card">
+            <p className="label">2. User Verification</p>
+            <p className="muted-text">Issue a dev credential, sync hinted notes, then run plain or sponsored verify.</p>
+          </div>
+          <div className="hero-map-card">
+            <p className="label">3. Operator Funding</p>
+            <p className="muted-text">Inspect sponsor rights, fund primarily through L1 portal purchase + L2 claim, or use L2 fallback.</p>
+          </div>
+          <div className="hero-map-card">
+            <p className="label">4. Diagnostics</p>
+            <p className="muted-text">Inspect contract surface, derive ghost context, and use issuer admin helpers.</p>
+          </div>
+        </div>
+        <div className="status-banner" data-testid="status-banner">
+          {statusMessage}
+        </div>
+        {error ? (
+          <div className="error-banner" data-testid="error-banner">
+            {error}
+          </div>
+        ) : null}
       </section>
 
-      <section className="grid-layout">
+      <WorkflowSection
+        eyebrow="Setup"
+        title="Network And Session Setup"
+        description="Use this group first. It answers three questions: what contracts the app is pointed at, whether chain/deployment state changed, and which wallet/account mode is currently active."
+      >
         <Panel
+          testId="panel-runtime"
           title="Runtime"
-          description="All runtime wiring comes from env vars so this app can point at local network or a future hosted setup."
+          badge="Wiring"
+          description="Read-only env wiring for the current frontend instance. If something behaves strangely, confirm these addresses and flags before debugging anything else."
         >
           <KeyValue label="Aztec node" value={env.aztecNodeUrl} />
+          <KeyValue label="Detected chain identity" value={chainIdentityLabel} />
           <KeyValue label="App id" value={env.appId} />
+          <KeyValue label="Verification API" value={env.verificationApiUrl ?? "not configured"} />
+          <KeyValue label="zkPassport request scope" value={env.zkPassportRequestScope} />
+          <KeyValue label="zkPassport primary issuance mode" value={env.zkPassportPrimaryIssuanceMode} />
+          <KeyValue label="Ghost derivation version" value={env.zkPassportGhostDerivationVersion} />
           <KeyValue label="Issuer" value={env.issuerAddress ?? "not configured"} />
-          <KeyValue label="Company sponsor" value={env.companySponsorAddress ?? "not configured"} />
+          <KeyValue label="Company sponsor count" value={String(env.companySponsors.length)} />
+          <KeyValue label="Active sponsor" value={env.activeCompanySponsorAddress ?? "not configured"} />
+          {env.companySponsors.length > 0 ? (
+            <div className="sub-card">
+              <p className="label">Configured sponsor catalog</p>
+              {env.companySponsors.map((sponsor, index) => (
+                <KeyValue
+                  key={`catalog-${sponsor.address}`}
+                  label={`Sponsor ${index + 1}${sponsor.isActiveDefault ? " (active)" : ""}`}
+                  value={sponsor.address}
+                />
+              ))}
+            </div>
+          ) : (
+            <p className="muted-text">No configured company sponsors.</p>
+          )}
+          <KeyValue label="Rights registry" value={env.rightsRegistryAddress ?? "not configured"} />
+          <KeyValue label="L2 purchase adapter" value={env.rightsPurchaseL2Address ?? "not configured"} />
+          <KeyValue label="L2 payment token" value={env.l2PaymentTokenAddress ?? "not configured"} />
+          <KeyValue label="L1 RPC" value={env.l1RpcUrl ?? "not configured"} />
+          <KeyValue label="L1 rights portal" value={env.l1RightsPortalAddress ?? "not configured"} />
+          <KeyValue label="L1 payment token" value={env.l1PaymentTokenAddress ?? "not configured"} />
           <KeyValue label="Orchestrator" value={env.orchestratorAddress ?? "local test bootstrap"} />
+          <KeyValue label="Sponsor profile" value={env.sponsorProfileName} />
+          <KeyValue label="Discovery timeout" value={`${env.walletDiscoveryTimeoutMs}ms`} />
+          <KeyValue label="Real sends required" value={env.requireRealSends ? "yes" : "no"} />
+          <KeyValue
+            label="Extension allow-list"
+            value={env.walletExtensionAllowList.length > 0 ? env.walletExtensionAllowList.join(", ") : "none"}
+          />
+          <KeyValue
+            label="Extension block-list"
+            value={env.walletExtensionBlockList.length > 0 ? env.walletExtensionBlockList.join(", ") : "none"}
+          />
           <KeyValue label="Managed wallets" value={env.enableManagedWallets ? "enabled" : "disabled"} />
           <KeyValue label="Dev orchestrator" value={env.enableDevOrchestrator ? "enabled" : "disabled"} />
+          {chainResetNotice ? (
+            <div className="sub-card">
+              <p className="label">Chain reset guard</p>
+              <p className="muted-text">{chainResetNotice}</p>
+            </div>
+          ) : null}
+          <p className="muted-text">
+            External wallet is the extension path. In-app wallet uses passkey-authenticated secp256r1 derivation; managed fallback stays local-dev only.
+          </p>
         </Panel>
 
         <Panel
+          testId="panel-external-wallets"
           title="External Wallets"
-          description="Uses `@aztec/wallet-sdk` discovery plus the secure-channel emoji handshake before a wallet session is confirmed."
+          badge="User Path"
+          description="Canonical browser wallet onboarding path. Discover extension wallets, open a secure channel, and confirm the emoji handshake before a session is created."
         >
-          <button disabled={busyAction !== null} onClick={() => void handleDiscoverWallets()}>
-            Discover extension wallets
-          </button>
-          {providers.length === 0 ? <p className="muted-text">No wallet providers discovered yet.</p> : null}
+          {externalSession ? (
+            <div className="sub-card">
+              <p className="label">Connection status</p>
+              <KeyValue label="State" value="Connected" />
+              <KeyValue label="Wallet" value={externalSession.label} />
+              <KeyValue label="Provider id" value={externalSession.metadata?.providerId ?? "unknown"} />
+              <KeyValue label="Wallet version" value={externalSession.metadata?.walletVersion ?? "unknown"} />
+              <KeyValue label="Granted capabilities" value={externalSession.metadata?.grantedCapabilities ?? "unknown"} />
+              <KeyValue label="Active account" value={activeAccount?.address ?? externalSession.activeAccount.address} />
+              <div className="button-row">
+                <button className="secondary-button" disabled={busyAction !== null} onClick={() => void handleDisconnect()}>
+                  Disconnect external wallet
+                </button>
+              </div>
+            </div>
+          ) : null}
+          <div className="button-row">
+            <button
+              data-testid="discover-wallets"
+              disabled={busyAction !== null || isDiscovering || externalSession !== null}
+              onClick={() => void handleDiscoverWallets()}
+            >
+              {externalSession ? "External wallet connected" : isDiscovering ? "Discovering..." : "Discover extension wallets"}
+            </button>
+            <button
+              data-testid="cancel-discovery"
+              className="secondary-button"
+              disabled={busyAction !== null || !isDiscovering}
+              onClick={() => {
+                discoveryRef.current?.cancel();
+                discoveryRef.current = null;
+                setIsDiscovering(false);
+                setStatusMessage("External wallet discovery cancelled.");
+                appendLog("External wallet discovery cancelled");
+              }}
+            >
+              Cancel discovery
+            </button>
+          </div>
+          {providers.length === 0 ? (
+            <p className="muted-text">
+              {isDiscovering ? "Waiting for an approved wallet provider..." : "No wallet providers discovered yet."}
+            </p>
+          ) : null}
           <div className="stack-list">
-            {providers.map((provider, index) => (
-              <button key={provider.id} className="secondary-button" disabled={busyAction !== null} onClick={() => void handleBeginExternalConnection(index)}>
-                Connect {provider.name}
-              </button>
-            ))}
+            {providers.map((provider, index) => {
+              const isConnectedProvider = connectedExternalProviderId === provider.id;
+              return (
+                <button
+                  key={provider.id}
+                  data-testid={`connect-provider-${index}`}
+                  className="secondary-button"
+                  disabled={busyAction !== null || isConnectedProvider}
+                  onClick={() => void handleBeginExternalConnection(index)}
+                >
+                  {isConnectedProvider ? `Connected to ${provider.name}` : `Connect ${provider.name}`}
+                </button>
+              );
+            })}
           </div>
           {pendingConnection ? (
             <div className="sub-card">
-              <p className="label">Verify these wallet-sdk emojis in your wallet UI</p>
+              <p className="label">Compare these wallet-sdk emojis with your wallet UI</p>
               <p className="emoji-grid">{pendingConnection.emojiGrid}</p>
+              <p className="muted-text">
+                The wallet should already have shown its own emoji grid during secure-channel setup. After you verify
+                the emojis match, finishing here finalizes the encrypted session and may ask the wallet to approve the
+                Aztec capabilities Magna needs, starting with account access.
+              </p>
               <div className="button-row">
-                <button disabled={busyAction !== null} onClick={() => void handleConfirmExternalConnection()}>
-                  Confirm secure channel
+                <button data-testid="confirm-secure-channel" disabled={busyAction !== null} onClick={() => void handleConfirmExternalConnection()}>
+                  Finish wallet connection
                 </button>
                 <button
+                  data-testid="cancel-secure-channel"
                   className="secondary-button"
                   disabled={busyAction !== null}
                   onClick={() => {
@@ -359,13 +1411,45 @@ export function App() {
         </Panel>
 
         <Panel
-          title="Managed Wallet"
-          description="Local-dev fallback using browser `EmbeddedWallet`, with optional bootstrap from Aztec’s initial test account so new users can be deployed and exercised immediately."
+          testId="panel-managed-wallet"
+          title="Magna Passkey Wallet"
+          badge="In-App Path"
+          description="Primary in-app wallet path: authenticate with passkey, deterministically derive secp256r1 account material, and open an embedded wallet session. Local managed bootstrap remains available as fallback."
         >
-          <Field label="Managed account alias">
+          <Field label="Wallet alias">
             <input value={managedAlias} onChange={event => setManagedAlias(event.target.value)} />
           </Field>
-          <Field label="Account flavor">
+          <KeyValue label="WebAuthn support" value={passkeyCapability?.isSupported ? "yes" : "no"} />
+          <KeyValue label="Conditional UI" value={passkeyCapability?.hasConditionalUi ? "yes" : "no"} />
+          <KeyValue label="Platform authenticator" value={passkeyCapability?.hasPlatformAuthenticator ? "yes" : "no"} />
+          <div className="button-row">
+            <button
+              data-testid="create-passkey-wallet"
+              disabled={busyAction !== null || !passkeyCapability?.isSupported}
+              onClick={() => void handleCreateOrUsePasskeyWallet()}
+            >
+              {passkeyRecord ? "Use saved passkey wallet" : "Create Magna passkey wallet"}
+            </button>
+            <button
+              className="secondary-button"
+              disabled={busyAction !== null || !passkeyRecord}
+              onClick={() => handleForgetPasskeyWallet()}
+            >
+              Forget stored passkey
+            </button>
+          </div>
+          {passkeyRecord ? (
+            <div className="sub-card">
+              <KeyValue label="Stored credential id" value={passkeyRecord.credentialId} />
+              <KeyValue label="Passkey RP id" value={passkeyRecord.rpId} />
+              <KeyValue label="Stored user label" value={passkeyRecord.userName} />
+              <KeyValue label="Created at" value={passkeyRecord.createdAt} />
+            </div>
+          ) : (
+            <p className="muted-text">No passkey record saved yet for this browser profile.</p>
+          )}
+
+          <Field label="Fallback account flavor">
             <select value={managedFlavor} onChange={event => setManagedFlavor(event.target.value as ManagedAccountFlavor)}>
               <option value="schnorr">Schnorr</option>
               <option value="secp256r1">secp256r1 / P-256</option>
@@ -374,40 +1458,20 @@ export function App() {
           <p className="muted-text">
             Bootstrap source: {env.enableLocalTestBootstrap ? `local test account #${env.localTestAccountIndex}` : "disabled"}
           </p>
-          <button disabled={!env.enableManagedWallets || busyAction !== null} onClick={() => void handleCreateManagedWallet()}>
-            Create managed wallet
+          <button
+            data-testid="create-managed-wallet"
+            disabled={!env.enableManagedWallets || busyAction !== null}
+            onClick={() => void handleCreateManagedWallet()}
+          >
+            Create managed fallback wallet
           </button>
         </Panel>
 
         <Panel
-          title="Passkey Spike"
-          description="Technical spike for browser WebAuthn. This captures the passkey credential metadata we will need for a custom Aztec/WebAuthn account path."
-        >
-          <KeyValue label="WebAuthn support" value={passkeyCapability?.isSupported ? "yes" : "no"} />
-          <KeyValue label="Conditional UI" value={passkeyCapability?.hasConditionalUi ? "yes" : "no"} />
-          <KeyValue label="Platform authenticator" value={passkeyCapability?.hasPlatformAuthenticator ? "yes" : "no"} />
-          <button disabled={busyAction !== null || !passkeyCapability?.isSupported} onClick={() => void handlePasskeySpike()}>
-            Create spike passkey
-          </button>
-          <p className="muted-text">
-            Current Aztec account contracts still expect direct secp256r1 signing material, so this spike stores
-            browser passkey outputs without pretending the full signer bridge is finished.
-          </p>
-          {passkeyResult ? (
-            <div className="sub-card">
-              <KeyValue label="Credential id" value={passkeyResult.credentialId} />
-              <KeyValue label="RP id" value={passkeyResult.rpId} />
-              <KeyValue label="Attachment" value={passkeyResult.authenticatorAttachment ?? "unknown"} />
-              <KeyValue label="Algorithm" value={String(passkeyResult.publicKeyAlgorithm ?? "unknown")} />
-            </div>
-          ) : null}
-        </Panel>
-      </section>
-
-      <section className="grid-layout">
-        <Panel
+          testId="panel-session"
           title="Session"
-          description="The selected active account is used for note sync and verify transactions."
+          badge="Current User"
+          description="The selected active account becomes the user identity for note sync and verify actions. Session metadata also exposes fee-payer and recovery details when available."
         >
           {session ? (
             <>
@@ -433,36 +1497,155 @@ export function App() {
             <p className="muted-text">No wallet session connected yet.</p>
           )}
         </Panel>
+      </WorkflowSection>
 
+      <WorkflowSection
+        eyebrow="User Flow"
+        title="Credential Readiness And Verification"
+        description="The sequence is: choose a session account, start zkPassport rooted onboarding with an age threshold, let zkPassport disclose canonical passport claims, prepare ghost lifecycle, then fetch hints and verify. A separate dev-only legacy issuance fallback remains below for debugging."
+      >
         <Panel
+          testId="panel-credential-issuance"
           title="Credential Issuance"
-          description="Dev-only orchestration path for local network. This form now matches Magna's real zkPassport-backed passport model: age threshold, nationality, and passport expiry."
+          badge="zkPassport Primary"
+          description="Primary path: start a zkPassport request, complete proof generation on mobile, verify on the dedicated backend, and issue rooted passport lineage through the orchestrator. Nationality and passport expiry come from zkPassport, not manual entry."
         >
-          <Field label="Recovery / ghost owner">
-            <input
-              value={ghostOwner}
-              onChange={event => setGhostOwner(event.target.value)}
-              placeholder={activeAccount?.address ?? "0x..."}
+          <ZkPassportRequestEditor
+            ageThreshold={claimsForm.ageThreshold}
+            onAgeThresholdChange={ageThreshold =>
+              setClaimsForm(current => ({
+                ...current,
+                ageThreshold,
+              }))
+            }
+            lastIssue={zkPassportLastIssue}
+          />
+          <div className="button-row">
+            <button
+              data-testid="start-zkpassport-request"
+              disabled={busyAction !== null || !activeAccount || activeZkRequest !== null}
+              onClick={() => void handleStartZkPassportIssuance()}
+            >
+              {activeZkRequest ? "zkPassport request in progress" : "Start zkPassport issuance"}
+            </button>
+            <button
+              data-testid="cancel-zkpassport-request"
+              className="secondary-button"
+              disabled={busyAction !== null || activeZkRequest === null}
+              onClick={() => handleCancelZkPassportRequest()}
+            >
+              Cancel zkPassport request
+            </button>
+          </div>
+          <div className="sub-card">
+            <KeyValue label="zkPassport stage" value={zkPassportStage} />
+            <KeyValue label="Proofs generated" value={String(zkPassportProofCount)} />
+            <KeyValue label="Verification API" value={env.verificationApiUrl ?? "not configured"} />
+            <KeyValue label="Request scope" value={env.zkPassportRequestScope} />
+            <KeyValue label="Issuance mode" value={env.zkPassportPrimaryIssuanceMode} />
+            <KeyValue label="Ghost derivation version" value={env.zkPassportGhostDerivationVersion} />
+            <KeyValue
+              label="Proof mode"
+              value={env.zkPassportDevMode ? "dev mode (mock proofs allowed)" : "strict mode (real proofs only)"}
             />
-          </Field>
-          <ClaimsFormEditor form={claimsForm} onChange={setClaimsForm} />
-          <button disabled={busyAction !== null || !activeAccount || !env.enableDevOrchestrator} onClick={() => void handleIssuePassport()}>
-            Issue passport credential
-          </button>
+            {activeZkRequest ? <KeyValue label="Request id" value={activeZkRequest.requestId} /> : null}
+          </div>
+          {activeZkRequest ? (
+            <div className="sub-card">
+              <p className="label">Scan with zkPassport mobile app</p>
+              <div style={{ background: "white", borderRadius: "12px", padding: "12px", width: "fit-content" }}>
+                <QRCode value={activeZkRequest.url} size={180} />
+              </div>
+              <p className="muted-text">
+                If you are on mobile, open directly:{" "}
+                <a href={activeZkRequest.url} target="_blank" rel="noreferrer">
+                  Open zkPassport request link
+                </a>
+              </p>
+            </div>
+          ) : null}
+          {zkPassportLastIssue ? (
+            <div className="sub-card">
+              <KeyValue label="Latest issuance tx" value={zkPassportLastIssue.issuanceTxHash ?? "pending"} />
+              <KeyValue label="Claims hash" value={zkPassportLastIssue.claimsHash} />
+              <KeyValue label="Derived ghost wallet address (zkPassport flow)" value={zkPassportLastIssue.ghostOwner} />
+              <KeyValue label="Root commitment" value={zkPassportLastIssue.rootCommitment} />
+              <KeyValue label="Issuer mode" value={zkPassportLastIssue.mode} />
+              <KeyValue label="Ghost derivation version" value={zkPassportLastIssue.ghostDerivationVersion} />
+            </div>
+          ) : null}
+          {ghostLifecycle ? (
+            <div className="sub-card">
+              <p className="label">Ghost account lifecycle</p>
+              <KeyValue label="Ghost address" value={ghostLifecycle.address} />
+              <KeyValue label="Derivation version" value={ghostLifecycle.derivationVersion} />
+              <KeyValue label="Derivation scope" value={ghostLifecycle.scope} />
+              <KeyValue label="Deployment status" value={ghostLifecycle.deploymentStatus} />
+              <KeyValue label="Session origin" value={ghostLifecycle.sessionOrigin} />
+              <KeyValue label="Deployment payer" value={ghostLifecycle.feePayer} />
+            </div>
+          ) : null}
+
+          {env.enableDevOrchestrator ? (
+            <div className="sub-card">
+              <p className="label">Dev fallback (local only)</p>
+              <p className="muted-text">
+                This path is separate from zkPassport-backed issuance. Use it only for local debugging when zkPassport or
+                the verification API is unavailable.
+              </p>
+              <ClaimsFormEditor form={claimsForm} onChange={setClaimsForm} />
+              <Field label="Scoped unique identifier field">
+                <input
+                  value={ghostIdentifierInput}
+                  onChange={event => setGhostIdentifierInput(event.target.value)}
+                  placeholder="decimal or 0x field value"
+                />
+              </Field>
+              {ghostOwner ? (
+                <div className="sub-card">
+                  <KeyValue testId="issuance-derived-ghost-address" label="Derived ghost wallet address" value={ghostOwner} />
+                </div>
+              ) : (
+                <p className="muted-text">Enter a scoped unique identifier to derive the ghost wallet address used for issuance.</p>
+              )}
+              <button
+                data-testid="issue-passport"
+                disabled={busyAction !== null || !activeAccount}
+                onClick={() => void handleIssuePassport()}
+              >
+                Issue passport credential (dev fallback)
+              </button>
+            </div>
+          ) : null}
         </Panel>
 
         <Panel
+          testId="panel-readiness"
           title="Readiness"
-          description="Registers the orchestrator sender and pulls hinted notes for the currently selected account and claims hash."
+          badge="Private Notes"
+          description="Registers the orchestrator sender in the wallet, then fetches hinted notes for the selected account and current claims hash. Rooted lineage also loads root-status and root-authority hints."
         >
-          <button disabled={busyAction !== null || !activeAccount || !env.issuerAddress} onClick={() => void handleFetchHints()}>
+          <button
+            data-testid="fetch-hints"
+            disabled={busyAction !== null || !activeAccount || !env.issuerAddress || activeZkRequest !== null}
+            onClick={() => void handleFetchHints()}
+          >
             Fetch hinted notes
           </button>
           {hints ? (
             <div className="sub-card">
-              <KeyValue label="Claims hash" value={hints.claimsHash} />
+              <KeyValue testId="readiness-claims-hash" label="Claims hash" value={hints.claimsHash} />
+              <KeyValue label="Issuance lineage" value={isRootedPassportHints(hints) ? "rooted" : "legacy-rootless"} />
               <KeyValue label="Credential note" value="loaded" />
               <KeyValue label="Status note" value="loaded" />
+              {isRootedPassportHints(hints) ? (
+                <>
+                  <KeyValue label="Root commitment" value={hints.rootCommitment} />
+                  <KeyValue label="Root status note" value="loaded" />
+                  <KeyValue label="Root authority note" value="loaded" />
+                  <KeyValue label="Linked recovery note" value={hints.hintedLinkedRecoveryNote ? "loaded" : "not loaded"} />
+                </>
+              ) : null}
             </div>
           ) : (
             <p className="muted-text">Fetch hinted notes after issuance or when pointing at an already-issued credential.</p>
@@ -470,24 +1653,304 @@ export function App() {
         </Panel>
 
         <Panel
+          testId="panel-verify"
           title="Verify"
-          description="Runs the first user-facing Magna flows: normal verify and company-sponsored verify."
+          badge="Real Sends"
+          description="Runs the user-facing proof path with real sends only. The policy form is the verification rule set; the claims form above is the issued credential input set."
         >
           <PolicyFormEditor form={policyForm} onChange={setPolicyForm} />
+          <Field label="Sponsor gateway">
+            <select
+              data-testid="sponsor-select-verify"
+              value={selectedSponsorAddress}
+              onChange={event => setSelectedSponsorAddress(event.target.value)}
+              disabled={configuredSponsors.length === 0}
+            >
+              {configuredSponsors.length === 0 ? <option value="">No sponsor configured</option> : null}
+              {configuredSponsors.map(sponsor => (
+                <option key={`verify-${sponsor.address}`} value={sponsor.address}>
+                  {sponsor.isActiveDefault ? "[active] " : ""}
+                  {sponsor.address}
+                </option>
+              ))}
+            </select>
+          </Field>
           <div className="button-row">
-            <button disabled={busyAction !== null || !hints || !activeAccount} onClick={() => void handleVerify()}>
+            <button
+              data-testid="verify"
+              disabled={busyAction !== null || !hints || !activeAccount || !env.requireRealSends}
+              onClick={() => void handleVerify()}
+            >
               Verify with Magna
             </button>
             <button
+              data-testid="sponsored-verify"
               className="secondary-button"
-              disabled={busyAction !== null || !hints || !activeAccount || !env.companySponsorAddress}
+              disabled={busyAction !== null || !hints || !activeAccount || !selectedSponsorAddress || !env.requireRealSends}
               onClick={() => void handleSponsoredVerify()}
             >
               Sponsored verify
             </button>
+            <button
+              data-testid="refresh-root-authority"
+              className="secondary-button"
+              disabled={busyAction !== null || !hints || !isRootedPassportHints(hints) || !env.requireRealSends}
+              onClick={() => void handleRefreshRootAuthority()}
+            >
+              Refresh rooted authority
+            </button>
+            <button
+              data-testid="recover-root"
+              className="secondary-button"
+              disabled={
+                busyAction !== null ||
+                !hints ||
+                !isRootedPassportHints(hints) ||
+                !session ||
+                session.kind === "external" ||
+                !env.requireRealSends
+              }
+              onClick={() => void handleRecoverRoot()}
+            >
+              Recover root from ghost
+            </button>
           </div>
+          {!env.requireRealSends ? (
+            <p className="muted-text">
+              This app forbids fake success paths. Set <code>VITE_MAGNA_REQUIRE_REAL_SENDS=true</code> to run critical flows.
+            </p>
+          ) : null}
         </Panel>
-      </section>
+      </WorkflowSection>
+
+      <WorkflowSection
+        eyebrow="Operator"
+        title="Sponsor Budget Operations"
+        description="These panels are not normal end-user actions. They are for inspecting sponsorship state and funding more rights for a selected sponsor gateway."
+      >
+        <Panel
+          testId="panel-sponsor-rights"
+          title="Sponsor Rights (Operator)"
+          badge="Funding"
+          description="Reads sponsor rights state from the rights registry. Primary path buys rights from L1 through the rights portal, then claims on L2. L2 purchase remains as a local fallback."
+        >
+          <Field label="Sponsor address (Aztec)">
+            <select
+              data-testid="sponsor-select-rights"
+              value={rightsSponsorAddress}
+              onChange={event => setRightsSponsorAddress(event.target.value)}
+              disabled={configuredSponsors.length === 0}
+            >
+              {configuredSponsors.length === 0 ? <option value="">No sponsor configured</option> : null}
+              {configuredSponsors.map(sponsor => (
+                <option key={`rights-${sponsor.address}`} value={sponsor.address}>
+                  {sponsor.isActiveDefault ? "[active] " : ""}
+                  {sponsor.address}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Top-up rights amount">
+            <input value={rightsTopUpAmount} onChange={event => setRightsTopUpAmount(event.target.value)} />
+          </Field>
+          <Field label="Top-up package id (optional bigint)">
+            <input value={rightsPackageId} onChange={event => setRightsPackageId(event.target.value)} placeholder="random when empty" />
+          </Field>
+          <Field label="L1 extra policy hash (optional 0x hex)">
+            <input
+              value={rightsExtraPolicyHash}
+              onChange={event => setRightsExtraPolicyHash(event.target.value)}
+              placeholder="random 32-byte value when empty"
+            />
+          </Field>
+          <div className="button-row">
+            <button
+              data-testid="read-rights-state"
+              disabled={busyAction !== null || !activeAccount || !rightsSponsorAddress}
+              onClick={() => void handleReadSponsorRights()}
+            >
+              Read rights state
+            </button>
+            <button
+              data-testid="topup-rights-l1"
+              disabled={
+                busyAction !== null || !activeAccount || !rightsSponsorAddress || !env.requireRealSends || !hasL1FundingConfig
+              }
+              onClick={() => void handleTopUpSponsorRightsFromL1()}
+            >
+              Top up rights (L1 primary)
+            </button>
+            <button
+              data-testid="topup-rights-l2"
+              className="secondary-button"
+              disabled={busyAction !== null || !activeAccount || !rightsSponsorAddress || !env.requireRealSends}
+              onClick={() => void handleTopUpSponsorRights()}
+            >
+              Top up rights (L2 fallback)
+            </button>
+          </div>
+          {!hasL1FundingConfig ? (
+            <p className="muted-text">
+              Configure <code>VITE_MAGNA_L1_RPC_URL</code>, <code>VITE_MAGNA_L1_RIGHTS_PORTAL_ADDRESS</code>,{" "}
+              <code>VITE_MAGNA_L1_PAYMENT_TOKEN_ADDRESS</code>, and <code>VITE_MAGNA_L1_BUYER_PRIVATE_KEY</code> to use the
+              primary L1 funding path.
+            </p>
+          ) : null}
+          {rightsSnapshot ? (
+            <div className="sub-card">
+              <KeyValue testId="rights-remaining-verifies" label="Remaining verifies" value={rightsSnapshot.remainingVerifies.toString()} />
+              <KeyValue testId="rights-consumed-verifies" label="Consumed verifies" value={rightsSnapshot.consumedVerifies.toString()} />
+              <KeyValue label="Last credit nonce" value={rightsSnapshot.lastCreditNonce.toString()} />
+              <KeyValue label="Latest package id" value={rightsSnapshot.latestPackageId.toString()} />
+              <KeyValue testId="rights-next-purchase-id" label="Next purchase id" value={rightsSnapshot.nextPurchaseId.toString()} />
+              <KeyValue label="L2 price per verify" value={rightsSnapshot.l2PricePerVerify.toString()} />
+              <KeyValue label="Rights registry" value={rightsSnapshot.rightsRegistryAddress} />
+              <KeyValue label="L2 purchase adapter" value={rightsSnapshot.rightsPurchaseAddress} />
+              <KeyValue label="L2 payment token" value={rightsSnapshot.paymentTokenAddress} />
+              <KeyValue label="Purchase treasury" value={rightsSnapshot.purchaseTreasuryAddress} />
+            </div>
+          ) : (
+            <p className="muted-text">No sponsor rights snapshot loaded yet.</p>
+          )}
+          {lastTopUpOutcome ? (
+            <div className="sub-card">
+              <KeyValue testId="rights-last-topup-tx-hash" label="Last top-up tx hash" value={lastTopUpOutcome.txHash ?? "unknown"} />
+              <KeyValue testId="rights-last-topup-purchase-id" label="Purchase id" value={lastTopUpOutcome.purchaseId.toString()} />
+              <KeyValue testId="rights-last-topup-rights-amount" label="Rights amount" value={lastTopUpOutcome.rightsAmount.toString()} />
+              <KeyValue label="Payment amount" value={lastTopUpOutcome.paymentAmount.toString()} />
+              <KeyValue label="Package id" value={lastTopUpOutcome.packageId.toString()} />
+            </div>
+          ) : null}
+          {lastL1TopUpOutcome ? (
+            <div className="sub-card">
+              <KeyValue label="Last L1 purchase tx hash" value={lastL1TopUpOutcome.purchaseTxHash} />
+              <KeyValue label="Last L1 approve tx hash" value={lastL1TopUpOutcome.approveTxHash} />
+              <KeyValue label="Last L2 claim tx hash" value={lastL1TopUpOutcome.claimTxHash} />
+              <KeyValue label="L1 purchase id" value={lastL1TopUpOutcome.purchaseId.toString()} />
+              <KeyValue label="L1 credit nonce" value={lastL1TopUpOutcome.creditNonce} />
+              <KeyValue label="L1 message leaf index" value={lastL1TopUpOutcome.messageLeafIndex.toString()} />
+              <KeyValue label="Rights amount (L1)" value={lastL1TopUpOutcome.rightsAmount.toString()} />
+              <KeyValue label="Payment amount (L1)" value={lastL1TopUpOutcome.paymentAmount.toString()} />
+            </div>
+          ) : null}
+        </Panel>
+      </WorkflowSection>
+
+      <WorkflowSection
+        eyebrow="Diagnostics"
+        title="Ghost Context, Compatibility, And Admin Helpers"
+        description="These panels explain or inspect the current deployment. They are useful for debugging and admin setup, but they are not part of the basic verification path."
+      >
+        <Panel
+          testId="panel-ghost-context"
+          title="Ghost Derivation Context"
+          badge="Derived Data"
+          description="Pure derivation helper for ghost scope and root commitment from the same locally entered scoped unique identifier that drives the ghost wallet address for issuance."
+        >
+          <Field label="Credential type for scope">
+            <select value={String(ghostCredentialType)} onChange={event => setGhostCredentialType(Number(event.target.value) as CredentialType)}>
+              <option value={String(CredentialType.Passport)}>Passport</option>
+              <option value={String(CredentialType.Instagram)}>Instagram</option>
+            </select>
+          </Field>
+          <button data-testid="derive-ghost-context" disabled={busyAction !== null || !activeAccount} onClick={() => void handleDeriveGhostContext()}>
+            Derive ghost and root context
+          </button>
+          {ghostMaterialPreview ? (
+            <div className="sub-card">
+              <KeyValue label="Scoped unique identifier (local input)" value={ghostIdentifierInput.trim()} />
+              <KeyValue label="Derived ghost wallet address" value={ghostMaterialPreview.address} />
+              <KeyValue label="Configured derivation version" value={env.zkPassportGhostDerivationVersion} />
+              <KeyValue label="Recovery scope" value={ghostMaterialPreview.scope} />
+              <KeyValue label="Ghost seed field" value={ghostMaterialPreview.seedField} />
+              <KeyValue testId="ghost-context-root-commitment" label="Root commitment" value={ghostMaterialPreview.rootCommitment} />
+            </div>
+          ) : (
+            <p className="muted-text">Derive context only from scoped values and keep raw identifiers private.</p>
+          )}
+        </Panel>
+
+        <Panel
+          testId="panel-contract-compatibility"
+          title="Contract Compatibility"
+          badge="Inspection"
+          description="Shows which expected contract methods are available to the frontend and whether configured sponsors are currently authorized by the issuer."
+        >
+          <button data-testid="inspect-compatibility" disabled={busyAction !== null || !activeAccount} onClick={() => void handleInspectContractCompatibility()}>
+            Inspect compatibility matrix
+          </button>
+          {compatibilityMatrix ? (
+            <div className="sub-card">
+              <CompatibilityGroup label="Issuer" map={compatibilityMatrix.issuer} />
+              <CompatibilityGroup
+                label={`Default sponsor${compatibilityMatrix.defaultSponsorAddress ? ` (${compatibilityMatrix.defaultSponsorAddress})` : ""}`}
+                map={compatibilityMatrix.sponsor}
+              />
+              {Object.entries(compatibilityMatrix.sponsorByAddress).map(([address, map]) => (
+                <CompatibilityGroup key={`sponsor-${address}`} label={`Sponsor ${address}`} map={map} />
+              ))}
+              <CompatibilityGroup label="Rights registry" map={compatibilityMatrix.rightsRegistry} />
+              <CompatibilityGroup label="Rights purchase" map={compatibilityMatrix.rightsPurchase} />
+            </div>
+          ) : (
+            <p className="muted-text">Run inspection after connecting an account session.</p>
+          )}
+          {sponsorRuntimeStatuses.length > 0 ? (
+            <div className="sub-card">
+              <p className="label">Issuer authorization status</p>
+              {sponsorRuntimeStatuses.map(status => (
+                <KeyValue
+                  key={`issuer-auth-${status.sponsorAddress}`}
+                  label={`${status.sponsorAddress}${status.isActiveDefault ? " (active)" : ""}`}
+                  value={
+                    status.isIssuerAuthorized === null
+                      ? "unknown (method unavailable)"
+                      : status.isIssuerAuthorized
+                        ? "authorized"
+                        : "not authorized"
+                  }
+                />
+              ))}
+            </div>
+          ) : null}
+        </Panel>
+
+        <Panel
+          testId="panel-issuer-sponsor-admin"
+          title="Issuer Sponsor Admin"
+          badge="Admin"
+          description="Issuer admin helper for onboarding sponsor gateways on the currently configured issuer deployment."
+        >
+          <Field label="Gateway candidate address">
+            <input
+              data-testid="gateway-candidate-address"
+              value={gatewayCandidateAddress}
+              onChange={event => setGatewayCandidateAddress(event.target.value)}
+              placeholder="0x..."
+            />
+          </Field>
+          <div className="button-row">
+            <button
+              data-testid="add-sponsor-gateway"
+              disabled={busyAction !== null || !activeAccount || !gatewayCandidateAddress.trim() || !env.requireRealSends}
+              onClick={() => void handleAddSponsorGateway()}
+            >
+              Add sponsor gateway
+            </button>
+            <button
+              className="secondary-button"
+              disabled={busyAction !== null || !activeAccount}
+              onClick={() => void handleInspectContractCompatibility()}
+            >
+              Refresh sponsor status
+            </button>
+          </div>
+          <p className="muted-text">
+            This action succeeds only when the connected account is authorized to call issuer admin entrypoints.
+          </p>
+        </Panel>
+
+      </WorkflowSection>
 
       <section className="panel">
         <div className="panel-header">
@@ -501,7 +1964,7 @@ export function App() {
         ) : (
           <div className="log-list">
             {activityLog.map(entry => (
-              <code key={entry}>{entry}</code>
+              <code key={entry.id}>{entry.message}</code>
             ))}
           </div>
         )}
@@ -510,12 +1973,33 @@ export function App() {
   );
 }
 
-function Panel(props: { title: string; description: string; children: React.ReactNode }) {
+function WorkflowSection(props: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}) {
   return (
-    <section className="panel">
+    <section className="workflow-section">
+      <div className="workflow-section-header">
+        <p className="eyebrow">{props.eyebrow}</p>
+        <h2>{props.title}</h2>
+        <p className="panel-copy">{props.description}</p>
+      </div>
+      <div className="grid-layout">{props.children}</div>
+    </section>
+  );
+}
+
+function Panel(props: { title: string; description: string; badge?: string; testId?: string; children: React.ReactNode }) {
+  return (
+    <section className="panel" data-testid={props.testId}>
       <div className="panel-header">
         <div>
-          <h2>{props.title}</h2>
+          <div className="panel-title-row">
+            <h2>{props.title}</h2>
+            {props.badge ? <span className="panel-badge">{props.badge}</span> : null}
+          </div>
           <p className="panel-copy">{props.description}</p>
         </div>
       </div>
@@ -533,12 +2017,58 @@ function Field(props: { label: string; children: React.ReactNode }) {
   );
 }
 
-function KeyValue(props: { label: string; value: string }) {
+function KeyValue(props: { label: string; value: string; testId?: string }) {
   return (
-    <div className="key-value">
+    <div className="key-value" data-testid={props.testId}>
       <span>{props.label}</span>
       <code>{props.value}</code>
     </div>
+  );
+}
+
+function CompatibilityGroup(props: { label: string; map: Record<string, boolean> }) {
+  return (
+    <>
+      <p className="label">{props.label}</p>
+      {Object.entries(props.map).map(([key, supported]) => (
+        <KeyValue key={`${props.label}:${key}`} label={key} value={supported ? "supported" : "missing"} />
+      ))}
+    </>
+  );
+}
+
+function ZkPassportRequestEditor(props: {
+  ageThreshold: string;
+  onAgeThresholdChange: (ageThreshold: string) => void;
+  lastIssue: ZkPassportIssueResponse | null;
+}) {
+  const { ageThreshold, onAgeThresholdChange, lastIssue } = props;
+  return (
+    <>
+      <p className="muted-text">
+        The primary flow only asks for the age threshold up front. Nationality and passport expiry are derived from the
+        verified zkPassport disclosure on the backend, not from manual form inputs. The default issuance lineage is
+        rooted; legacy rootless mode should only be used as an explicit compatibility path.
+      </p>
+      <div className="field-grid">
+        <Field label="zkPassport age proof threshold">
+          <input value={ageThreshold} onChange={event => onAgeThresholdChange(event.target.value)} placeholder="18" />
+        </Field>
+      </div>
+      {lastIssue ? (
+        <div className="sub-card">
+          <p className="label">Latest verified zkPassport claims</p>
+          <KeyValue label="Nationality (alpha-3)" value={lastIssue.normalizedClaims.nationalityAlpha3} />
+          <KeyValue label="Age threshold proven" value={String(lastIssue.normalizedClaims.minAgeProven)} />
+          <KeyValue label="Passport expiry date" value={lastIssue.normalizedClaims.passportExpiryDate} />
+        </div>
+      ) : (
+        <p className="muted-text">
+          After a successful zkPassport issuance, the verified nationality and passport expiry will appear here and drive
+          the later hint and verify steps.
+        </p>
+      )}
+    </>
   );
 }
 
@@ -547,26 +2077,25 @@ function ClaimsFormEditor(props: { form: PassportClaimsForm; onChange: (form: Pa
   return (
     <>
       <p className="muted-text">
-        Magna's current passport credential commitment is derived from zkPassport disclosure for nationality, an
-        age proof threshold like "18+", and the passport expiry date. The older upper-age placeholder is not part
-        of the user-facing policy surface and is fixed internally.
+        Local-only manual claims editor for the dev fallback path. The real zkPassport path does not trust manual
+        nationality or passport expiry entry. The older upper-age placeholder is fixed internally.
       </p>
       <div className="field-grid">
-        <Field label="Disclosed nationality (alpha-3)">
+        <Field label="Manual nationality (alpha-3)">
           <input
             value={form.nationalityAlpha3}
             onChange={event => onChange({ ...form, nationalityAlpha3: event.target.value })}
             placeholder="TUR"
           />
         </Field>
-        <Field label="zkPassport age proof threshold">
+        <Field label="Manual age threshold">
           <input
             value={form.ageThreshold}
             onChange={event => onChange({ ...form, ageThreshold: event.target.value })}
             placeholder="18"
           />
         </Field>
-        <Field label="Passport expiry date">
+        <Field label="Manual passport expiry date">
           <input
             type="date"
             value={form.passportExpiryDate}
@@ -583,16 +2112,32 @@ function PolicyFormEditor(props: { form: PolicyForm; onChange: (form: PolicyForm
   return (
     <>
       <p className="muted-text">
-        Current passport verification policy checks only the disclosed age threshold, nationality, and expiry.
+        Current passport verification policy checks the disclosed age threshold plus an optional single-country
+        nationality rule. You can require a country, exclude a country, or leave nationality unconstrained.
       </p>
       <div className="field-grid">
         <Field label="Minimum age required">
           <input value={form.minimumAge} onChange={event => onChange({ ...form, minimumAge: event.target.value })} />
         </Field>
-        <Field label="Disallow nationality (optional)">
+        <Field label="Nationality rule">
+          <select
+            value={form.nationalityMode}
+            onChange={event =>
+              onChange({
+                ...form,
+                nationalityMode: event.target.value as PolicyForm["nationalityMode"],
+              })
+            }
+          >
+            <option value="any">Any nationality</option>
+            <option value="must_be">Must be</option>
+            <option value="must_not_be">Must not be</option>
+          </select>
+        </Field>
+        <Field label="Nationality country (alpha-3, optional)">
           <input
-            value={form.blockedNationalityAlpha3}
-            onChange={event => onChange({ ...form, blockedNationalityAlpha3: event.target.value })}
+            value={form.nationalityAlpha3}
+            onChange={event => onChange({ ...form, nationalityAlpha3: event.target.value })}
             placeholder="USA"
           />
         </Field>

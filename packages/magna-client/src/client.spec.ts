@@ -228,6 +228,93 @@ describe("MagnaClient login flows", () => {
     );
   });
 
+  it("loginWithCompanySponsor uses first companySponsorContracts entry when primary is not set", async () => {
+    let capturedSendOptions: { from: string; fee?: unknown; additionalScopes?: unknown[] } | undefined;
+    const sponsorA = {
+      address: { toString: () => "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+      methods: {
+        sponsored_verify: () => ({
+          send: async (opts: { from: string; fee?: unknown; additionalScopes?: unknown[] }) => {
+            capturedSendOptions = opts;
+            return { ok: true };
+          },
+        }),
+      },
+    };
+    const client = new MagnaClient({
+      orchestratorAddress: "0x1111111111111111111111111111111111111111",
+      issuerContract: { methods: {} } as never,
+      companySponsorContracts: [sponsorA as never],
+    });
+
+    await client.loginWithCompanySponsor(
+      {
+        policy: {
+          credentialType: CredentialType.Passport,
+          constraints: [],
+        },
+        hintedCredentialNote: { id: "credential" },
+        hintedStatusNote: { id: "status" },
+        claimsWitness: {
+          minAgeProven: 21,
+          nationalityAlpha3Packed: 0x43414en,
+        },
+      },
+      "0x2222222222222222222222222222222222222222",
+    );
+    assert.equal(capturedSendOptions?.from, "0x2222222222222222222222222222222222222222");
+    assert.deepEqual(capturedSendOptions?.additionalScopes, [sponsorA.address]);
+  });
+
+  it("loginWithCompanySponsor supports explicit sponsor override", async () => {
+    let calledSponsor = "";
+    const sponsorA = {
+      address: { toString: () => "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+      methods: {
+        sponsored_verify: () => ({
+          send: async () => {
+            calledSponsor = "A";
+            return { ok: true };
+          },
+        }),
+      },
+    };
+    const sponsorB = {
+      address: { toString: () => "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+      methods: {
+        sponsored_verify: () => ({
+          send: async () => {
+            calledSponsor = "B";
+            return { ok: true };
+          },
+        }),
+      },
+    };
+    const client = new MagnaClient({
+      orchestratorAddress: "0x1111111111111111111111111111111111111111",
+      issuerContract: { methods: {} } as never,
+      companySponsorContract: sponsorA as never,
+    });
+
+    await client.loginWithCompanySponsor(
+      {
+        policy: {
+          credentialType: CredentialType.Passport,
+          constraints: [],
+        },
+        hintedCredentialNote: { id: "credential" },
+        hintedStatusNote: { id: "status" },
+        claimsWitness: {
+          minAgeProven: 21,
+          nationalityAlpha3Packed: 0x43414en,
+        },
+      },
+      "0x2222222222222222222222222222222222222222",
+      sponsorB as never,
+    );
+    assert.equal(calledSponsor, "B");
+  });
+
   it("recoverRoot and revokeLinkedCredential forward the root-linked recovery call shapes", async () => {
     let capturedRecoverRootArgs: unknown[] | undefined;
     let capturedRecoverRootSend: { from: string; fee?: unknown } | undefined;

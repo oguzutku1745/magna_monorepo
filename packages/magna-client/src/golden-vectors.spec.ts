@@ -1,6 +1,10 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
-import { deriveGhostKeyMaterial } from "./ghost.js";
+import {
+  deriveGhostKeyMaterial,
+  SCOPED_GHOST_DERIVATION_VERSION,
+  LEGACY_GHOST_DERIVATION_VERSION,
+} from "./ghost.js";
 import {
   MAGNA_GHOST_DS,
   computePassportClaimsHash,
@@ -44,6 +48,7 @@ describe("Noir↔TS golden vectors", () => {
     const ghost = deriveGhostKeyMaterial({
       uniqueIdentifier: GOLDEN_INPUTS.uniqueIdentifierField,
       credentialType: CredentialType.Passport,
+      derivationVersion: LEGACY_GHOST_DERIVATION_VERSION,
       domainSeparator: MAGNA_GHOST_DS,
     });
 
@@ -52,5 +57,22 @@ describe("Noir↔TS golden vectors", () => {
       ghost.secretHex,
       GOLDEN_OUTPUTS.ghostSeed.toString(16).padStart(64, "0"),
     );
+  });
+
+  it("scoped ghost derivation changes when credential scope changes", () => {
+    const passportGhost = deriveGhostKeyMaterial({
+      uniqueIdentifier: GOLDEN_INPUTS.uniqueIdentifierField,
+      credentialType: CredentialType.Passport,
+      derivationVersion: SCOPED_GHOST_DERIVATION_VERSION,
+      domainSeparator: MAGNA_GHOST_DS,
+    });
+    const instagramGhost = deriveGhostKeyMaterial({
+      uniqueIdentifier: GOLDEN_INPUTS.uniqueIdentifierField,
+      credentialType: CredentialType.Instagram,
+      derivationVersion: SCOPED_GHOST_DERIVATION_VERSION,
+      domainSeparator: MAGNA_GHOST_DS,
+    });
+
+    assert.notEqual(passportGhost.seedField, instagramGhost.seedField);
   });
 });

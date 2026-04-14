@@ -1,0 +1,24 @@
+{
+  "mode": "deploy",
+  "network": "local",
+  "startedAt": "2026-04-05T21:25:51.858Z",
+  "steps": [
+    {
+      "status": "passed",
+      "name": "aztec node ready",
+      "details": {
+        "nodeUrl": "http://127.0.0.1:8080"
+      }
+    },
+    {
+      "status": "failed",
+      "name": "fatal",
+      "error": "TypeError: sk.toBuffer is not a function"
+    }
+  ],
+  "status": "failed",
+  "finishedAt": "2026-04-05T21:25:52.684Z",
+  "config": {
+    "network": "local"
+  }
+}

@@ -372,4 +372,97 @@ suite("Magna rights local-network L1->L2 bridge flow", () => {
         .send({ from: ctx.orchestrator }),
     ).rejects.toBeDefined();
   }, 420_000);
+
+  it("isolates L1->L2 claimed rights per sponsor address", async () => {
+    if (!ctx) throw new Error("bridge context missing");
+
+    const sponsorB = AztecAddress.fromBigInt(Fr.random().toBigInt());
+    const rightsAmount = 4n;
+    const packageIdField = Fr.random();
+    const packageId = packageIdField.toString() as `0x${string}`;
+    const extraPolicyHash = `0x${randomBytes(32).toString("hex")}` as `0x${string}`;
+    const secret = Fr.random();
+    const secretHash = await computeSecretHash(secret);
+    const paymentAmount = rightsAmount * STABLE_PRICE_PER_VERIFY;
+
+    const beforeSponsorA = await ctx.rightsRegistry.methods
+      .get_remaining_verifies(ctx.companySponsor.address)
+      .simulate({ from: ctx.activeOwner })
+      .then(result => result.result as bigint);
+    const beforeSponsorB = await ctx.rightsRegistry.methods
+      .get_remaining_verifies(sponsorB)
+      .simulate({ from: ctx.activeOwner })
+      .then(result => result.result as bigint);
+
+    const approveTxHash = await (ctx.l1Client.writeContract as (...args: any[]) => Promise<`0x${string}`>)({
+      address: ctx.paymentTokenAddress,
+      abi: ctx.paymentTokenArtifact.abi,
+      functionName: "approve",
+      args: [ctx.portalAddress, paymentAmount],
+    });
+    await ctx.l1Client.waitForTransactionReceipt({ hash: approveTxHash });
+
+    const purchaseTxHash = await (ctx.l1Client.writeContract as (...args: any[]) => Promise<`0x${string}`>)({
+      address: ctx.portalAddress,
+      abi: ctx.portalArtifact.abi,
+      functionName: "purchaseRights",
+      args: [
+        sponsorB.toString() as `0x${string}`,
+        rightsAmount,
+        pad(secretHash.toString() as `0x${string}`, { size: 32 }),
+        packageId,
+        extraPolicyHash,
+      ],
+    });
+    const purchaseReceipt = await ctx.l1Client.waitForTransactionReceipt({ hash: purchaseTxHash });
+
+    const rightsPurchasedEvent = parseAbiItem(
+      "event RightsPurchased(uint256 indexed purchaseId, bytes32 indexed sponsorAddressOnAztec, uint128 rightsAmount, bytes32 packageId, bytes32 creditNonce, bytes32 contentHash, bytes32 secretHash, bytes32 messageKey, uint256 messageLeafIndex, uint256 paymentAmount, address payer)",
+    );
+    const purchasedLogs = await ctx.l1Client.getLogs({
+      address: ctx.portalAddress,
+      event: rightsPurchasedEvent,
+      fromBlock: purchaseReceipt.blockNumber,
+      toBlock: purchaseReceipt.blockNumber,
+    });
+    expect(purchasedLogs.length).toBeGreaterThan(0);
+    const creditNonce = purchasedLogs[0].args.creditNonce as `0x${string}`;
+
+    const inboxMessageSentEvent = parseAbiItem(
+      "event MessageSent(uint256 indexed checkpointNumber, uint256 index, bytes32 indexed hash, bytes16 rollingHash)",
+    );
+    const inboxLogs = await ctx.l1Client.getLogs({
+      address: ctx.inboxAddress,
+      event: inboxMessageSentEvent,
+      fromBlock: purchaseReceipt.blockNumber,
+      toBlock: purchaseReceipt.blockNumber,
+    });
+    expect(inboxLogs.length).toBeGreaterThan(0);
+    const messageLeafIndex = inboxLogs[0].args.index!;
+
+    await mineTwoL2Blocks(ctx);
+
+    await ctx.rightsRegistry.methods
+      .claim_l1_credit(
+        sponsorB,
+        rightsAmount,
+        packageIdField,
+        Fr.fromHexString(creditNonce),
+        secret,
+        messageLeafIndex,
+      )
+      .send({ from: ctx.orchestrator });
+
+    const afterSponsorA = await ctx.rightsRegistry.methods
+      .get_remaining_verifies(ctx.companySponsor.address)
+      .simulate({ from: ctx.activeOwner })
+      .then(result => result.result as bigint);
+    const afterSponsorB = await ctx.rightsRegistry.methods
+      .get_remaining_verifies(sponsorB)
+      .simulate({ from: ctx.activeOwner })
+      .then(result => result.result as bigint);
+
+    expect(afterSponsorA).toEqual(beforeSponsorA);
+    expect(afterSponsorB).toEqual(beforeSponsorB + rightsAmount);
+  }, 420_000);
 });

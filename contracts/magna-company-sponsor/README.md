@@ -17,8 +17,8 @@
 - This keeps the onchain allowlist structural instead of trying to infer arbitrary app targets at runtime.
 - The wallet must still attach an external fee configuration at send-time so the account entrypoint treats this
   contract as the tx fee payer before `sponsored_verify(...)` runs.
-- `issuer` is initialized once after deployment, and the issuer separately initializes this contract as its allowed
-  company sponsor gateway.
+- `issuer` is initialized once after deployment, and the issuer orchestrator separately allowlists this contract
+  with `add_company_sponsor_gateway(...)`.
 
 ## Important note
 

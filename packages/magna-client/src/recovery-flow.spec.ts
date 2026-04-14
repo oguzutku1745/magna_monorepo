@@ -12,6 +12,7 @@ import {
   poseidon2FieldHasher,
   packAlpha3,
 } from "./encoding.js";
+import { LEGACY_GHOST_DERIVATION_VERSION } from "./ghost.js";
 
 type RecoveryNoteLike = {
   revocation_secret: bigint;
@@ -49,6 +50,7 @@ describe("ghost recovery flow", () => {
     const ghostA = bootstrapClient.deriveGhost({
       uniqueIdentifier,
       credentialType: CredentialType.Passport,
+      derivationVersion: LEGACY_GHOST_DERIVATION_VERSION,
       domainSeparator: MAGNA_GHOST_DS,
     });
     const ghostAddressA = pseudoAddressFromSecret(ghostA.secretHex);
@@ -147,6 +149,7 @@ describe("ghost recovery flow", () => {
     const ghostB = clientB.deriveGhost({
       uniqueIdentifier,
       credentialType: CredentialType.Passport,
+      derivationVersion: LEGACY_GHOST_DERIVATION_VERSION,
       domainSeparator: MAGNA_GHOST_DS,
     });
     const ghostAddressB = pseudoAddressFromSecret(ghostB.secretHex);

@@ -2,10 +2,10 @@
 
 ## 1. Core note lineages
 
-Magna now has two credential modes:
+Magna now has two credential modes, with rooted mode as canonical:
 
-- **Legacy/rootless**: the current passport-centric v1 flow remains valid.
-- **Root-linked**: a credential depends on a shared private identity root plus a renewable passport authority note.
+- **Root-linked (canonical)**: onboarding issues rooted passport lineage and verifies through linked entrypoints.
+- **Legacy/rootless (compatibility-only)**: retained for migration and explicit fallback paths.
 
 ### Legacy rootless notes
 
@@ -160,6 +160,9 @@ Semantics:
 - `uniqueIdentifier_field` remains device-local and is not sent to the contract directly.
 - Because zkPassport `uniqueIdentifier` is already scoped by domain + request scope, `root_commitment` remains scoped
   to the Magna application context as well.
+- Ghost derivation is versioned for migration safety:
+  - `v1_legacy_unscoped`: `ghost_seed = H(MAGNA_GHOST_DS, uniqueIdentifier_field)`
+  - `v2_scoped` (canonical): `ghost_seed = H(MAGNA_GHOST_DS, uniqueIdentifier_field, credential_type)`
 - Root renewal does **not** assume a renewed or replaced passport will reproduce the same zkPassport
   `uniqueIdentifier`. Instead, Magna treats `root_commitment` as the long-lived identity anchor and refreshes
   passport authority through `RootAuthorityNote`.

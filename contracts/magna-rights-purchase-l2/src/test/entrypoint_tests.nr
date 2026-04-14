@@ -135,6 +135,76 @@ unconstrained fn test_purchase_rights_happy_path_moves_tokens_and_credits_regist
     assert(next_purchase_id == 3, "next purchase id should advance after happy-path purchases");
 }
 
+#[test]
+unconstrained fn test_purchase_rights_tracks_balances_per_sponsor() {
+    let (
+        mut env,
+        purchase,
+        admin,
+        payer,
+        sponsor_a,
+        treasury,
+        payment_token,
+        rights_registry,
+        sponsor_b,
+    ) = setup(DEFAULT_PRICE_PER_VERIFY);
+    let initial_balance = 3_000_000 as u128;
+    let rights_for_a = 2 as u128;
+    let rights_for_b = 5 as u128;
+    let nonce_a = 11 as Field;
+    let nonce_b = 22 as Field;
+    let payment_for_a = rights_for_a * DEFAULT_PRICE_PER_VERIFY;
+    let payment_for_b = rights_for_b * DEFAULT_PRICE_PER_VERIFY;
+
+    env.call_public(admin, Token::at(payment_token).mint_to_public(payer, initial_balance));
+
+    let transfer_for_a = Token::at(payment_token).transfer_in_public(
+        payer,
+        treasury,
+        payment_for_a,
+        nonce_a,
+    );
+    add_public_authwit_from_call(env, payer, purchase, transfer_for_a);
+    env.call_public(
+        payer,
+        MagnaRightsPurchaseL2::at(purchase).purchase_rights_public(
+            sponsor_a,
+            rights_for_a,
+            100 as Field,
+            nonce_a,
+        ),
+    );
+
+    let transfer_for_b = Token::at(payment_token).transfer_in_public(
+        payer,
+        treasury,
+        payment_for_b,
+        nonce_b,
+    );
+    add_public_authwit_from_call(env, payer, purchase, transfer_for_b);
+    env.call_public(
+        payer,
+        MagnaRightsPurchaseL2::at(purchase).purchase_rights_public(
+            sponsor_b,
+            rights_for_b,
+            200 as Field,
+            nonce_b,
+        ),
+    );
+
+    let sponsor_a_remaining = env.view_public(
+        MagnaCompanyRightsRegistry::at(rights_registry).get_remaining_verifies(sponsor_a),
+    );
+    let sponsor_b_remaining = env.view_public(
+        MagnaCompanyRightsRegistry::at(rights_registry).get_remaining_verifies(sponsor_b),
+    );
+    let next_purchase_id = env.view_public(MagnaRightsPurchaseL2::at(purchase).get_next_purchase_id());
+
+    assert(sponsor_a_remaining == rights_for_a, "sponsor A rights mismatch");
+    assert(sponsor_b_remaining == rights_for_b, "sponsor B rights mismatch");
+    assert(next_purchase_id == 3, "next purchase id should increment across both sponsors");
+}
+
 #[test(should_fail_with = "admin must be non-zero")]
 unconstrained fn test_constructor_requires_non_zero_admin() {
     let mut env = TestEnvironment::new();

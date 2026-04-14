@@ -1157,13 +1157,13 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
       initializeCompanySponsorIssuerReceipt,
     );
 
-    const initializeIssuerGatewayReceipt = await runStep("issuer.initialize_company_sponsor_gateway(companySponsor)", async () => {
+    const initializeIssuerGatewayReceipt = await runStep("issuer.add_company_sponsor_gateway(companySponsor)", async () => {
       return await issuer.methods
-        .initialize_company_sponsor_gateway(companySponsor.address)
+        .add_company_sponsor_gateway(companySponsor.address)
         .send({ from: orchestrator });
     });
     const initializeIssuerGatewayTxHash = logTxReceipt(
-      "bootstrap.issuer_initialize_company_sponsor_gateway",
+      "bootstrap.issuer_add_company_sponsor_gateway",
       initializeIssuerGatewayReceipt,
     );
     const initializeCompanySponsorRightsRegistryReceipt = await runStep(
@@ -2738,6 +2738,57 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
     });
     const registerTxHash = logTxReceipt("register_credential_company_sponsor_scope", registerTx);
 
+    const scopedSponsorDeployReceipt = await runStep(
+      "deploy scoped MagnaCompanySponsor",
+      async () =>
+        await MagnaCompanySponsorContract.deploy(
+          ready.wallet,
+          ready.orchestrator,
+          COMPANY_SPONSOR_MAX_FEE_CAP,
+        ).send({
+          from: ready.orchestrator,
+        }),
+    );
+    const scopedSponsor = scopedSponsorDeployReceipt.contract;
+    await runStep("scoped sponsor initialize issuer", async () => {
+      return await scopedSponsor.methods
+        .initialize_issuer(ready.issuer.address)
+        .send({ from: ready.orchestrator });
+    });
+    await runStep("scoped sponsor initialize rights registry", async () => {
+      return await scopedSponsor.methods
+        .initialize_rights_registry(ready.rightsRegistry.address)
+        .send({ from: ready.orchestrator });
+    });
+    await runStep("issuer add scoped sponsor gateway", async () => {
+      return await ready.issuer.methods
+        .add_company_sponsor_gateway(scopedSponsor.address)
+        .send({ from: ready.orchestrator });
+    });
+    const scopedRightsTopUp = await topUpRightsFromL2Payment(
+      ready,
+      scopedSponsor.address,
+      3n,
+      0n,
+      "scoped_company_sponsor.top_up",
+    );
+    const scopedSponsorClaim = await bridgeFeeJuiceToAddress(ready.node, scopedSponsor.address);
+    await runStep("mine L2 blocks for scoped sponsor Fee Juice bridge ingestion", async () => {
+      await mineTwoL2BlocksForBridgeIngestion(
+        ready.l2PaymentToken,
+        ready.orchestrator,
+        "scoped sponsor Fee Juice bridge ingestion",
+      );
+    });
+    const scopedSponsorFunding = await claimBridgedFeeJuice(
+      ready.node,
+      ready.wallet,
+      ready.orchestrator,
+      scopedSponsor.address,
+      scopedSponsorClaim,
+    );
+    expect(scopedSponsorFunding.balanceAfterClaim).toBeGreaterThan(0n);
+
     const hintedCredential = (await runStep("get_credential_hinted (company sponsor scope)", async () => {
       return await ready.issuer.methods
         .get_credential_hinted(ready.activeOwner, sponsoredClaimsHash)
@@ -2749,9 +2800,6 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
         .simulate({ from: ready.activeOwner });
     })) as HintedStatus;
 
-    const { sponsorClaimTxHash, balanceAfterClaim } = await ensureCompanySponsorFeeJuice(ready);
-    expect(balanceAfterClaim).toBeGreaterThan(0n);
-
     const issuerMeterBefore = toBigIntValue(
       await runStep("issuer.get_verify_meter_count (before company sponsor verify)", async () => {
         return await ready.issuer.methods
@@ -2760,22 +2808,22 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
       }),
     );
     const sponsorMeterBefore = toBigIntValue(
-      await runStep("companySponsor.get_sponsored_verify_count (before verify)", async () => {
-        return await ready.companySponsor.methods
+      await runStep("scoped sponsor get_sponsored_verify_count (before verify)", async () => {
+        return await scopedSponsor.methods
           .get_sponsored_verify_count()
           .simulate({ from: ready.activeOwner });
       }),
     );
     const sponsorRightsBefore = toBigIntValue(
-      await runStep("rightsRegistry.get_remaining_verifies (before company sponsor verify)", async () => {
+      await runStep("rightsRegistry.get_remaining_verifies (before scoped sponsor verify)", async () => {
         return await ready.rightsRegistry.methods
-          .get_remaining_verifies(ready.companySponsor.address)
+          .get_remaining_verifies(scopedSponsor.address)
           .simulate({ from: ready.activeOwner });
       }),
     );
 
-    const sponsorVerifyTx = await runRetriedStep("companySponsor.sponsored_verify", async () => {
-      return await ready.companySponsor.methods
+    const sponsorVerifyTx = await runRetriedStep("scoped sponsor sponsored_verify", async () => {
+      return await scopedSponsor.methods
         .sponsored_verify(
           { credential_type: ready.credentialType, constraints: buildConstraints() },
           hintedCredential,
@@ -2786,7 +2834,7 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
         )
         .send({
           from: ready.activeOwner,
-          fee: buildCompanySponsorFeeOptions(ready.companySponsor.address),
+          fee: buildCompanySponsorFeeOptions(scopedSponsor.address),
         });
     });
     const sponsorVerifyTxHash = logTxReceipt("company_sponsor_verify", sponsorVerifyTx);
@@ -2799,16 +2847,16 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
       }),
     );
     const sponsorMeterAfter = toBigIntValue(
-      await runStep("companySponsor.get_sponsored_verify_count (after verify)", async () => {
-        return await ready.companySponsor.methods
+      await runStep("scoped sponsor get_sponsored_verify_count (after verify)", async () => {
+        return await scopedSponsor.methods
           .get_sponsored_verify_count()
           .simulate({ from: ready.activeOwner });
       }),
     );
     const sponsorRightsAfter = toBigIntValue(
-      await runStep("rightsRegistry.get_remaining_verifies (after company sponsor verify)", async () => {
+      await runStep("rightsRegistry.get_remaining_verifies (after scoped sponsor verify)", async () => {
         return await ready.rightsRegistry.methods
-          .get_remaining_verifies(ready.companySponsor.address)
+          .get_remaining_verifies(scopedSponsor.address)
           .simulate({ from: ready.activeOwner });
       }),
     );
@@ -2816,15 +2864,184 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
     expect(sponsorMeterAfter).toEqual(sponsorMeterBefore + 1n);
     expect(sponsorRightsAfter).toEqual(sponsorRightsBefore - 1n);
 
-    ready.txHashesByPhase.company_sponsor = sponsorClaimTxHash
-      ? [registerTxHash, sponsorClaimTxHash, sponsorVerifyTxHash]
-      : [registerTxHash, sponsorVerifyTxHash];
+    ready.txHashesByPhase.company_sponsor = [
+      registerTxHash,
+      scopedRightsTopUp.purchaseTxHash,
+      scopedSponsorFunding.claimTxHash,
+      sponsorVerifyTxHash,
+    ];
 
     logTrace(
       "passed.supports company sponsor gateway verify path.tx_ids",
       ready.txHashesByPhase.company_sponsor,
     );
   }, 240_000);
+
+  it("supports two company sponsors on one issuer with isolated rights", async () => {
+    const ready = requireContext(ctx);
+
+    const secondarySponsorDeployReceipt = await runStep(
+      "deploy secondary MagnaCompanySponsor",
+      async () =>
+        await MagnaCompanySponsorContract.deploy(
+          ready.wallet,
+          ready.orchestrator,
+          COMPANY_SPONSOR_MAX_FEE_CAP,
+        ).send({
+          from: ready.orchestrator,
+        }),
+    );
+    const secondarySponsor = secondarySponsorDeployReceipt.contract;
+    await runStep("secondary sponsor initialize issuer", async () => {
+      return await secondarySponsor.methods
+        .initialize_issuer(ready.issuer.address)
+        .send({ from: ready.orchestrator });
+    });
+    await runStep("secondary sponsor initialize rights registry", async () => {
+      return await secondarySponsor.methods
+        .initialize_rights_registry(ready.rightsRegistry.address)
+        .send({ from: ready.orchestrator });
+    });
+    await runStep("issuer add secondary sponsor gateway", async () => {
+      return await ready.issuer.methods
+        .add_company_sponsor_gateway(secondarySponsor.address)
+        .send({ from: ready.orchestrator });
+    });
+    const secondaryGatewayAllowed = await runStep("issuer.is_company_sponsor_gateway(secondary)", async () => {
+      return await ready.issuer.methods
+        .is_company_sponsor_gateway(secondarySponsor.address)
+        .simulate({ from: ready.activeOwner });
+    });
+    expect(secondaryGatewayAllowed).toBe(true);
+
+    const primaryRightsBefore = toBigIntValue(
+      await runStep("rightsRegistry.get_remaining_verifies(primary sponsor) before secondary top-up", async () => {
+        return await ready.rightsRegistry.methods
+          .get_remaining_verifies(ready.companySponsor.address)
+          .simulate({ from: ready.activeOwner });
+      }),
+    );
+    const secondaryRightsBefore = toBigIntValue(
+      await runStep("rightsRegistry.get_remaining_verifies(secondary sponsor) before top-up", async () => {
+        return await ready.rightsRegistry.methods
+          .get_remaining_verifies(secondarySponsor.address)
+          .simulate({ from: ready.activeOwner });
+      }),
+    );
+
+    const secondaryTopUp = await topUpRightsFromL2Payment(
+      ready,
+      secondarySponsor.address,
+      3n,
+      0n,
+      "secondary_company_sponsor.top_up",
+    );
+    const primaryRightsAfterTopUp = toBigIntValue(
+      await runStep("rightsRegistry.get_remaining_verifies(primary sponsor) after secondary top-up", async () => {
+        return await ready.rightsRegistry.methods
+          .get_remaining_verifies(ready.companySponsor.address)
+          .simulate({ from: ready.activeOwner });
+      }),
+    );
+    const secondaryRightsAfterTopUp = toBigIntValue(
+      await runStep("rightsRegistry.get_remaining_verifies(secondary sponsor) after top-up", async () => {
+        return await ready.rightsRegistry.methods
+          .get_remaining_verifies(secondarySponsor.address)
+          .simulate({ from: ready.activeOwner });
+      }),
+    );
+    expect(primaryRightsAfterTopUp).toEqual(primaryRightsBefore);
+    expect(secondaryRightsAfterTopUp).toEqual(secondaryRightsBefore + 3n);
+
+    const secondarySponsorClaim = await bridgeFeeJuiceToAddress(
+      ready.node,
+      secondarySponsor.address,
+    );
+    await runStep("mine L2 blocks for secondary sponsor Fee Juice bridge ingestion", async () => {
+      await mineTwoL2BlocksForBridgeIngestion(
+        ready.l2PaymentToken,
+        ready.orchestrator,
+        "secondary sponsor Fee Juice bridge ingestion",
+      );
+    });
+    const secondarySponsorFunding = await claimBridgedFeeJuice(
+      ready.node,
+      ready.wallet,
+      ready.orchestrator,
+      secondarySponsor.address,
+      secondarySponsorClaim,
+    );
+    expect(secondarySponsorFunding.balanceAfterClaim).toBeGreaterThan(0n);
+
+    const sponsoredMinAge = 31;
+    const sponsoredNationality = packAlpha3("DEU");
+    const sponsoredExpiryTs = 2_593_456_000n;
+    const sponsoredClaimsHash = computeClaimsHash(
+      1n,
+      ready.credentialType,
+      sponsoredNationality,
+      sponsoredMinAge,
+      sponsoredExpiryTs,
+    );
+
+    await runStep("register_credential (secondary sponsor scope)", async () => {
+      return await ready.issuer.methods
+        .register_credential(
+          ready.activeOwner,
+          ready.ghostOwner,
+          sponsoredClaimsHash,
+          ready.credentialType,
+          sponsoredExpiryTs,
+        )
+        .send({ from: ready.orchestrator });
+    });
+
+    const hintedCredential = (await runStep("get_credential_hinted (secondary sponsor scope)", async () => {
+      return await ready.issuer.methods
+        .get_credential_hinted(ready.activeOwner, sponsoredClaimsHash)
+        .simulate({ from: ready.activeOwner });
+    })) as HintedCredential;
+    const hintedStatus = (await runStep("get_status_hinted (secondary sponsor scope)", async () => {
+      return await ready.issuer.methods
+        .get_status_hinted(ready.activeOwner, sponsoredClaimsHash)
+        .simulate({ from: ready.activeOwner });
+    })) as HintedStatus;
+
+    await runRetriedStep("secondary company sponsor sponsored_verify", async () => {
+      return await secondarySponsor.methods
+        .sponsored_verify(
+          { credential_type: ready.credentialType, constraints: buildConstraints() },
+          hintedCredential,
+          hintedStatus,
+          sponsoredMinAge,
+          sponsoredNationality,
+          0,
+        )
+        .send({
+          from: ready.activeOwner,
+          fee: buildCompanySponsorFeeOptions(secondarySponsor.address),
+        });
+    });
+
+    const primaryRightsAfterVerify = toBigIntValue(
+      await runStep("rightsRegistry.get_remaining_verifies(primary sponsor) after secondary verify", async () => {
+        return await ready.rightsRegistry.methods
+          .get_remaining_verifies(ready.companySponsor.address)
+          .simulate({ from: ready.activeOwner });
+      }),
+    );
+    const secondaryRightsAfterVerify = toBigIntValue(
+      await runStep("rightsRegistry.get_remaining_verifies(secondary sponsor) after verify", async () => {
+        return await ready.rightsRegistry.methods
+          .get_remaining_verifies(secondarySponsor.address)
+          .simulate({ from: ready.activeOwner });
+      }),
+    );
+    expect(primaryRightsAfterVerify).toEqual(primaryRightsAfterTopUp);
+    expect(secondaryRightsAfterVerify).toEqual(secondaryRightsAfterTopUp - 1n);
+
+    ready.txHashesByPhase.multi_sponsor_same_issuer = [secondaryTopUp.purchaseTxHash];
+  }, 540_000);
 
   it("rejects sponsored verify when company rights are exhausted", async () => {
     const ready = requireContext(ctx);
@@ -2870,9 +3087,9 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
         .initialize_rights_registry(ready.rightsRegistry.address)
         .send({ from: ready.orchestrator });
     });
-    await runStep("exhausted issuer initialize company sponsor gateway", async () => {
+    await runStep("exhausted issuer add company sponsor gateway", async () => {
       return await exhaustedIssuer.methods
-        .initialize_company_sponsor_gateway(exhaustedSponsor.address)
+        .add_company_sponsor_gateway(exhaustedSponsor.address)
         .send({ from: ready.orchestrator });
     });
     await topUpRightsFromL2Payment(
@@ -3007,9 +3224,9 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
         .initialize_rights_registry(ready.rightsRegistry.address)
         .send({ from: ready.orchestrator });
     });
-    await runStep("rate-limit issuer initialize company sponsor gateway", async () => {
+    await runStep("rate-limit issuer add company sponsor gateway", async () => {
       return await rateLimitIssuer.methods
-        .initialize_company_sponsor_gateway(rateLimitSponsor.address)
+        .add_company_sponsor_gateway(rateLimitSponsor.address)
         .send({ from: ready.orchestrator });
     });
     await topUpRightsFromL2Payment(
@@ -3303,9 +3520,9 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
         .initialize_rights_registry(ready.rightsRegistry.address)
         .send({ from: ready.orchestrator });
     });
-    await runStep("unfunded issuer.initialize_company_sponsor_gateway(unfunded sponsor)", async () => {
+    await runStep("unfunded issuer.add_company_sponsor_gateway(unfunded sponsor)", async () => {
       return await unfundedIssuer.methods
-        .initialize_company_sponsor_gateway(unfundedSponsor.address)
+        .add_company_sponsor_gateway(unfundedSponsor.address)
         .send({ from: ready.orchestrator });
     });
     await topUpRightsFromL2Payment(

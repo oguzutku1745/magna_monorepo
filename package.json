@@ -11,6 +11,8 @@
     "build": "npm run -ws build",
     "test": "npm run -ws test",
     "lint": "npm run -ws lint",
+    "verification-api:dev": "npm run -w @magna/verification-api dev",
+    "web:bootstrap:local": "node ./scripts/bootstrap-web-local.mjs",
     "vectors:sync": "node ./scripts/sync-golden-vectors.mjs",
     "aztec:version": "VERSION=4.2.0-aztecnr-rc.2 aztec --version",
     "compile:issuer": "node ./scripts/aztec-tooling.mjs compile ./contracts/magna-issuer",
@@ -21,6 +23,7 @@
     "compile:verify-meter-hook-instant": "node ./scripts/aztec-tooling.mjs compile ./contracts/magna-verify-meter-hook-instant",
     "compile:rights-purchase-l2": "node ./scripts/aztec-tooling.mjs compile ./contracts/magna-rights-purchase-l2",
     "compile:contracts": "npm run compile:issuer && npm run compile:company-rights-registry && npm run compile:company-sponsor && npm run compile:verify-meter-hook && npm run compile:consumer && npm run compile:verify-meter-hook-instant && npm run compile:rights-purchase-l2",
+    "magna:testnet": "node ./scripts/magna-testnet-validate.mjs",
     "test:contracts:verify-meter-hook": "node ./scripts/aztec-tooling.mjs test ./contracts/magna-verify-meter-hook",
     "test:contracts:issuer": "node ./scripts/aztec-tooling.mjs test ./contracts/magna-issuer",
     "test:contracts:company-rights-registry": "node ./scripts/aztec-tooling.mjs test ./contracts/magna-company-rights-registry",
@@ -38,5 +41,9 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "@zkpassport/sdk": "^0.13.0",
+    "react-qr-code": "^2.0.18"
   }
 }

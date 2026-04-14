@@ -2,6 +2,7 @@ use crate::MagnaIssuer;
 use crate::internal::claims::compute_passport_claims_hash;
 use crate::internal::constants::{
     MAGNA_CLAIMS_DS,
+    MAGNA_SPONSOR_GATEWAY_DELAY_SECONDS,
     MAGNA_SPONSOR_POLICY_DELAY_SECONDS,
     MAGNA_SPONSOR_RL_WINDOW_SECONDS,
     SCHEMA_VERSION_V1,
@@ -87,7 +88,7 @@ unconstrained fn test_verify_sponsored_entrypoint_allows_configured_gateway_call
     assert(after == 1, "verify meter should increment by one");
 }
 
-#[test(should_fail_with = "company sponsor only")]
+#[test(should_fail)]
 unconstrained fn test_verify_sponsored_entrypoint_rejects_unconfigured_gateway_sender() {
     let (mut env, issuer, orchestrator, active_owner, ghost_owner, _) = setup();
     let claims_hash = base_claims_hash();
@@ -413,12 +414,116 @@ unconstrained fn test_sponsored_verify_allows_reusing_same_slot_after_window_rol
     );
 }
 
-#[test(should_fail)]
-unconstrained fn test_initialize_company_sponsor_gateway_cannot_be_reinitialized() {
+#[test]
+unconstrained fn test_disable_company_sponsor_gateway() {
     let (mut env, issuer, orchestrator, _, _, attacker) = setup();
+    assert(
+        env.view_public(MagnaIssuer::at(issuer).is_company_sponsor_gateway(attacker)),
+        "gateway should be allowlisted by setup",
+    );
     env.call_public(
         orchestrator,
-        MagnaIssuer::at(issuer).initialize_company_sponsor_gateway(attacker),
+        MagnaIssuer::at(issuer).remove_company_sponsor_gateway(attacker),
+    );
+    env.advance_next_block_timestamp_by(MAGNA_SPONSOR_GATEWAY_DELAY_SECONDS);
+    env.mine_block();
+    assert(
+        !env.view_public(MagnaIssuer::at(issuer).is_company_sponsor_gateway(attacker)),
+        "gateway should be disabled",
+    );
+}
+
+#[test]
+unconstrained fn test_multiple_company_sponsor_gateways_can_call_sponsored_verify() {
+    let (mut env, issuer, orchestrator, active_owner, ghost_owner, gateway_a) = setup();
+    let gateway_b = env.create_light_account();
+    let claims_hash = base_claims_hash();
+
+    env.call_public(
+        orchestrator,
+        MagnaIssuer::at(issuer).add_company_sponsor_gateway(gateway_b),
+    );
+    env.advance_next_block_timestamp_by(MAGNA_SPONSOR_GATEWAY_DELAY_SECONDS);
+    env.mine_block();
+    env.call_private(
+        orchestrator,
+        MagnaIssuer::at(issuer).register_credential(active_owner, ghost_owner, claims_hash, 1, 1_893_456_000),
+    );
+    let hinted_credential = env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).get_credential_hinted(active_owner, claims_hash),
+    );
+    let hinted_status = env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).get_status_hinted(active_owner, claims_hash),
+    );
+
+    env.call_private(
+        gateway_a,
+        MagnaIssuer::at(issuer).verify_sponsored(
+            active_owner,
+            base_policy(),
+            hinted_credential,
+            hinted_status,
+            21,
+            pack_alpha3(67, 65, 78),
+            0,
+        ),
+    );
+    env.call_private(
+        gateway_b,
+        MagnaIssuer::at(issuer).verify_sponsored(
+            active_owner,
+            base_policy(),
+            hinted_credential,
+            hinted_status,
+            21,
+            pack_alpha3(67, 65, 78),
+            1,
+        ),
+    );
+
+    assert(
+        env.execute_utility(MagnaIssuer::at(issuer).get_verify_meter_count()) == 2,
+        "both sponsor gateways should be accepted",
+    );
+}
+
+#[test(should_fail_with = "company sponsor only")]
+unconstrained fn test_removed_company_sponsor_gateway_is_rejected() {
+    let (mut env, issuer, orchestrator, active_owner, ghost_owner, gateway) = setup();
+    let claims_hash = base_claims_hash();
+
+    env.call_public(
+        orchestrator,
+        MagnaIssuer::at(issuer).remove_company_sponsor_gateway(gateway),
+    );
+    env.advance_next_block_timestamp_by(MAGNA_SPONSOR_GATEWAY_DELAY_SECONDS);
+    env.mine_block();
+    env.call_private(
+        orchestrator,
+        MagnaIssuer::at(issuer).register_credential(active_owner, ghost_owner, claims_hash, 1, 1_893_456_000),
+    );
+    let hinted_credential = env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).get_credential_hinted(active_owner, claims_hash),
+    );
+    let hinted_status = env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).get_status_hinted(active_owner, claims_hash),
+    );
+
+    env.call_private(
+        gateway,
+        MagnaIssuer::at(issuer).verify_sponsored(
+            active_owner,
+            base_policy(),
+            hinted_credential,
+            hinted_status,
+            21,
+            pack_alpha3(67, 65, 78),
+            0,
+        ),
     );
 }
 

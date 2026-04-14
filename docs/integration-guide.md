@@ -13,8 +13,11 @@ Define the dApp gate in terms of constraints:
 
 Use `@magna/client`:
 
-- call `loginWithMagna(...)`
-- pass policy + hinted notes + claims witness fields
+- canonical rooted flow:
+  - call `loginWithLinkedMagna(...)` (or sponsored `loginWithLinkedCompanySponsor(...)`)
+  - pass rooted hints (`hintedRootStatusNote`, `hintedRootAuthorityNote`) plus linked credential hints and claims witness
+- legacy compatibility flow:
+  - call `loginWithMagna(...)` only when the credential lineage is explicitly rootless
 
 Private proof generation remains local to the user PXE.
 
@@ -33,6 +36,8 @@ For the canonical linked model:
   - the linked passport credential/status hints
 - if the user renews or replaces their passport, have the orchestrator accept a fresh zkPassport proof and call
   `refreshRootAuthority(...)`
+- root recovery should be executed from the deterministic ghost account (`recoverRoot(...)`) so old linked descendants
+  become invalid immediately
 
 Important outcomes:
 

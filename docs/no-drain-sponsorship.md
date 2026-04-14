@@ -55,7 +55,7 @@ File: `contracts/magna-issuer/src/main.nr`
 - **Public metering**:
   - always enqueues local issuer metering `_meter_verify()`
 - **Sponsored mode detection**:
-  - sponsored mode is active when `verify_meter_hook != 0` or the dedicated sponsor gateway calls `verify_sponsored(...)`
+  - sponsored mode is active when `verify_meter_hook != 0` or an issuer-allowlisted sponsor gateway calls `verify_sponsored(...)`
 - **No-drain measures (sponsored mode)**:
   - **Rate-limit nullifier**: emits 1 of 5 nullifiers per 24h window (slot 0..4)
     - Domain sep: `MAGNA_SPONSOR_RL_DS`
@@ -65,6 +65,10 @@ File: `contracts/magna-issuer/src/main.nr`
     - `sponsored_credential_type_mask` is stored as `DelayedPublicMutable` and read in private during `verify()`
     - If configured (non-zero mask), `verify()` asserts the credential type bit is set **during proving**
     - This prevents “not sponsored” from becoming a later public revert
+- **Issuer sponsor authorization**:
+  - `add_company_sponsor_gateway(...)` allowlists a sponsor gateway
+  - `remove_company_sponsor_gateway(...)` disables a previously allowlisted gateway
+  - `is_company_sponsor_gateway(...)` exposes current gateway status
 
 **Privacy note**: the public chain only sees the emitted nullifier values. Their preimage includes private note material
 (`revocation_secret`, `claims_hash`) so observers cannot link them to a user or credential.

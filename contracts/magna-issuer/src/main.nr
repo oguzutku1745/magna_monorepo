@@ -23,7 +23,7 @@ pub contract MagnaIssuer {
             address::AztecAddress,
             hash::compute_siloed_nullifier,
         },
-        state_vars::{DelayedPublicMutable, Owned, PrivateSet, PublicImmutable, PublicMutable},
+        state_vars::{DelayedPublicMutable, Map, Owned, PrivateSet, PublicImmutable, PublicMutable},
         utils::comparison::Comparator,
     };
     use crate::internal::{
@@ -34,6 +34,7 @@ pub contract MagnaIssuer {
             MAGNA_ROOT_AUTHORITY_REVOCATION_DS,
             MAGNA_ROOT_REVOCATION_DS,
             MAGNA_SPONSOR_POLICY_DELAY_SECONDS,
+            MAGNA_SPONSOR_GATEWAY_DELAY_SECONDS,
             MAGNA_SPONSOR_RL_DS,
             MAGNA_SPONSOR_RL_MAX_SLOTS_PER_WINDOW,
             MAGNA_SPONSOR_RL_WINDOW_SECONDS,
@@ -74,7 +75,16 @@ pub contract MagnaIssuer {
     struct Storage<Context> {
         orchestrator: PublicImmutable<AztecAddress, Context>,
         verify_meter_hook: PublicImmutable<AztecAddress, Context>,
-        company_sponsor_gateway: PublicImmutable<AztecAddress, Context>,
+        company_sponsor_gateways: Map<
+            AztecAddress,
+            PublicImmutable<bool, Context>,
+            Context,
+        >,
+        disabled_company_sponsor_gateways: Map<
+            AztecAddress,
+            DelayedPublicMutable<bool, MAGNA_SPONSOR_GATEWAY_DELAY_SECONDS, Context>,
+            Context,
+        >,
         consumer_gateway: PublicImmutable<AztecAddress, Context>,
         // Sponsorship policy that is readable in private.
         // - sponsored_credential_type_mask: bitmask of supported credential types
@@ -107,10 +117,18 @@ pub contract MagnaIssuer {
     }
 
     #[external("public")]
-    fn initialize_company_sponsor_gateway(gateway: AztecAddress) {
+    fn add_company_sponsor_gateway(gateway: AztecAddress) {
         assert_orchestrator_sender(self.msg_sender(), self.storage.orchestrator.read());
         assert(gateway != AztecAddress::zero(), "gateway must be non-zero");
-        self.storage.company_sponsor_gateway.initialize(gateway);
+        self.storage.company_sponsor_gateways.at(gateway).initialize(true);
+    }
+
+    #[external("public")]
+    fn remove_company_sponsor_gateway(gateway: AztecAddress) {
+        assert_orchestrator_sender(self.msg_sender(), self.storage.orchestrator.read());
+        assert(gateway != AztecAddress::zero(), "gateway must be non-zero");
+        assert(self.storage.company_sponsor_gateways.at(gateway).read(), "gateway not allowlisted");
+        self.storage.disabled_company_sponsor_gateways.at(gateway).schedule_value_change(true);
     }
 
     #[external("public")]
@@ -128,8 +146,9 @@ pub contract MagnaIssuer {
 
     #[external("public")]
     #[view]
-    fn get_company_sponsor_gateway() -> AztecAddress {
-        self.storage.company_sponsor_gateway.read()
+    fn is_company_sponsor_gateway(gateway: AztecAddress) -> bool {
+        self.storage.company_sponsor_gateways.at(gateway).read() &
+            !self.storage.disabled_company_sponsor_gateways.at(gateway).get_current_value()
     }
 
     #[external("public")]
@@ -344,8 +363,10 @@ pub contract MagnaIssuer {
         sponsor_slot: u8,
     ) {
         assert(caller != AztecAddress::zero(), "caller must be non-zero");
-        let gateway = self.storage.company_sponsor_gateway.read();
-        assert(self.msg_sender() == gateway, "company sponsor only");
+        let sender = self.msg_sender();
+        let allowlisted = self.storage.company_sponsor_gateways.at(sender).read();
+        let disabled = self.storage.disabled_company_sponsor_gateways.at(sender).get_current_value();
+        assert(allowlisted & !disabled, "company sponsor only");
         self.internal.verify_for_caller(
             caller,
             policy,
@@ -368,8 +389,10 @@ pub contract MagnaIssuer {
         sponsor_slot: u8,
     ) {
         assert(caller != AztecAddress::zero(), "caller must be non-zero");
-        let gateway = self.storage.company_sponsor_gateway.read();
-        assert(self.msg_sender() == gateway, "company sponsor only");
+        let sender = self.msg_sender();
+        let allowlisted = self.storage.company_sponsor_gateways.at(sender).read();
+        let disabled = self.storage.disabled_company_sponsor_gateways.at(sender).get_current_value();
+        assert(allowlisted & !disabled, "company sponsor only");
         self.internal.verify_instagram_for_caller(
             caller,
             policy,
@@ -467,8 +490,10 @@ pub contract MagnaIssuer {
         sponsor_slot: u8,
     ) {
         assert(caller != AztecAddress::zero(), "caller must be non-zero");
-        let gateway = self.storage.company_sponsor_gateway.read();
-        assert(self.msg_sender() == gateway, "company sponsor only");
+        let sender = self.msg_sender();
+        let allowlisted = self.storage.company_sponsor_gateways.at(sender).read();
+        let disabled = self.storage.disabled_company_sponsor_gateways.at(sender).get_current_value();
+        assert(allowlisted & !disabled, "company sponsor only");
         self.internal.verify_linked_for_caller(
             caller,
             policy,
@@ -495,8 +520,10 @@ pub contract MagnaIssuer {
         sponsor_slot: u8,
     ) {
         assert(caller != AztecAddress::zero(), "caller must be non-zero");
-        let gateway = self.storage.company_sponsor_gateway.read();
-        assert(self.msg_sender() == gateway, "company sponsor only");
+        let sender = self.msg_sender();
+        let allowlisted = self.storage.company_sponsor_gateways.at(sender).read();
+        let disabled = self.storage.disabled_company_sponsor_gateways.at(sender).get_current_value();
+        assert(allowlisted & !disabled, "company sponsor only");
         self.internal.verify_linked_instagram_for_caller(
             caller,
             policy,

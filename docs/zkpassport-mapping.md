@@ -34,8 +34,10 @@ Hash:
 
 - `uniqueIdentifier` is treated as sensitive and device-only.
 - Ghost scope uses `magna_recovery::<credential_type>`.
-- Ghost seed KDF vector path (TS/Noir lock): `ghost_seed = Poseidon2(DS, uniqueIdentifier_field)` with
-  `DS = MAGNA_GHOST_DS (0x4D414748)`.
+- Ghost seed derivation is versioned:
+  - `v1_legacy_unscoped`: `ghost_seed = Poseidon2(DS, [uniqueIdentifier_field])`
+  - `v2_scoped` (canonical rooted path): `ghost_seed = Poseidon2(DS, [uniqueIdentifier_field, credential_type])`
+  where `DS = MAGNA_GHOST_DS (0x4D414748)`.
 - No raw identity document data is persisted in Magna contracts.
 - zkPassport documents `uniqueIdentifier` as stable for the same **ID**, not as a person-wide identifier across
   renewed/replaced documents. Magna therefore does not assume passport renewal reproduces the same root seed.
@@ -54,7 +56,7 @@ Magna's linked-credential design does **not** place raw `uniqueIdentifier` oncha
 - Magna treats this derivation as the **onboarding** path for a long-lived root. After onboarding, passport renewal or
   replacement refreshes rooted passport authority rather than deriving a brand-new root from a future document.
 - If zkPassport later ships salted identifiers or a vOPRF-backed variant, Magna can swap the client-side derivation
-  while keeping the onchain contract interface unchanged.
+  while keeping the onchain contract interface unchanged via explicit derivation-version migrations.
 
 ## Rooted passport authority semantics
 

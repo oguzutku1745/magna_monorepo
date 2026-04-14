@@ -36,8 +36,10 @@ pub unconstrained fn setup(
     );
     env.call_public(
         orchestrator,
-        MagnaIssuer::at(issuer_address).initialize_company_sponsor_gateway(sponsor_address),
+        MagnaIssuer::at(issuer_address).add_company_sponsor_gateway(sponsor_address),
     );
+    env.advance_next_block_timestamp_by(300);
+    env.mine_block();
 
     (env, sponsor_address, issuer_address, orchestrator, active_owner, ghost_owner, attacker)
 }

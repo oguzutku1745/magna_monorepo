@@ -69,6 +69,20 @@ textarea {
   line-height: 1.6;
 }
 
+.hero-map {
+  margin-top: 24px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.hero-map-card {
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(5, 10, 20, 0.42);
+  border: 1px solid rgba(181, 197, 255, 0.1);
+}
+
 .status-banner,
 .error-banner {
   margin-top: 24px;
@@ -98,6 +112,23 @@ textarea {
   width: 100%;
 }
 
+.workflow-section {
+  max-width: 1320px;
+  width: 100%;
+  margin: 0 auto;
+  display: grid;
+  gap: 18px;
+}
+
+.workflow-section-header {
+  padding: 0 2px;
+}
+
+.workflow-section-header h2 {
+  margin: 0;
+  font-size: clamp(1.45rem, 2.5vw, 2rem);
+}
+
 .panel {
   max-width: 1320px;
   width: 100%;
@@ -120,6 +151,26 @@ textarea {
 .panel-header h2 {
   margin: 0;
   font-size: 1.1rem;
+}
+
+.panel-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.panel-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #dbe5ff;
+  background: rgba(98, 126, 255, 0.16);
+  border: 1px solid rgba(140, 164, 255, 0.2);
 }
 
 .panel-copy {

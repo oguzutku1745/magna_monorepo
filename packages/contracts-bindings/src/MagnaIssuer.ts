@@ -3,7 +3,7 @@
 
 /* eslint-disable */
 import { AztecAddress, CompleteAddress } from '@aztec/aztec.js/addresses';
-import { type AbiType, type AztecAddressLike, type ContractArtifact, EventSelector, decodeFromAbi, type EthAddressLike, type FieldLike, type FunctionSelectorLike, loadContractArtifact, loadContractArtifactForPublic, type NoirCompiledContract, type U128Like, type WrappedFieldLike } from '@aztec/aztec.js/abi';
+import { type AbiType, type AztecAddressLike, type ContractArtifact, EventSelector, decodeFromAbi, type EthAddressLike, type FieldLike, type FunctionSelectorLike, loadContractArtifact, loadContractArtifactForPublic, type NoirCompiledContract, type OptionLike, type U128Like, type WrappedFieldLike } from '@aztec/aztec.js/abi';
 import { Contract, ContractBase, ContractFunctionInteraction, type ContractMethod, type ContractStorageLayout, DeployMethod } from '@aztec/aztec.js/contracts';
 import { EthAddress } from '@aztec/aztec.js/addresses';
 import { Fr, Point } from '@aztec/aztec.js/fields';
@@ -90,7 +90,7 @@ export class MagnaIssuerContract extends ContractBase {
   }
   
 
-  public static get storage(): ContractStorageLayout<'orchestrator' | 'verify_meter_hook' | 'company_sponsor_gateway' | 'consumer_gateway' | 'sponsored_credential_type_mask' | 'verify_meter_count' | 'credential_notes' | 'status_notes' | 'recovery_notes' | 'root_status_notes' | 'root_recovery_notes' | 'root_authority_notes' | 'linked_credential_notes' | 'linked_status_notes' | 'linked_recovery_notes'> {
+  public static get storage(): ContractStorageLayout<'orchestrator' | 'verify_meter_hook' | 'company_sponsor_gateways' | 'disabled_company_sponsor_gateways' | 'consumer_gateway' | 'sponsored_credential_type_mask' | 'verify_meter_count' | 'credential_notes' | 'status_notes' | 'recovery_notes' | 'root_status_notes' | 'root_recovery_notes' | 'root_authority_notes' | 'linked_credential_notes' | 'linked_status_notes' | 'linked_recovery_notes'> {
       return {
         orchestrator: {
       slot: new Fr(1n),
@@ -98,8 +98,11 @@ export class MagnaIssuerContract extends ContractBase {
 verify_meter_hook: {
       slot: new Fr(3n),
     },
-company_sponsor_gateway: {
+company_sponsor_gateways: {
       slot: new Fr(5n),
+    },
+disabled_company_sponsor_gateways: {
+      slot: new Fr(6n),
     },
 consumer_gateway: {
       slot: new Fr(7n),
@@ -137,18 +140,18 @@ linked_status_notes: {
 linked_recovery_notes: {
       slot: new Fr(22n),
     }
-      } as ContractStorageLayout<'orchestrator' | 'verify_meter_hook' | 'company_sponsor_gateway' | 'consumer_gateway' | 'sponsored_credential_type_mask' | 'verify_meter_count' | 'credential_notes' | 'status_notes' | 'recovery_notes' | 'root_status_notes' | 'root_recovery_notes' | 'root_authority_notes' | 'linked_credential_notes' | 'linked_status_notes' | 'linked_recovery_notes'>;
+      } as ContractStorageLayout<'orchestrator' | 'verify_meter_hook' | 'company_sponsor_gateways' | 'disabled_company_sponsor_gateways' | 'consumer_gateway' | 'sponsored_credential_type_mask' | 'verify_meter_count' | 'credential_notes' | 'status_notes' | 'recovery_notes' | 'root_status_notes' | 'root_recovery_notes' | 'root_authority_notes' | 'linked_credential_notes' | 'linked_status_notes' | 'linked_recovery_notes'>;
     }
     
 
   /** Type-safe wrappers for the public methods exposed by the contract. */
   public declare methods: {
     
+    /** add_company_sponsor_gateway(gateway: struct) */
+    add_company_sponsor_gateway: ((gateway: AztecAddressLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
+
     /** constructor(orchestrator_address: struct, verify_meter_hook_address: struct) */
     constructor: ((orchestrator_address: AztecAddressLike, verify_meter_hook_address: AztecAddressLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
-
-    /** get_company_sponsor_gateway() */
-    get_company_sponsor_gateway: (() => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
     /** get_consumer_gateway() */
     get_consumer_gateway: (() => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
@@ -186,14 +189,14 @@ linked_recovery_notes: {
     /** get_verify_meter_count() */
     get_verify_meter_count: (() => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
-    /** initialize_company_sponsor_gateway(gateway: struct) */
-    initialize_company_sponsor_gateway: ((gateway: AztecAddressLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
-
     /** initialize_consumer_gateway(gateway: struct) */
     initialize_consumer_gateway: ((gateway: AztecAddressLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
+    /** is_company_sponsor_gateway(gateway: struct) */
+    is_company_sponsor_gateway: ((gateway: AztecAddressLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
+
     /** offchain_receive(messages: struct) */
-    offchain_receive: ((messages: { ciphertext: FieldLike[], recipient: AztecAddressLike, tx_hash: { _is_some: boolean, _value: FieldLike }, anchor_block_timestamp: (bigint | number) }[]) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
+    offchain_receive: ((messages: { ciphertext: FieldLike[], recipient: AztecAddressLike, tx_hash: OptionLike<FieldLike>, anchor_block_timestamp: (bigint | number) }[]) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
     /** public_dispatch(selector: field) */
     public_dispatch: ((selector: FieldLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
@@ -221,6 +224,9 @@ linked_recovery_notes: {
 
     /** register_rooted_passport(active_owner: struct, ghost_owner: struct, root_commitment: field, claims_hash: field, expiry_ts: integer) */
     register_rooted_passport: ((active_owner: AztecAddressLike, ghost_owner: AztecAddressLike, root_commitment: FieldLike, claims_hash: FieldLike, expiry_ts: (bigint | number)) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
+
+    /** remove_company_sponsor_gateway(gateway: struct) */
+    remove_company_sponsor_gateway: ((gateway: AztecAddressLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
     /** revoke_linked_credential(hinted_recovery: struct) */
     revoke_linked_credential: ((hinted_recovery: { note: { root_commitment: FieldLike, revocation_secret: FieldLike, claims_hash: FieldLike, credential_type: (bigint | number), expiry_ts: (bigint | number) }, contract_address: AztecAddressLike, owner: AztecAddressLike, randomness: FieldLike, storage_slot: FieldLike, metadata: { stage: (bigint | number), maybe_note_nonce: FieldLike } }) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;

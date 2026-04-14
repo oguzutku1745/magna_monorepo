@@ -1,0 +1,209 @@
+{
+  "mode": "deploy",
+  "network": "local",
+  "startedAt": "2026-04-05T22:00:28.643Z",
+  "steps": [
+    {
+      "status": "passed",
+      "name": "aztec node ready",
+      "details": {
+        "nodeUrl": "http://127.0.0.1:8080"
+      }
+    },
+    {
+      "status": "passed",
+      "name": "l1 deployer gas balance",
+      "details": {
+        "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "balance": "9997562633111127937839"
+      }
+    },
+    {
+      "status": "passed",
+      "name": "l1 payment token decimals",
+      "details": {
+        "token": "0x4826533B4897376654Bb4d4AD88B7faFD0C98528",
+        "decimals": 6
+      }
+    },
+    {
+      "status": "passed",
+      "name": "l1 smoke buyer stable balance",
+      "details": {
+        "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "balance": "1000000000000000",
+        "required": "150000"
+      }
+    },
+    {
+      "status": "passed",
+      "name": "aztec admin fee juice balance",
+      "details": {
+        "address": "0x13aaeade7d4d8a9a83d2ed31281c2d673816743a189928bcef0e8e30cb292854",
+        "balance": "9997615508105290600000"
+      }
+    },
+    {
+      "status": "passed",
+      "name": "price per verify invariant",
+      "details": {
+        "pricePerVerify": "150000"
+      }
+    },
+    {
+      "status": "passed",
+      "name": "resolved aztec l1 contracts",
+      "details": {
+        "l1ChainId": "31337",
+        "registryAddress": "0xb7f8bc63bbcad18155201308c8f3540b07f84f5e",
+        "rollupAddress": "0x322813Fd9A801c5507c9de605d63CEA4f2CE6c44",
+        "inboxAddress": "0x6A1B3C7624b69000D7848916fb4f42026409586C",
+        "rollupVersion": "633250565"
+      }
+    },
+    {
+      "status": "passed",
+      "name": "deployed l1 portal",
+      "details": {
+        "portalAddress": "0x99bba657f2bbc93c02d617f8ba121cb8fc104acf"
+      }
+    },
+    {
+      "status": "passed",
+      "name": "deployed l2 rights registry",
+      "details": {
+        "rightsRegistryAddress": "0x0148d7f40b131684c2f275d16ed3fb78bbfefbb9ec17ed6ae5c5631a9270aae8",
+        "txHash": "0x1fdd848fa3d00ad061ae2a2d7f965674f24c9f7b3a22aadfaca24adc8ba56316"
+      }
+    },
+    {
+      "status": "passed",
+      "name": "initialized l1 portal",
+      "details": {
+        "txHash": "0xf2078c37472d795d844be25049236eb225d8a7d69ecc73c390533738a6bf5706"
+      }
+    },
+    {
+      "status": "passed",
+      "name": "deployed l2 payment token",
+      "details": {
+        "l2PaymentTokenAddress": "0x24aa2f975de93694b063a8270c5a98099c4c421047d14e5797e31ff65995dcb3",
+        "txHash": "0x0734bdeb1091c94b3ab46cceb0b41a474a9342d8a273e6a4d49d54cc4f1e6ff4"
+      }
+    },
+    {
+      "status": "passed",
+      "name": "deployed l2 rights purchase adapter",
+      "details": {
+        "purchaseAdapterAddress": "0x15e3cf60c51f778211c18b1001105792639f05d4ec3ab4cfb6287326696720df",
+        "txHash": "0x134d7624078fdd9273f5b6eb4bd28243b12ac06ed040b16c2b414e920e7798e7"
+      }
+    },
+    {
+      "status": "passed",
+      "name": "initialized l2 purchase adapter",
+      "details": {
+        "txHash": "0x0c37c5dfa524f8712dc8ac3b64bbfd7ba370240d93a09814b9db3058623eb42b"
+      }
+    },
+    {
+      "status": "passed",
+      "name": "wrote deployment manifest",
+      "details": {
+        "manifestPath": "/Users/ouyildiz/Desktop/magna/deployments/local.json"
+      }
+    },
+    {
+      "status": "passed",
+      "name": "validated l1 token decimals",
+      "details": {
+        "token": "0x4826533B4897376654Bb4d4AD88B7faFD0C98528",
+        "decimals": 6
+      }
+    },
+    {
+      "status": "passed",
+      "name": "validated l1 portal invariants",
+      "details": {
+        "owner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "treasury": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "paymentAsset": "0x4826533B4897376654Bb4d4AD88B7faFD0C98528",
+        "registry": "0xB7f8BC63BbcaD18155201308C8f3540b07f84F5e",
+        "inbox": "0x6A1B3C7624b69000D7848916fb4f42026409586C",
+        "rollupVersion": "633250565",
+        "l2RightsRegistry": "0x0148d7f40b131684c2f275d16ed3fb78bbfefbb9ec17ed6ae5c5631a9270aae8"
+      }
+    },
+    {
+      "status": "passed",
+      "name": "validated l2 rights registry invariants",
+      "details": {
+        "portal": "0x99bba657f2bbc93c02d617f8ba121cb8fc104acf",
+        "adapter": "0x15e3cf60c51f778211c18b1001105792639f05d4ec3ab4cfb6287326696720df"
+      }
+    },
+    {
+      "status": "passed",
+      "name": "validated l2 purchase adapter invariants",
+      "details": {
+        "admin": "0x13aaeade7d4d8a9a83d2ed31281c2d673816743a189928bcef0e8e30cb292854",
+        "treasury": "0x13aaeade7d4d8a9a83d2ed31281c2d673816743a189928bcef0e8e30cb292854",
+        "paymentToken": "0x24aa2f975de93694b063a8270c5a98099c4c421047d14e5797e31ff65995dcb3",
+        "rightsRegistry": "0x0148d7f40b131684c2f275d16ed3fb78bbfefbb9ec17ed6ae5c5631a9270aae8",
+        "pricePerVerify": "150000",
+        "nextPurchaseId": "1"
+      }
+    }
+  ],
+  "status": "passed",
+  "finishedAt": "2026-04-05T22:01:09.357Z",
+  "manifestPath": "/Users/ouyildiz/Desktop/magna/deployments/local.json",
+  "manifest": {
+    "network": "local",
+    "aztecVersion": "4.2.0-aztecnr-rc.2",
+    "endpoints": {
+      "l1RpcUrl": "http://127.0.0.1:8545",
+      "aztecNodeUrl": "http://127.0.0.1:8080"
+    },
+    "config": {
+      "pricePerVerify": "150000",
+      "l1PaymentTokenDecimals": 6
+    },
+    "resolvedAztec": {
+      "registryAddress": "0xb7f8bc63bbcad18155201308c8f3540b07f84f5e",
+      "rollupAddress": "0x322813Fd9A801c5507c9de605d63CEA4f2CE6c44",
+      "inboxAddress": "0x6A1B3C7624b69000D7848916fb4f42026409586C",
+      "rollupVersion": "633250565",
+      "l1ChainId": "31337"
+    },
+    "l1": {
+      "treasuryAddress": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "paymentTokenAddress": "0x4826533B4897376654Bb4d4AD88B7faFD0C98528",
+      "portalAddress": "0x99bba657f2bbc93c02d617f8ba121cb8fc104acf",
+      "txHashes": {
+        "initializePortal": "0xf2078c37472d795d844be25049236eb225d8a7d69ecc73c390533738a6bf5706"
+      }
+    },
+    "l2": {
+      "adminAddress": "0x13aaeade7d4d8a9a83d2ed31281c2d673816743a189928bcef0e8e30cb292854",
+      "treasuryAddress": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "rightsRegistryAddress": "0x0148d7f40b131684c2f275d16ed3fb78bbfefbb9ec17ed6ae5c5631a9270aae8",
+      "purchaseAdapterAddress": "0x15e3cf60c51f778211c18b1001105792639f05d4ec3ab4cfb6287326696720df",
+      "paymentTokenAddress": "0x24aa2f975de93694b063a8270c5a98099c4c421047d14e5797e31ff65995dcb3",
+      "paymentTokenDeployedByScript": true,
+      "txHashes": {
+        "deployRightsRegistry": "0x1fdd848fa3d00ad061ae2a2d7f965674f24c9f7b3a22aadfaca24adc8ba56316",
+        "deployPaymentToken": "0x0734bdeb1091c94b3ab46cceb0b41a474a9342d8a273e6a4d49d54cc4f1e6ff4",
+        "deployPurchaseAdapter": "0x134d7624078fdd9273f5b6eb4bd28243b12ac06ed040b16c2b414e920e7798e7",
+        "initializePurchaseAdapter": "0x0c37c5dfa524f8712dc8ac3b64bbfd7ba370240d93a09814b9db3058623eb42b"
+      }
+    },
+    "smoke": {
+      "sponsorAddress": "0x13aaeade7d4d8a9a83d2ed31281c2d673816743a189928bcef0e8e30cb292854",
+      "packageIdDefault": "0x0000000000000000000000000000000000000000000000000000000000000001"
+    },
+    "timestamps": {
+      "deployedAt": "2026-04-05T22:01:07.070Z"
+    }
+  }
+}

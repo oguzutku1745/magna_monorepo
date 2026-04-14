@@ -44,13 +44,16 @@ See `docs/no-drain-sponsorship.md`.
 
 ## Sponsor gateway entrypoint
 
-`MagnaIssuer` now also exposes `verify_sponsored(caller, ...)` for the dedicated
-company sponsor gateway path.
+`MagnaIssuer` now also exposes `verify_sponsored(caller, ...)` for dedicated
+company sponsor gateway paths.
 
 - `verify(...)` remains the direct user-call path.
 - `verify_sponsored(...)` is intended to be called by `MagnaCompanySponsor`.
-- `verify_sponsored(...)` is allowlisted to the configured company sponsor gateway
-  via `initialize_company_sponsor_gateway(...)`.
+- `verify_sponsored(...)` checks issuer-managed gateway membership.
+- Orchestrator-managed gateway lifecycle entrypoints:
+  - `add_company_sponsor_gateway(...)`
+  - `remove_company_sponsor_gateway(...)` (one-way disable)
+  - `is_company_sponsor_gateway(...)`
 - The explicit `caller` argument preserves the active-owner ownership checks even
   when the immediate `msg_sender()` is the sponsor contract.
 - The issuer-side sponsored rate-limit logic still applies on this path.

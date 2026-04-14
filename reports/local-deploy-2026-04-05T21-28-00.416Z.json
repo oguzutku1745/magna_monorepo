@@ -1,0 +1,49 @@
+{
+  "mode": "deploy",
+  "network": "local",
+  "startedAt": "2026-04-05T21:28:00.420Z",
+  "steps": [
+    {
+      "status": "passed",
+      "name": "aztec node ready",
+      "details": {
+        "nodeUrl": "http://127.0.0.1:8080"
+      }
+    },
+    {
+      "status": "passed",
+      "name": "l1 deployer gas balance",
+      "details": {
+        "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "balance": "9994781733259043576634"
+      }
+    },
+    {
+      "status": "passed",
+      "name": "l1 payment token decimals",
+      "details": {
+        "token": "0xDC11f7E700A4c898AE5CAddB1082cFfa76512aDD",
+        "decimals": 6
+      }
+    },
+    {
+      "status": "passed",
+      "name": "l1 smoke buyer stable balance",
+      "details": {
+        "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "balance": "1000000000000000",
+        "required": "150000"
+      }
+    },
+    {
+      "status": "failed",
+      "name": "fatal",
+      "error": "Error: Aztec admin address has zero FeeJuice. address=0x13aaeade7d4d8a9a83d2ed31281c2d673816743a189928bcef0e8e30cb292854"
+    }
+  ],
+  "status": "failed",
+  "finishedAt": "2026-04-05T21:28:01.378Z",
+  "config": {
+    "network": "local"
+  }
+}

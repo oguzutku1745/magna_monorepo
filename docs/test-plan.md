@@ -13,8 +13,10 @@
    - valid uppercase alpha-3 only
    - deterministic packed field
 4. Ghost derivation
-   - same `(uniqueIdentifier, scope)` => same output
-   - different scope/type => different output
+   - `v1_legacy_unscoped` remains stable for compatibility recovery
+   - `v2_scoped` is deterministic for same `(uniqueIdentifier, credential_type)`
+   - `v2_scoped` changes output when `credential_type` changes
+   - explicit version selection is required in rooted onboarding surfaces (no silent derivation swaps)
 
 ## Contract behavior checks
 
@@ -44,6 +46,10 @@
    - `recover_root(...)` disables old linked descendants
    - passport-expiry-only flow pauses linked validity until authority refresh
    - linked Instagram remains usable after authority refresh with the fresh rooted passport authority
+8. Web/API rooted defaults
+   - verification API defaults onboarding mode to `rooted` when mode is omitted
+   - frontend default issuance mode is rooted; rootless is explicit compatibility-only
+   - rooted hint fetch covers linked + root note families before linked verify
 
 ## Sponsorship / no-drain checks (Option A)
 

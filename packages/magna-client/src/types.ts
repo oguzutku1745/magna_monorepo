@@ -150,6 +150,7 @@ export type RevokeLinkedCredentialInput = {
 export type GhostDerivationInput = {
   uniqueIdentifier: bigint | string;
   credentialType: CredentialType;
+  derivationVersion?: GhostDerivationVersion;
   domainSeparator?: bigint;
 };
 
@@ -160,10 +161,13 @@ export type RootCommitmentInput = {
 
 export type GhostKeyMaterial = {
   scope: string;
+  derivationVersion: GhostDerivationVersion;
   domainSeparator: bigint;
   seedField: bigint;
   saltHex: string;
   secretHex: string;
 };
+
+export type GhostDerivationVersion = "v1_legacy_unscoped" | "v2_scoped";
 
 export type Hasher = (domainSeparator: bigint, fields: bigint[]) => bigint;
