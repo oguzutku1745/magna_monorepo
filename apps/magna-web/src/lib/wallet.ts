@@ -80,7 +80,7 @@ export type PasskeyWalletOptions = {
 };
 
 export type GhostAccountLifecycleOptions = {
-  wallet: Wallet;
+  nodeUrl: string;
   uniqueIdentifier: string;
   credentialType: CredentialType;
   alias?: string;
@@ -95,7 +95,7 @@ export type GhostAccountLifecycleResult = {
   derivationVersion: GhostDerivationVersion;
   scope: string;
   deploymentStatus: "deployed" | "counterfactual";
-  sessionOrigin: "new" | "reused";
+  localState: "derived-each-time";
   feePayer: string;
 };
 
@@ -835,19 +835,6 @@ export async function createPasskeyWalletSession(options: PasskeyWalletOptions):
   );
 }
 
-function requireEmbeddedWalletSessionWallet(wallet: Wallet): EmbeddedWallet {
-  if (
-    typeof (wallet as Partial<EmbeddedWallet>).createSchnorrAccount !== "function" ||
-    typeof (wallet as Partial<EmbeddedWallet>).getAccounts !== "function" ||
-    typeof (wallet as Partial<EmbeddedWallet>).registerContract !== "function"
-  ) {
-    throw new Error(
-      "Ghost account lifecycle requires an embedded wallet session. Connect a passkey/managed wallet instead of extension-only mode.",
-    );
-  }
-  return wallet as EmbeddedWallet;
-}
-
 function fieldFromHexString(value: string, label: string): Fr {
   try {
     return Fr.fromHexString(value.startsWith("0x") ? value : `0x${value}`);
@@ -859,11 +846,12 @@ function fieldFromHexString(value: string, label: string): Fr {
 export async function ensureGhostAccountLifecycle(
   options: GhostAccountLifecycleOptions,
 ): Promise<GhostAccountLifecycleResult> {
-  const wallet = requireEmbeddedWalletSessionWallet(options.wallet);
   const uniqueIdentifier = options.uniqueIdentifier.trim();
   if (!uniqueIdentifier) {
     throw new Error("Scoped unique identifier is required to derive the ghost account.");
   }
+  const wallet = await createEmbeddedWallet(options.nodeUrl, true);
+  try {
   const derivationVersion = options.derivationVersion ?? SCOPED_GHOST_DERIVATION_VERSION;
   const ghostMaterial = deriveGhostKeyMaterial({
     uniqueIdentifier,
@@ -875,10 +863,9 @@ export async function ensureGhostAccountLifecycle(
     fieldFromHexString(ghostMaterial.saltHex, "Ghost salt"),
   );
   const ghostAddress = derivedAddress.toString();
-  const existingAccounts = toWalletAccounts(await wallet.getAccounts());
-  const sessionOrigin: "new" | "reused" = existingAccounts.some(account => account.address === ghostAddress)
-    ? "reused"
-    : "new";
+  if (options.deploymentFromAddress?.trim()) {
+    await wallet.registerSender(AztecAddress.fromString(options.deploymentFromAddress.trim()), "magna-ghost-fee-payer");
+  }
   const alias = options.alias?.trim() || `magna-ghost-${options.credentialType}`;
   const ghostManager = await wallet.createSchnorrAccount(
     fieldFromHexString(ghostMaterial.secretHex, "Ghost secret"),
@@ -904,9 +891,12 @@ export async function ensureGhostAccountLifecycle(
     derivationVersion,
     scope: ghostMaterial.scope,
     deploymentStatus: deployment.isReady ? "deployed" : "counterfactual",
-    sessionOrigin,
+    localState: "derived-each-time",
     feePayer: deployment.feePayerAddress ?? funding?.fromAddress ?? "not-configured",
   };
+  } finally {
+    await wallet.stop();
+  }
 }
 
 export type { WalletProvider };

@@ -3,7 +3,6 @@ import { AztecAddress } from "@aztec/aztec.js/addresses";
 import { Fr } from "@aztec/aztec.js/fields";
 import { SetPublicAuthwitContractInteraction } from "@aztec/aztec.js/authorization";
 import { getSchnorrAccountContractAddress } from "@aztec/accounts/schnorr";
-import { GasSettings } from "@aztec/stdlib/gas";
 import { computeSecretHash } from "@aztec/stdlib/hash";
 import { poseidon2HashWithSeparator } from "@aztec/foundation/crypto/poseidon";
 import {
@@ -43,7 +42,6 @@ import { createPublicClient, createWalletClient, http, pad, parseAbiItem, type H
 import { privateKeyToAccount } from "viem/accounts";
 
 const MAGNA_CLAIMS_DS = 0x4d414743n;
-const SPONSOR_GAS_FEE_MULTIPLIER = 1.5;
 const HINT_SYNC_ATTEMPTS = 12;
 const HINT_SYNC_DELAY_MS = 1_000;
 const RIGHTS_SNAPSHOT_SYNC_ATTEMPTS = 20;
@@ -487,35 +485,6 @@ export function readSponsorSlot(form: PolicyForm): number {
   return parseIntField(form.sponsorSlot, "Sponsor slot");
 }
 
-async function getCompanySponsorGasSettings(
-  nodeUrl: string,
-  sponsor: MagnaCompanySponsorContract,
-  senderAddress: string,
-): Promise<GasSettings> {
-  const minFees = await getAztecNode(nodeUrl).getCurrentMinFees();
-  const boosted = GasSettings.default({
-    maxFeesPerGas: minFees.mul(SPONSOR_GAS_FEE_MULTIPLIER),
-  });
-  const capResult = await sponsor.methods.get_max_fee_cap().simulate({ from: toAddress(senderAddress) });
-  const maxFeeCap = toBigIntValue(capResult);
-  const boostedFeeLimit = boosted.getFeeLimit().toBigInt();
-  if (boostedFeeLimit <= maxFeeCap) {
-    return boosted;
-  }
-
-  const minFloor = GasSettings.default({
-    maxFeesPerGas: minFees,
-  });
-  const minFloorFeeLimit = minFloor.getFeeLimit().toBigInt();
-  if (minFloorFeeLimit <= maxFeeCap) {
-    return minFloor;
-  }
-
-  throw new Error(
-    `Sponsor fee cap too low for current network min fees. cap=${maxFeeCap.toString()} required_min=${minFloorFeeLimit.toString()}.`,
-  );
-}
-
 export async function deriveGhostAccountPreview(input: GhostDerivationInputForm): Promise<GhostAccountPreview> {
   const uniqueIdentifier = input.uniqueIdentifier.trim();
   if (!uniqueIdentifier) {
@@ -801,10 +770,6 @@ export class MagnaBrowserClient {
       .get_root_authority_hinted(toAddress(ownerAddress), toField(rootCommitment), toField(claimsHash))
       .simulate({ from: toAddress(ownerAddress) })
       .then(simulation => unwrapSimulationResult(simulation));
-    const hintedLinkedRecoveryNote = await this.issuer.methods
-      .get_linked_recovery_hinted(toAddress(ownerAddress), toField(rootCommitment), toField(claimsHash))
-      .simulate({ from: toAddress(ownerAddress) })
-      .then(simulation => unwrapSimulationResult(simulation));
 
     return {
       claimsHash: claimsHash.toString(),
@@ -813,7 +778,6 @@ export class MagnaBrowserClient {
       hintedStatusNote,
       hintedRootStatusNote,
       hintedRootAuthorityNote,
-      hintedLinkedRecoveryNote,
     };
   }
 
@@ -940,13 +904,7 @@ export class MagnaBrowserClient {
     const witness = buildPassportClaimsWitness(claims);
     const policy = buildPassportPolicy(policyForm);
     const normalizedPolicy = normalizePolicy(policy);
-    const feeBase = buildCompanySponsorFeeConfig(toAddress(selectedSponsor.sponsorAddress));
-    const gasSettings = await getCompanySponsorGasSettings(
-      this.env.aztecNodeUrl,
-      selectedSponsor.sponsor,
-      this.userAddress,
-    );
-    const fee = { ...feeBase, gasSettings } as any;
+    const fee = buildCompanySponsorFeeConfig(toAddress(selectedSponsor.sponsorAddress)) as any;
     const sponsorScope = toAddress(selectedSponsor.sponsorAddress);
     const receipt = await selectedSponsor.sponsor.methods
       .sponsored_verify(
@@ -1036,13 +994,7 @@ export class MagnaBrowserClient {
     const witness = buildPassportClaimsWitness(claims);
     const policy = buildPassportPolicy(policyForm);
     const normalizedPolicy = normalizePolicy(policy);
-    const feeBase = buildCompanySponsorFeeConfig(toAddress(selectedSponsor.sponsorAddress));
-    const gasSettings = await getCompanySponsorGasSettings(
-      this.env.aztecNodeUrl,
-      selectedSponsor.sponsor,
-      this.userAddress,
-    );
-    const fee = { ...feeBase, gasSettings } as any;
+    const fee = buildCompanySponsorFeeConfig(toAddress(selectedSponsor.sponsorAddress)) as any;
     const sponsorScope = toAddress(selectedSponsor.sponsorAddress);
     const receipt = await selectedSponsor.sponsor.methods
       .sponsored_verify_linked(

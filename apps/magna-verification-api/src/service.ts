@@ -47,6 +47,16 @@ export type VerifyAndIssueRequest = {
   ghostDerivationVersion?: GhostDerivationVersion;
 };
 
+export type VerifyAndRefreshRootAuthorityRequest = {
+  proofs: ProofResult[];
+  originalQuery: Query;
+  queryResult: QueryResult;
+  ghostOwner: string;
+  hintedRootStatusNote: unknown;
+  hintedRootAuthorityNote: unknown;
+  ageThreshold?: number;
+};
+
 export type VerifyAndIssueResponse = {
   issuanceTxHash?: string;
   ghostOwner: string;
@@ -54,6 +64,24 @@ export type VerifyAndIssueResponse = {
   claimsHash: string;
   mode: VerificationMode;
   ghostDerivationVersion: GhostDerivationVersion;
+  orchestratorAddress: string;
+  verificationSummary: {
+    verified: true;
+    uniqueIdentifierPresent: true;
+  };
+  normalizedClaims: {
+    nationalityAlpha3: string;
+    minAgeProven: number;
+    passportExpiryDate: string;
+    expiryTs: string;
+  };
+};
+
+export type VerifyAndRefreshRootAuthorityResponse = {
+  renewalTxHash?: string;
+  ghostOwner: string;
+  rootCommitment: string;
+  claimsHash: string;
   orchestratorAddress: string;
   verificationSummary: {
     verified: true;
@@ -485,11 +513,18 @@ function toZkPassportResult(value: unknown): ZkPassportVerificationResult {
   };
 }
 
-export async function verifyAndIssuePassport(
+async function verifyZkPassportPassportClaims(
   config: VerificationApiConfig,
-  input: VerifyAndIssueRequest,
-  contextLoader: () => Promise<IssuanceContext>,
-): Promise<VerifyAndIssueResponse> {
+  input: {
+    proofs: ProofResult[];
+    originalQuery: Query;
+    queryResult: QueryResult;
+    ageThreshold?: number;
+  },
+): Promise<{
+  verification: { verified: true; uniqueIdentifier: string };
+  normalized: ReturnType<typeof normalizePassportClaimsFromQueryResult>;
+}> {
   if (!Array.isArray(input.proofs) || input.proofs.length === 0) {
     throw new Error("proofs must be a non-empty array.");
   }
@@ -499,9 +534,6 @@ export async function verifyAndIssuePassport(
   if (!input.queryResult || typeof input.queryResult !== "object") {
     throw new Error("queryResult is required.");
   }
-  const activeOwner = requireString(input.activeOwner, "activeOwner");
-  const mode = resolveVerificationMode(input.mode);
-  const ghostDerivationVersion = resolveGhostDerivationVersion(input.ghostDerivationVersion, mode);
 
   const { ZKPassport } = require("@zkpassport/sdk") as typeof import("@zkpassport/sdk");
   const zkPassport = new ZKPassport(config.zkPassportDomain);
@@ -519,7 +551,43 @@ export async function verifyAndIssuePassport(
     throw new Error("zkPassport verification succeeded but uniqueIdentifier is missing.");
   }
 
-  const normalized = normalizePassportClaimsFromQueryResult(input.queryResult, input.ageThreshold);
+  return {
+    verification: {
+      verified: true,
+      uniqueIdentifier: verification.uniqueIdentifier,
+    },
+    normalized: normalizePassportClaimsFromQueryResult(input.queryResult, input.ageThreshold),
+  };
+}
+
+function requireFieldLikeString(value: unknown, fieldName: string): string {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+  if (typeof value === "bigint" || typeof value === "number") {
+    return String(value);
+  }
+  if (value && typeof value === "object" && "toString" in value) {
+    const asString = String((value as { toString(): string }).toString());
+    if (asString && asString !== "[object Object]") {
+      return asString;
+    }
+  }
+  throw new Error(`${fieldName} must be field-like.`);
+}
+
+export async function verifyAndIssuePassport(
+  config: VerificationApiConfig,
+  input: VerifyAndIssueRequest,
+  contextLoader: () => Promise<IssuanceContext>,
+): Promise<VerifyAndIssueResponse> {
+  const activeOwner = requireString(input.activeOwner, "activeOwner");
+  const mode = resolveVerificationMode(input.mode);
+  const ghostDerivationVersion = resolveGhostDerivationVersion(input.ghostDerivationVersion, mode);
+  const { verification, normalized } = await verifyZkPassportPassportClaims(config, input);
   const ghostOwner = await deriveGhostOwnerAddress(verification.uniqueIdentifier, ghostDerivationVersion);
   const rootCommitment = deriveRootCommitment({ uniqueIdentifier: verification.uniqueIdentifier });
   const context = await contextLoader();
@@ -551,6 +619,55 @@ export async function verifyAndIssuePassport(
     claimsHash: claimsHash.toString(),
     mode,
     ghostDerivationVersion,
+    orchestratorAddress: context.orchestratorAddress.toString(),
+    verificationSummary: {
+      verified: true,
+      uniqueIdentifierPresent: true,
+    },
+    normalizedClaims: {
+      nationalityAlpha3: normalized.nationalityAlpha3,
+      minAgeProven: normalized.claims.minAgeProven,
+      passportExpiryDate: normalized.passportExpiryDate,
+      expiryTs: normalized.claims.expiryTs.toString(),
+    },
+  };
+}
+
+export async function verifyAndRefreshRootAuthority(
+  config: VerificationApiConfig,
+  input: VerifyAndRefreshRootAuthorityRequest,
+  contextLoader: () => Promise<IssuanceContext>,
+): Promise<VerifyAndRefreshRootAuthorityResponse> {
+  const ghostOwner = requireString(input.ghostOwner, "ghostOwner");
+  if (!input.hintedRootStatusNote || typeof input.hintedRootStatusNote !== "object") {
+    throw new Error("hintedRootStatusNote is required.");
+  }
+  if (!input.hintedRootAuthorityNote || typeof input.hintedRootAuthorityNote !== "object") {
+    throw new Error("hintedRootAuthorityNote is required.");
+  }
+
+  const { normalized } = await verifyZkPassportPassportClaims(config, input);
+  const context = await contextLoader();
+  const claimsHash = computePassportClaimsHash(normalized.claims, poseidon2FieldHasher);
+  const rootCommitment = requireFieldLikeString(
+    readPath(input.hintedRootStatusNote, ["note", "root_commitment"]),
+    "hintedRootStatusNote.note.root_commitment",
+  );
+  const receipt = await context.issuer.methods
+    .refresh_root_authority(
+      AztecAddress.fromString(ghostOwner),
+      input.hintedRootStatusNote as never,
+      input.hintedRootAuthorityNote as never,
+      new Fr(claimsHash),
+      normalized.claims.expiryTs,
+    )
+    .send({ from: context.orchestratorAddress });
+
+  return {
+    renewalTxHash: readTxHash(receipt),
+    ghostOwner,
+    rootCommitment,
+    claimsHash: claimsHash.toString(),
     orchestratorAddress: context.orchestratorAddress.toString(),
     verificationSummary: {
       verified: true,

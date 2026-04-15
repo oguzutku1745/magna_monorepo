@@ -72,6 +72,34 @@ export type VerifyAndIssueResponse = {
   };
 };
 
+export type VerifyAndRefreshRootAuthorityPayload = {
+  proofs: ProofResult[];
+  originalQuery: Query;
+  queryResult: QueryResult;
+  ghostOwner: string;
+  hintedRootStatusNote: unknown;
+  hintedRootAuthorityNote: unknown;
+  ageThreshold: number;
+};
+
+export type VerifyAndRefreshRootAuthorityResponse = {
+  renewalTxHash?: string;
+  ghostOwner: string;
+  rootCommitment: string;
+  claimsHash: string;
+  orchestratorAddress: string;
+  verificationSummary: {
+    verified: true;
+    uniqueIdentifierPresent: true;
+  };
+  normalizedClaims: {
+    nationalityAlpha3: string;
+    minAgeProven: number;
+    passportExpiryDate: string;
+    expiryTs: string;
+  };
+};
+
 let zkPassportSingleton: ZKPassport | null = null;
 
 function getZkPassport(): ZKPassport {
@@ -108,6 +136,60 @@ function summarizeQueryResultErrors(errors?: Partial<QueryResultErrors>): string
     }
   }
   return messages.length > 0 ? messages.join(" | ") : undefined;
+}
+
+function sanitizeForJson(value: unknown): unknown {
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (Array.isArray(value)) {
+    return value.map(entry => sanitizeForJson(entry));
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  const isPlainObject = prototype === Object.prototype || prototype === null;
+  const record = value as Record<string, unknown>;
+  const toStringCandidate = (value as { toString?: () => string }).toString;
+  if (!isPlainObject && typeof toStringCandidate === "function") {
+    const asString = toStringCandidate.call(value);
+    if (asString && asString !== "[object Object]") {
+      return asString;
+    }
+  }
+
+  const keys = Object.keys(record);
+  return Object.fromEntries(keys.map(key => [key, sanitizeForJson(record[key])]));
+}
+
+async function postVerificationApi<TResponse>(verificationApiUrl: string, path: string, payload: unknown): Promise<TResponse> {
+  const response = await fetch(`${verificationApiUrl.replace(/\/$/, "")}${path}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(sanitizeForJson(payload)),
+  });
+
+  if (!response.ok) {
+    let serverMessage = `status ${response.status}`;
+    try {
+      const errorBody = (await response.json()) as { error?: string };
+      if (errorBody.error) {
+        serverMessage = errorBody.error;
+      }
+    } catch {
+      // Ignore parse failure and keep generic status.
+    }
+    throw new Error(`Verification API request failed: ${serverMessage}`);
+  }
+
+  return (await response.json()) as TResponse;
 }
 
 export async function startPassportZkRequest(options: {
@@ -196,26 +278,20 @@ export async function verifyAndIssueThroughBackend(
   verificationApiUrl: string,
   payload: VerifyAndIssuePayload,
 ): Promise<VerifyAndIssueResponse> {
-  const response = await fetch(`${verificationApiUrl.replace(/\/$/, "")}/zkpassport/verify-and-issue`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
+  return await postVerificationApi<VerifyAndIssueResponse>(
+    verificationApiUrl,
+    "/zkpassport/verify-and-issue",
+    payload,
+  );
+}
 
-  if (!response.ok) {
-    let serverMessage = `status ${response.status}`;
-    try {
-      const errorBody = (await response.json()) as { error?: string };
-      if (errorBody.error) {
-        serverMessage = errorBody.error;
-      }
-    } catch {
-      // Ignore parse failure and keep generic status.
-    }
-    throw new Error(`Verification API request failed: ${serverMessage}`);
-  }
-
-  return (await response.json()) as VerifyAndIssueResponse;
+export async function verifyAndRefreshRootAuthorityThroughBackend(
+  verificationApiUrl: string,
+  payload: VerifyAndRefreshRootAuthorityPayload,
+): Promise<VerifyAndRefreshRootAuthorityResponse> {
+  return await postVerificationApi<VerifyAndRefreshRootAuthorityResponse>(
+    verificationApiUrl,
+    "/zkpassport/verify-and-refresh-root-authority",
+    payload,
+  );
 }

@@ -48,6 +48,7 @@ npm run -w @magna/verification-api dev
 
 - `GET /health`
 - `POST /zkpassport/verify-and-issue`
+- `POST /zkpassport/verify-and-refresh-root-authority`
 
 ### `POST /zkpassport/verify-and-issue` body
 
@@ -68,3 +69,23 @@ Notes:
 - If `ghostDerivationVersion` is omitted, the API resolves it by mode:
   - rooted => `v2_scoped` (canonical)
   - passport => `v1_legacy_unscoped` (compatibility)
+
+### `POST /zkpassport/verify-and-refresh-root-authority` body
+
+```json
+{
+  "proofs": [],
+  "originalQuery": {},
+  "queryResult": {},
+  "ghostOwner": "0x...",
+  "hintedRootStatusNote": {},
+  "hintedRootAuthorityNote": {},
+  "ageThreshold": 21
+}
+```
+
+Notes:
+- This endpoint is the real rooted passport renewal path.
+- The backend verifies a fresh zkPassport proof first.
+- The existing rooted hints are supplied by the frontend/user wallet and forwarded to the orchestrator-backed contract call.
+- Renewal keeps the same rooted lineage anchor and refreshes authority on-chain rather than deriving a brand-new root.

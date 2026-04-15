@@ -393,7 +393,7 @@ describe("magna app helpers", () => {
     ]);
   });
 
-  it("uses current node min fees when sending sponsored verify transactions", async () => {
+  it("uses sponsor payment method with additional scope for sponsored verify transactions", async () => {
     const sponsoredVerifySend = vi.fn(async () => ({ txHash: "0xsponsored" }));
     sponsorContracts.set("0xsponsor-a", {
       address: "0xsponsor-a",
@@ -426,18 +426,13 @@ describe("magna app helpers", () => {
       "0xsponsor-a",
     );
 
-    expect(nodeMock.getCurrentMinFees).toHaveBeenCalledTimes(1);
     expect(sponsoredVerifySend).toHaveBeenCalledWith(
       expect.objectContaining({
         from: "0xuser",
         additionalScopes: ["0xsponsor-a"],
         fee: expect.objectContaining({
-          gasSettings: expect.objectContaining({
-            maxFeesPerGas: expect.objectContaining({
-              feePerDaGas: 150000n,
-              feePerL2Gas: 23250000n,
-            }),
-          }),
+          estimateGas: true,
+          estimatedGasPadding: 0.2,
         }),
       }),
     );
@@ -487,7 +482,7 @@ describe("magna app helpers", () => {
     expect(issuerContractMock.methods.get_credential_hinted).toHaveBeenCalledTimes(2);
   });
 
-  it("fetches rooted passport hints across linked + root note families", async () => {
+  it("fetches rooted passport hints for the active-owner note families only", async () => {
     const env = getAppEnv({
       VITE_MAGNA_ISSUER_ADDRESS: "0xissuer",
     });
@@ -499,7 +494,7 @@ describe("magna app helpers", () => {
     expect(hints.claimsHash).toBe("123");
     expect(hints.hintedRootStatusNote).toEqual({ note: { root_commitment: 99n } });
     expect(hints.hintedRootAuthorityNote).toEqual({ note: { root_commitment: 99n } });
-    expect(hints.hintedLinkedRecoveryNote).toEqual({ note: { root_commitment: 99n } });
+    expect(hints.hintedLinkedRecoveryNote).toBeUndefined();
     expect(issuerContractMock.methods.get_linked_credential_hinted).toHaveBeenCalledWith("0xuser", expect.anything(), expect.anything());
     expect(issuerContractMock.methods.get_root_status_hinted).toHaveBeenCalledWith("0xuser", expect.anything());
     expect(issuerContractMock.methods.get_root_authority_hinted).toHaveBeenCalledWith(
@@ -507,6 +502,7 @@ describe("magna app helpers", () => {
       expect.anything(),
       expect.anything(),
     );
+    expect(issuerContractMock.methods.get_linked_recovery_hinted).not.toHaveBeenCalled();
   });
 
   it("sends rooted sponsored verify with sponsor additional scope", async () => {

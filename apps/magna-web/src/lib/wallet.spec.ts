@@ -83,6 +83,7 @@ const testState = vi.hoisted(() => {
         isContractPublished: deployedAddresses.has(normalized),
       };
     }),
+    registerSender: vi.fn(async () => undefined),
     registerContract: vi.fn(async () => undefined),
     walletDB: {
       retrieveAccount: vi.fn(async (address: string) => {
@@ -343,67 +344,38 @@ describe("wallet session persistence", () => {
     expect(session.metadata?.sessionOrigin).toBe("new");
   });
 
-  it("creates and deploys scoped ghost accounts using the active wallet payer", async () => {
+  it("creates and deploys scoped ghost accounts without retaining local ghost state", async () => {
     const validFeePayer = `0x${"1".repeat(64)}`;
-    testState.storedAccounts.push({
-      alias: "magna-user",
-      item: {
-        toString: () => "0xmanaged-magna-user",
-        equals: (other: { toString?: () => string } | string) =>
-          (typeof other === "string" ? other : other.toString?.()) === "0xmanaged-magna-user",
-      },
-    });
-    testState.storedAccountRecords.set("0xmanaged-magna-user", {
-      secretKey: { kind: "managed-secret" },
-      salt: { kind: "managed-salt" },
-      type: "schnorr",
-      signingKey: Buffer.alloc(32, 2),
-    });
-    testState.deployedAddresses.add("0xmanaged-magna-user");
-
-    const session = await createManagedWalletSession({
-      nodeUrl: "http://127.0.0.1:8080",
-      alias: "magna-user",
-      flavor: "schnorr",
-      bootstrapWithLocalTestAccount: false,
-      localTestAccountIndex: 0,
-    });
     const lifecycle = await ensureGhostAccountLifecycle({
-      wallet: session.wallet,
+      nodeUrl: "http://127.0.0.1:8080",
       uniqueIdentifier: "12345",
       credentialType: 1,
       deploymentFromAddress: validFeePayer,
     });
 
     expect(testState.getSchnorrAccountContractAddress).toHaveBeenCalledTimes(1);
+    expect(testState.wallet.registerSender).toHaveBeenCalled();
     expect(testState.deployCalls).toContainEqual({
       address: "0xghost-passport-account",
       from: validFeePayer,
     });
     expect(lifecycle.address).toBe("0xghost-passport-account");
     expect(lifecycle.deploymentStatus).toBe("deployed");
+    expect(lifecycle.localState).toBe("derived-each-time");
+    expect(testState.wallet.stop).toHaveBeenCalled();
   });
 
-  it("reuses already persisted ghost account material without redeploying", async () => {
-    testState.storedAccounts.push({
-      alias: "ghost-passport",
-      item: {
-        toString: () => "0xghost-passport-account",
-        equals: (other: { toString?: () => string } | string) =>
-          (typeof other === "string" ? other : other.toString?.()) === "0xghost-passport-account",
-      },
-    });
+  it("derives already deployed ghost accounts again instead of depending on persisted local ghost state", async () => {
     testState.deployedAddresses.add("0xghost-passport-account");
 
-    const wallet = testState.wallet as any;
     const lifecycle = await ensureGhostAccountLifecycle({
-      wallet,
+      nodeUrl: "http://127.0.0.1:8080",
       uniqueIdentifier: "12345",
       credentialType: 1,
     });
 
-    expect(lifecycle.sessionOrigin).toBe("reused");
     expect(lifecycle.deploymentStatus).toBe("deployed");
     expect(testState.deployCalls).toHaveLength(0);
+    expect(lifecycle.localState).toBe("derived-each-time");
   });
 });

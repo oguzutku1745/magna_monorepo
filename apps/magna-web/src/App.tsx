@@ -44,9 +44,11 @@ import {
 } from "./lib/wallet";
 import {
   startPassportZkRequest,
+  verifyAndRefreshRootAuthorityThroughBackend,
   verifyAndIssueThroughBackend,
   type ActiveZkPassportRequest,
   type VerifyAndIssueResponse as ZkPassportIssueResponse,
+  type VerifyAndRefreshRootAuthorityResponse as ZkPassportRenewalResponse,
   type ZkPassportLifecycleEvent,
 } from "./lib/zkpassport";
 
@@ -128,6 +130,13 @@ function formatHex(value: bigint): string {
 const CHAIN_FINGERPRINT_STORAGE_KEY = "magna-web:chain-fingerprint:v1";
 const PASSKEY_RECORD_STORAGE_KEY = "magna-web:passkey-record:v1";
 const LAST_ISSUED_PASSPORT_STORAGE_KEY = "magna-web:last-issued-passport:v1";
+const TRANSIENT_LOCAL_NETWORK_TX_ERROR_MARKERS = [
+  "Invalid tx: Invalid expiration timestamp",
+  "Invalid tx: Block header not found",
+  "Tx dropped by P2P node",
+] as const;
+const TRANSIENT_LOCAL_NETWORK_TX_RETRY_ATTEMPTS = 3;
+const TRANSIENT_LOCAL_NETWORK_TX_RETRY_BACKOFF_MS = 250;
 
 type ActivityLogEntry = {
   id: number;
@@ -141,6 +150,7 @@ type LastIssuedPassportRef = {
   rootCommitment?: string;
   ghostOwner?: string;
   ghostDerivationVersion?: string;
+  normalizedClaims?: ZkPassportIssueResponse["normalizedClaims"];
 };
 
 function fingerprintFromChainContext(
@@ -215,10 +225,36 @@ function loadStoredLastIssuedPassportRef(): LastIssuedPassportRef | null {
       ghostOwner: typeof parsed.ghostOwner === "string" ? parsed.ghostOwner : undefined,
       ghostDerivationVersion:
         typeof parsed.ghostDerivationVersion === "string" ? parsed.ghostDerivationVersion : undefined,
+      normalizedClaims:
+        parsed.normalizedClaims &&
+        typeof parsed.normalizedClaims === "object" &&
+        typeof parsed.normalizedClaims.nationalityAlpha3 === "string" &&
+        typeof parsed.normalizedClaims.minAgeProven === "number" &&
+        typeof parsed.normalizedClaims.passportExpiryDate === "string" &&
+        typeof parsed.normalizedClaims.expiryTs === "string"
+          ? parsed.normalizedClaims
+          : undefined,
     };
   } catch {
     return null;
   }
+}
+
+function claimsFormFromNormalizedClaims(normalizedClaims: ZkPassportIssueResponse["normalizedClaims"]): PassportClaimsForm {
+  return {
+    nationalityAlpha3: normalizedClaims.nationalityAlpha3,
+    ageThreshold: String(normalizedClaims.minAgeProven),
+    passportExpiryDate: normalizedClaims.passportExpiryDate,
+  };
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isTransientLocalNetworkTxError(error: unknown): boolean {
+  const details = error instanceof Error ? error.message : String(error);
+  return TRANSIENT_LOCAL_NETWORK_TX_ERROR_MARKERS.some(marker => details.includes(marker));
 }
 
 export function App() {
@@ -277,9 +313,16 @@ export function App() {
   const [chainIdentityLabel, setChainIdentityLabel] = useState<string>("unknown");
   const [chainResetNotice, setChainResetNotice] = useState<string | null>(null);
   const [activeZkRequest, setActiveZkRequest] = useState<ActiveZkPassportRequest | null>(null);
+  const [activeGhostContextRequest, setActiveGhostContextRequest] = useState<ActiveZkPassportRequest | null>(null);
+  const [activeRenewalRequest, setActiveRenewalRequest] = useState<ActiveZkPassportRequest | null>(null);
   const [zkPassportStage, setZkPassportStage] = useState<string>("idle");
   const [zkPassportProofCount, setZkPassportProofCount] = useState<number>(0);
+  const [ghostContextStage, setGhostContextStage] = useState<string>("idle");
+  const [ghostContextProofCount, setGhostContextProofCount] = useState<number>(0);
   const [zkPassportLastIssue, setZkPassportLastIssue] = useState<ZkPassportIssueResponse | null>(null);
+  const [renewalStage, setRenewalStage] = useState<string>("idle");
+  const [renewalProofCount, setRenewalProofCount] = useState<number>(0);
+  const [zkPassportLastRenewal, setZkPassportLastRenewal] = useState<ZkPassportRenewalResponse | null>(null);
   const [ghostLifecycle, setGhostLifecycle] = useState<GhostAccountLifecycleResult | null>(null);
   const [lastIssuedPassportRef, setLastIssuedPassportRef] = useState<LastIssuedPassportRef | null>(() =>
     loadStoredLastIssuedPassportRef(),
@@ -320,6 +363,7 @@ export function App() {
           window.localStorage.removeItem(LAST_ISSUED_PASSPORT_STORAGE_KEY);
           setLastIssuedPassportRef(null);
           setGhostLifecycle(null);
+          setZkPassportLastRenewal(null);
         }
         window.localStorage.setItem(CHAIN_FINGERPRINT_STORAGE_KEY, nextFingerprint);
       })
@@ -362,6 +406,7 @@ export function App() {
       setHints(null);
       setGhostLifecycle(null);
       setLastIssuedPassportRef(null);
+      setZkPassportLastRenewal(null);
       setPendingConnection(null);
     });
   }, [chainResetNotice, session]);
@@ -402,10 +447,24 @@ export function App() {
     };
   }, [activeZkRequest]);
 
+  useEffect(() => {
+    return () => {
+      activeGhostContextRequest?.cancel();
+    };
+  }, [activeGhostContextRequest]);
+
+  useEffect(() => {
+    return () => {
+      activeRenewalRequest?.cancel();
+    };
+  }, [activeRenewalRequest]);
+
   const activeAccount = useMemo(
     () => session?.accounts.find(account => account.address === selectedAccount) ?? session?.activeAccount ?? null,
     [selectedAccount, session],
   );
+  const hasActiveZkPassportRequest =
+    activeZkRequest !== null || activeGhostContextRequest !== null || activeRenewalRequest !== null;
   const externalSession = session?.kind === "external" ? session : null;
   const connectedExternalProviderId = externalSession?.metadata?.providerId ?? null;
   const operatorFeePayerAddress = useMemo(() => {
@@ -461,6 +520,18 @@ export function App() {
     setActivityLog(current => [entry, ...current].slice(0, 10));
   };
 
+  const resolveCanonicalClaimsForm = (
+    currentHints: PassportHints | RootedPassportHints | null,
+  ): PassportClaimsForm => {
+    if (currentHints && zkPassportLastIssue?.claimsHash === currentHints.claimsHash) {
+      return claimsFormFromNormalizedClaims(zkPassportLastIssue.normalizedClaims);
+    }
+    if (currentHints && lastIssuedPassportRef?.claimsHash === currentHints.claimsHash && lastIssuedPassportRef.normalizedClaims) {
+      return claimsFormFromNormalizedClaims(lastIssuedPassportRef.normalizedClaims);
+    }
+    return claimsForm;
+  };
+
   const runAction = async <T,>(label: string, work: () => Promise<T>): Promise<T | undefined> => {
     setBusyAction(label);
     setError(null);
@@ -480,6 +551,30 @@ export function App() {
     } finally {
       setBusyAction(null);
     }
+  };
+
+  const runRetriedTxAction = async <T,>(label: string, work: () => Promise<T>): Promise<T | undefined> => {
+    return await runAction(label, async () => {
+      let attempt = 1;
+      while (true) {
+        try {
+          return await work();
+        } catch (caught) {
+          if (!isTransientLocalNetworkTxError(caught) || attempt >= TRANSIENT_LOCAL_NETWORK_TX_RETRY_ATTEMPTS) {
+            throw caught;
+          }
+          appendLog(
+            `${label} transient local-network tx error; retrying ` +
+              `(attempt=${attempt} max_attempts=${TRANSIENT_LOCAL_NETWORK_TX_RETRY_ATTEMPTS} ` +
+              `backoff_ms=${TRANSIENT_LOCAL_NETWORK_TX_RETRY_BACKOFF_MS}): ${errorMessage(caught)}`,
+          );
+          if (TRANSIENT_LOCAL_NETWORK_TX_RETRY_BACKOFF_MS > 0) {
+            await sleep(TRANSIENT_LOCAL_NETWORK_TX_RETRY_BACKOFF_MS);
+          }
+          attempt += 1;
+        }
+      }
+    });
   };
 
   const clearProviderDisconnectHandler = () => {
@@ -738,6 +833,10 @@ export function App() {
       setError("zkPassport age threshold must be a valid integer.");
       return;
     }
+    if (activeGhostContextRequest || activeRenewalRequest) {
+      setError("Finish or cancel the current zkPassport flow before starting issuance.");
+      return;
+    }
     if (activeZkRequest) {
       activeZkRequest.cancel();
       setActiveZkRequest(null);
@@ -812,17 +911,12 @@ export function App() {
 
           const uniqueIdentifier = completion.uniqueIdentifier;
           let preparedGhost: GhostAccountLifecycleResult | null = null;
-          if (
-            env.zkPassportPrimaryIssuanceMode === "rooted" &&
-            uniqueIdentifier &&
-            session &&
-            session.kind !== "external"
-          ) {
+          if (env.zkPassportPrimaryIssuanceMode === "rooted" && uniqueIdentifier) {
             setZkPassportStage("preparing_rooted_ghost");
             const preparedGhostResult = await runAction("Prepare rooted ghost account", async () => {
               try {
                 return await ensureGhostAccountLifecycle({
-                  wallet: session.wallet,
+                  nodeUrl: env.aztecNodeUrl,
                   uniqueIdentifier,
                   credentialType: CredentialType.Passport,
                   derivationVersion: env.zkPassportGhostDerivationVersion,
@@ -834,7 +928,7 @@ export function App() {
                 }
                 appendLog("Ghost account deploy with preferred payer failed, retrying with local test payer.");
                 return await ensureGhostAccountLifecycle({
-                  wallet: session.wallet,
+                  nodeUrl: env.aztecNodeUrl,
                   uniqueIdentifier,
                   credentialType: CredentialType.Passport,
                   derivationVersion: env.zkPassportGhostDerivationVersion,
@@ -880,6 +974,7 @@ export function App() {
             rootCommitment: issued.mode === "rooted" ? issued.rootCommitment : undefined,
             ghostOwner: issued.ghostOwner,
             ghostDerivationVersion: issued.ghostDerivationVersion,
+            normalizedClaims: issued.normalizedClaims,
           });
           setZkPassportStage("issued");
           setGhostOwner(issued.ghostOwner);
@@ -931,6 +1026,10 @@ export function App() {
       setError("Choose an active account before issuing a credential.");
       return;
     }
+    if (activeGhostContextRequest || activeRenewalRequest) {
+      setError("Finish or cancel the current zkPassport flow before issuing via the dev fallback.");
+      return;
+    }
     const uniqueIdentifier = ghostIdentifierInput.trim();
     if (!uniqueIdentifier) {
       const message = "Provide a scoped unique identifier so the ghost wallet address can be derived.";
@@ -974,8 +1073,8 @@ export function App() {
       setError("Choose an active account before fetching hinted notes.");
       return;
     }
-    if (activeZkRequest) {
-      setError("Wait for the current zkPassport issuance request to finish before fetching hinted notes.");
+    if (activeZkRequest || activeGhostContextRequest || activeRenewalRequest) {
+      setError("Wait for the current zkPassport request to finish before fetching hinted notes.");
       return;
     }
     const result = await runAction("Fetch Magna hinted notes", async () => {
@@ -997,6 +1096,19 @@ export function App() {
           : issuedRef
             ? await client.fetchPassportHintsByClaimsHash(activeAccount.address, issuedRef.claimsHash)
             : await client.fetchPassportHints(activeAccount.address, claimsForm);
+      if (issuedRef?.normalizedClaims) {
+        setClaimsForm(current => {
+          const canonicalForm = claimsFormFromNormalizedClaims(issuedRef.normalizedClaims!);
+          if (
+            current.nationalityAlpha3 === canonicalForm.nationalityAlpha3 &&
+            current.ageThreshold === canonicalForm.ageThreshold &&
+            current.passportExpiryDate === canonicalForm.passportExpiryDate
+          ) {
+            return current;
+          }
+          return canonicalForm;
+        });
+      }
       setHints(nextHints);
       return nextHints;
     });
@@ -1012,10 +1124,11 @@ export function App() {
     }
     const result = await runAction("Run Magna verify", async () => {
       const client = requireUserClient();
+      const verificationClaimsForm = resolveCanonicalClaimsForm(hints);
       if (isRootedPassportHints(hints)) {
-        return await client.verifyRootedPassport(claimsForm, policyForm, hints);
+        return await client.verifyRootedPassport(verificationClaimsForm, policyForm, hints);
       }
-      return await client.verifyPassport(claimsForm, policyForm, hints);
+      return await client.verifyPassport(verificationClaimsForm, policyForm, hints);
     });
     if (result) {
       setStatusMessage(describeTxOutcome("Verify transaction", result));
@@ -1031,12 +1144,23 @@ export function App() {
       setError("Select a configured sponsor gateway before calling sponsored verify.");
       return;
     }
-    const result = await runAction("Run Magna sponsored verify", async () => {
+    const result = await runRetriedTxAction("Run Magna sponsored verify", async () => {
       const client = requireUserClient();
+      const verificationClaimsForm = resolveCanonicalClaimsForm(hints);
       if (isRootedPassportHints(hints)) {
-        return await client.verifyRootedPassportWithCompanySponsor(claimsForm, policyForm, hints, selectedSponsorAddress);
+        return await client.verifyRootedPassportWithCompanySponsor(
+          verificationClaimsForm,
+          policyForm,
+          hints,
+          selectedSponsorAddress,
+        );
       }
-      return await client.verifyPassportWithCompanySponsor(claimsForm, policyForm, hints, selectedSponsorAddress);
+      return await client.verifyPassportWithCompanySponsor(
+        verificationClaimsForm,
+        policyForm,
+        hints,
+        selectedSponsorAddress,
+      );
     });
     if (result) {
       setStatusMessage(describeTxOutcome("Sponsored verify transaction", result));
@@ -1044,21 +1168,159 @@ export function App() {
   };
 
   const handleRefreshRootAuthority = async () => {
+    if (!activeAccount) {
+      setError("Choose an active account before starting renewal.");
+      return;
+    }
+    if (!env.verificationApiUrl) {
+      setError("Set VITE_MAGNA_VERIFICATION_API_URL to enable rooted passport renewal.");
+      return;
+    }
     if (!hints || !isRootedPassportHints(hints)) {
-      setError("Fetch rooted hinted notes before refreshing rooted authority.");
+      setError("Fetch rooted hinted notes before renewing passport authority under the existing root.");
       return;
     }
     const ghostOwnerAddress = zkPassportLastIssue?.ghostOwner ?? lastIssuedPassportRef?.ghostOwner ?? ghostLifecycle?.address;
     if (!ghostOwnerAddress) {
-      setError("Rooted authority refresh requires a known ghost owner address.");
+      setError("Passport authority renewal requires a known ghost owner address.");
       return;
     }
-    const actor = operatorClient ?? requireUserClient();
-    const result = await runAction("Refresh rooted passport authority", async () => {
-      return await actor.refreshRootAuthority(ghostOwnerAddress, claimsForm, hints);
-    });
-    if (result) {
-      setStatusMessage(describeTxOutcome("Refresh rooted authority transaction", result));
+    if (activeZkRequest || activeGhostContextRequest) {
+      setError("Wait for the current zkPassport request to finish before starting renewal.");
+      return;
+    }
+
+    const verificationApiUrl = env.verificationApiUrl;
+    const ageThreshold = Number.parseInt(resolveCanonicalClaimsForm(hints).ageThreshold, 10);
+    if (!Number.isFinite(ageThreshold)) {
+      setError("Renewal age threshold must be a valid integer.");
+      return;
+    }
+
+    if (activeRenewalRequest) {
+      activeRenewalRequest.cancel();
+      setActiveRenewalRequest(null);
+    }
+
+    setError(null);
+    setRenewalProofCount(0);
+    setRenewalStage("creating_request");
+    setStatusMessage("Creating zkPassport renewal request...");
+    appendLog("Create zkPassport renewal request started");
+    if (env.zkPassportDevMode) {
+      appendLog("zkPassport dev mode enabled (mock proofs allowed) for renewal");
+    }
+
+    try {
+      const request = await startPassportZkRequest({
+        ageThreshold,
+        metadata: {
+          name: env.zkPassportRequestName,
+          logo: env.zkPassportRequestLogo,
+          purpose: env.zkPassportRequestPurpose,
+          scope: env.zkPassportRequestScope,
+        },
+        devMode: env.zkPassportDevMode,
+        onEvent: (event: ZkPassportLifecycleEvent) => {
+          switch (event.type) {
+            case "request_created":
+              setRenewalStage("awaiting_scan");
+              setStatusMessage("zkPassport renewal request created. Scan QR code or open the deep link.");
+              appendLog(`zkPassport renewal request created: ${event.requestId}`);
+              break;
+            case "bridge_connected":
+              setStatusMessage("zkPassport renewal bridge connected.");
+              appendLog("zkPassport renewal bridge connected");
+              break;
+            case "request_received":
+              setRenewalStage("request_received");
+              setStatusMessage("zkPassport renewal request received on mobile app.");
+              appendLog("zkPassport renewal request received on mobile app");
+              break;
+            case "generating_proof":
+              setRenewalStage("generating_proof");
+              setStatusMessage("zkPassport is generating proof(s) for renewal.");
+              appendLog("zkPassport generating proof(s) for renewal");
+              break;
+            case "proof_generated":
+              setRenewalStage("proof_generated");
+              setRenewalProofCount(event.proofCount);
+              setStatusMessage(`zkPassport proof generated for renewal (${event.proofCount}).`);
+              appendLog(`zkPassport proof generated for renewal (${event.proofCount})`);
+              break;
+            case "result_received":
+              setRenewalStage("result_received");
+              setStatusMessage("zkPassport returned renewal results. Submitting to verification API.");
+              appendLog(`zkPassport renewal result received (verified=${event.verified})`);
+              break;
+          }
+        },
+      });
+      setActiveRenewalRequest(request);
+
+      void request.completion
+        .then(async (completion) => {
+          if (completion.status === "rejected") {
+            setActiveRenewalRequest(null);
+            setRenewalStage("rejected");
+            setStatusMessage("zkPassport renewal request rejected by user.");
+            appendLog("zkPassport renewal request rejected");
+            return;
+          }
+
+          setRenewalStage("submitting_to_backend");
+          const renewed = await runAction("Verify zkPassport proofs + renew rooted passport authority", async () =>
+            verifyAndRefreshRootAuthorityThroughBackend(verificationApiUrl, {
+              proofs: completion.proofs,
+              originalQuery: completion.originalQuery,
+              queryResult: completion.queryResult,
+              ghostOwner: ghostOwnerAddress,
+              hintedRootStatusNote: hints.hintedRootStatusNote,
+              hintedRootAuthorityNote: hints.hintedRootAuthorityNote,
+              ageThreshold,
+            }),
+          );
+          if (!renewed) {
+            setActiveRenewalRequest(null);
+            setRenewalStage("backend_refresh_failed");
+            return;
+          }
+
+          setActiveRenewalRequest(null);
+          setRenewalStage("completed");
+          setZkPassportLastRenewal(renewed);
+          setClaimsForm(claimsFormFromNormalizedClaims(renewed.normalizedClaims));
+          setLastIssuedPassportRef({
+            ownerAddress: activeAccount.address,
+            claimsHash: renewed.claimsHash,
+            mode: "rooted",
+            rootCommitment: renewed.rootCommitment,
+            ghostOwner: renewed.ghostOwner,
+            ghostDerivationVersion:
+              zkPassportLastIssue?.ghostDerivationVersion ??
+              lastIssuedPassportRef?.ghostDerivationVersion ??
+              env.zkPassportGhostDerivationVersion,
+            normalizedClaims: renewed.normalizedClaims,
+          });
+          setHints(null);
+          setStatusMessage(`Rooted passport renewal completed. Claims hash: ${renewed.claimsHash}`);
+          appendLog(`Rooted passport renewal completed. Claims hash: ${renewed.claimsHash}`);
+        })
+        .catch((caught) => {
+          const message = errorMessage(caught);
+          setActiveRenewalRequest(null);
+          setRenewalStage("error");
+          setError(`zkPassport renewal flow failed: ${message}`);
+          setStatusMessage(`zkPassport renewal flow failed: ${message}`);
+          appendLog(`zkPassport renewal flow failed: ${message}`);
+        });
+    } catch (caught) {
+      const message = errorMessage(caught);
+      setActiveRenewalRequest(null);
+      setRenewalStage("error");
+      setError(`Create zkPassport renewal request failed: ${message}`);
+      setStatusMessage(`Create zkPassport renewal request failed: ${message}`);
+      appendLog(`Create zkPassport renewal request failed: ${message}`);
     }
   };
 
@@ -1189,25 +1451,145 @@ export function App() {
     }
   };
 
-  const handleDeriveGhostContext = async () => {
-    if (!ghostIdentifierInput.trim()) {
-      setError("Provide a scoped unique identifier field to derive ghost context.");
+  const handleCancelGhostContextRequest = () => {
+    if (!activeGhostContextRequest) {
       return;
     }
-    const result = await runAction("Derive ghost material and root commitment", async () => {
-      return await deriveGhostAccountPreview({
-        uniqueIdentifier: ghostIdentifierInput.trim(),
-        credentialType: ghostCredentialType,
-        derivationVersion: env.zkPassportGhostDerivationVersion,
+    activeGhostContextRequest.cancel();
+    setActiveGhostContextRequest(null);
+    setGhostContextStage("cancelled");
+    setStatusMessage("Cancelled ghost derivation zkPassport request.");
+    appendLog("Cancelled ghost derivation zkPassport request");
+  };
+
+  const handleCancelRenewalRequest = () => {
+    if (!activeRenewalRequest) {
+      return;
+    }
+    activeRenewalRequest.cancel();
+    setActiveRenewalRequest(null);
+    setRenewalStage("cancelled");
+    setStatusMessage("Cancelled zkPassport renewal request.");
+    appendLog("Cancelled zkPassport renewal request");
+  };
+
+  const handleDeriveGhostContext = async () => {
+    if (activeZkRequest) {
+      setError("Wait for the current zkPassport issuance request to finish before deriving ghost context.");
+      return;
+    }
+    const ageThreshold = Number.parseInt(claimsForm.ageThreshold, 10);
+    if (!Number.isFinite(ageThreshold)) {
+      setError("zkPassport age threshold must be a valid integer before deriving ghost context.");
+      return;
+    }
+    if (activeGhostContextRequest) {
+      activeGhostContextRequest.cancel();
+      setActiveGhostContextRequest(null);
+    }
+
+    setError(null);
+    setGhostMaterialPreview(null);
+    setGhostContextProofCount(0);
+    setGhostContextStage("creating_request");
+    setStatusMessage("Creating zkPassport request for ghost derivation...");
+    appendLog("Create zkPassport request for ghost derivation started");
+    if (env.zkPassportDevMode) {
+      appendLog("zkPassport dev mode enabled (mock proofs allowed) for ghost derivation");
+    }
+
+    try {
+      const request = await startPassportZkRequest({
+        ageThreshold,
+        metadata: {
+          name: env.zkPassportRequestName,
+          logo: env.zkPassportRequestLogo,
+          purpose: env.zkPassportRequestPurpose,
+          scope: env.zkPassportRequestScope,
+        },
+        devMode: env.zkPassportDevMode,
+        onEvent: (event: ZkPassportLifecycleEvent) => {
+          switch (event.type) {
+            case "request_created":
+              setGhostContextStage("awaiting_scan");
+              setStatusMessage("Ghost derivation zkPassport request created. Scan QR code or open the deep link.");
+              appendLog(`Ghost derivation zkPassport request created: ${event.requestId}`);
+              break;
+            case "bridge_connected":
+              setStatusMessage("Ghost derivation zkPassport bridge connected.");
+              appendLog("Ghost derivation zkPassport bridge connected");
+              break;
+            case "request_received":
+              setGhostContextStage("request_received");
+              setStatusMessage("Ghost derivation zkPassport request received on mobile app.");
+              appendLog("Ghost derivation zkPassport request received on mobile app");
+              break;
+            case "generating_proof":
+              setGhostContextStage("generating_proof");
+              setStatusMessage("zkPassport is generating proof(s) for ghost derivation.");
+              appendLog("zkPassport generating proof(s) for ghost derivation");
+              break;
+            case "proof_generated":
+              setGhostContextStage("proof_generated");
+              setGhostContextProofCount(event.proofCount);
+              setStatusMessage(`zkPassport proof generated for ghost derivation (${event.proofCount}).`);
+              appendLog(`zkPassport proof generated for ghost derivation (${event.proofCount})`);
+              break;
+            case "result_received":
+              setGhostContextStage("result_received");
+              setStatusMessage("zkPassport returned results. Deriving ghost recovery context locally.");
+              appendLog(`Ghost derivation zkPassport result received (verified=${event.verified})`);
+              break;
+          }
+        },
       });
-    });
-    if (result) {
-      setGhostMaterialPreview({
-        address: result.address,
-        scope: result.material.scope,
-        seedField: formatHex(result.material.seedField),
-        rootCommitment: formatHex(result.rootCommitment),
-      });
+      setActiveGhostContextRequest(request);
+
+      void request.completion
+        .then(async (completion) => {
+          if (completion.status === "rejected") {
+            setActiveGhostContextRequest(null);
+            setGhostContextStage("rejected");
+            setStatusMessage("Ghost derivation zkPassport request rejected by user.");
+            appendLog("Ghost derivation zkPassport request rejected");
+            return;
+          }
+
+          if (!completion.uniqueIdentifier) {
+            throw new Error("zkPassport result did not include uniqueIdentifier for ghost derivation.");
+          }
+
+          const result = await deriveGhostAccountPreview({
+            uniqueIdentifier: completion.uniqueIdentifier,
+            credentialType: ghostCredentialType,
+            derivationVersion: env.zkPassportGhostDerivationVersion,
+          });
+          setGhostMaterialPreview({
+            address: result.address,
+            scope: result.material.scope,
+            seedField: formatHex(result.material.seedField),
+            rootCommitment: formatHex(result.rootCommitment),
+          });
+          setActiveGhostContextRequest(null);
+          setGhostContextStage("derived");
+          setStatusMessage("Derived ghost recovery context from fresh zkPassport proof.");
+          appendLog("Derived ghost recovery context from fresh zkPassport proof");
+        })
+        .catch((caught) => {
+          const message = errorMessage(caught);
+          setActiveGhostContextRequest(null);
+          setGhostContextStage("error");
+          setError(`Ghost derivation zkPassport flow failed: ${message}`);
+          setStatusMessage(`Ghost derivation zkPassport flow failed: ${message}`);
+          appendLog(`Ghost derivation zkPassport flow failed: ${message}`);
+        });
+    } catch (caught) {
+      const message = errorMessage(caught);
+      setActiveGhostContextRequest(null);
+      setGhostContextStage("error");
+      setError(`Create zkPassport request for ghost derivation failed: ${message}`);
+      setStatusMessage(`Create zkPassport request for ghost derivation failed: ${message}`);
+      appendLog(`Create zkPassport request for ghost derivation failed: ${message}`);
     }
   };
 
@@ -1502,7 +1884,7 @@ export function App() {
       <WorkflowSection
         eyebrow="User Flow"
         title="Credential Readiness And Verification"
-        description="The sequence is: choose a session account, start zkPassport rooted onboarding with an age threshold, let zkPassport disclose canonical passport claims, prepare ghost lifecycle, then fetch hints and verify. A separate dev-only legacy issuance fallback remains below for debugging."
+        description="The sequence is: choose a session account, start zkPassport rooted onboarding with an age threshold, let zkPassport disclose canonical passport claims, prepare the ghost recovery authority without retaining local ghost state, then fetch hints and verify. A separate dev-only legacy issuance fallback remains below for debugging."
       >
         <Panel
           testId="panel-credential-issuance"
@@ -1523,10 +1905,10 @@ export function App() {
           <div className="button-row">
             <button
               data-testid="start-zkpassport-request"
-              disabled={busyAction !== null || !activeAccount || activeZkRequest !== null}
+              disabled={busyAction !== null || !activeAccount || hasActiveZkPassportRequest}
               onClick={() => void handleStartZkPassportIssuance()}
             >
-              {activeZkRequest ? "zkPassport request in progress" : "Start zkPassport issuance"}
+              {hasActiveZkPassportRequest ? "zkPassport request in progress" : "Start zkPassport issuance"}
             </button>
             <button
               data-testid="cancel-zkpassport-request"
@@ -1576,12 +1958,12 @@ export function App() {
           ) : null}
           {ghostLifecycle ? (
             <div className="sub-card">
-              <p className="label">Ghost account lifecycle</p>
+              <p className="label">Ghost recovery authority preparation</p>
               <KeyValue label="Ghost address" value={ghostLifecycle.address} />
               <KeyValue label="Derivation version" value={ghostLifecycle.derivationVersion} />
               <KeyValue label="Derivation scope" value={ghostLifecycle.scope} />
               <KeyValue label="Deployment status" value={ghostLifecycle.deploymentStatus} />
-              <KeyValue label="Session origin" value={ghostLifecycle.sessionOrigin} />
+              <KeyValue label="Local state handling" value={ghostLifecycle.localState} />
               <KeyValue label="Deployment payer" value={ghostLifecycle.feePayer} />
             </div>
           ) : null}
@@ -1610,7 +1992,7 @@ export function App() {
               )}
               <button
                 data-testid="issue-passport"
-                disabled={busyAction !== null || !activeAccount}
+                disabled={busyAction !== null || !activeAccount || hasActiveZkPassportRequest}
                 onClick={() => void handleIssuePassport()}
               >
                 Issue passport credential (dev fallback)
@@ -1627,7 +2009,7 @@ export function App() {
         >
           <button
             data-testid="fetch-hints"
-            disabled={busyAction !== null || !activeAccount || !env.issuerAddress || activeZkRequest !== null}
+            disabled={busyAction !== null || !activeAccount || !env.issuerAddress || hasActiveZkPassportRequest}
             onClick={() => void handleFetchHints()}
           >
             Fetch hinted notes
@@ -1656,7 +2038,7 @@ export function App() {
           testId="panel-verify"
           title="Verify"
           badge="Real Sends"
-          description="Runs the user-facing proof path with real sends only. The policy form is the verification rule set; the claims form above is the issued credential input set."
+          description="Runs the user-facing proof path with real sends only. Ghost state is recovery-only and is not retained locally for routine verify actions."
         >
           <PolicyFormEditor form={policyForm} onChange={setPolicyForm} />
           <Field label="Sponsor gateway">
@@ -1691,30 +2073,89 @@ export function App() {
             >
               Sponsored verify
             </button>
+          </div>
+          <p className="muted-text">
+            Ghost recovery is recovery-only. This screen does not keep local ghost account state; fresh zkPassport
+            reproving is required before ghost-side recovery actions are re-established.
+          </p>
+          {!env.requireRealSends ? (
+            <p className="muted-text">
+              This app forbids fake success paths. Set <code>VITE_MAGNA_REQUIRE_REAL_SENDS=true</code> to run critical flows.
+            </p>
+          ) : null}
+        </Panel>
+      </WorkflowSection>
+
+      <WorkflowSection
+        eyebrow="User Flow"
+        title="Renewal"
+        description="Renewal is separate from verify. It is the rooted passport renewal path that keeps the same `root_commitment` while rotating the renewable passport-backed authority note and reminting the linked passport lineage."
+      >
+        <Panel
+          testId="panel-renewal"
+          title="Renewal"
+          badge="Rooted Passport"
+          description="Use this when the passport-backed rooted authority needs to be renewed under the existing root. This starts a fresh zkPassport proof flow, then asks the backend orchestrator to refresh rooted authority on-chain."
+        >
+          <div className="button-row">
             <button
               data-testid="refresh-root-authority"
               className="secondary-button"
-              disabled={busyAction !== null || !hints || !isRootedPassportHints(hints) || !env.requireRealSends}
+              disabled={busyAction !== null || !hints || !isRootedPassportHints(hints) || !env.requireRealSends || hasActiveZkPassportRequest}
               onClick={() => void handleRefreshRootAuthority()}
             >
-              Refresh rooted authority
+              Start zkPassport renewal
             </button>
             <button
-              data-testid="recover-root"
               className="secondary-button"
-              disabled={
-                busyAction !== null ||
-                !hints ||
-                !isRootedPassportHints(hints) ||
-                !session ||
-                session.kind === "external" ||
-                !env.requireRealSends
-              }
-              onClick={() => void handleRecoverRoot()}
+              disabled={busyAction !== null || activeRenewalRequest === null}
+              onClick={() => handleCancelRenewalRequest()}
             >
-              Recover root from ghost
+              Cancel renewal request
             </button>
           </div>
+          <div className="sub-card">
+            <KeyValue label="zkPassport stage" value={renewalStage} />
+            <KeyValue label="Proofs generated" value={String(renewalProofCount)} />
+            <KeyValue label="Verification API" value={env.verificationApiUrl ?? "not configured"} />
+            <KeyValue label="Request scope" value={env.zkPassportRequestScope} />
+            <KeyValue
+              label="Proof mode"
+              value={env.zkPassportDevMode ? "dev mode (mock proofs allowed)" : "strict mode (real proofs only)"}
+            />
+            {activeRenewalRequest ? <KeyValue label="Request id" value={activeRenewalRequest.requestId} /> : null}
+          </div>
+          {activeRenewalRequest ? (
+            <div className="sub-card">
+              <p className="label">Scan with zkPassport mobile app</p>
+              <div style={{ background: "white", borderRadius: "12px", padding: "12px", width: "fit-content" }}>
+                <QRCode value={activeRenewalRequest.url} size={180} />
+              </div>
+              <p className="muted-text">
+                If you are on mobile, open directly:{" "}
+                <a href={activeRenewalRequest.url} target="_blank" rel="noreferrer">
+                  Open zkPassport request link
+                </a>
+              </p>
+            </div>
+          ) : null}
+          {zkPassportLastRenewal ? (
+            <div className="sub-card">
+              <KeyValue label="Latest renewal tx" value={zkPassportLastRenewal.renewalTxHash ?? "pending"} />
+              <KeyValue label="Claims hash" value={zkPassportLastRenewal.claimsHash} />
+              <KeyValue label="Ghost owner used" value={zkPassportLastRenewal.ghostOwner} />
+              <KeyValue label="Root commitment" value={zkPassportLastRenewal.rootCommitment} />
+            </div>
+          ) : null}
+          <p className="muted-text">
+            "Passport authority" is the renewable rooted note that keeps linked passport verifies valid under the same
+            `root_commitment` after passport renewal or replacement. It is not the root itself and it is not the ghost
+            wallet.
+          </p>
+          <p className="muted-text">
+            This renewal flow now requires a fresh zkPassport proof before the backend orchestrator sends the on-chain
+            `refresh_root_authority(...)` call.
+          </p>
           {!env.requireRealSends ? (
             <p className="muted-text">
               This app forbids fake success paths. Set <code>VITE_MAGNA_REQUIRE_REAL_SENDS=true</code> to run critical flows.
@@ -1838,14 +2279,14 @@ export function App() {
 
       <WorkflowSection
         eyebrow="Diagnostics"
-        title="Ghost Context, Compatibility, And Admin Helpers"
-        description="These panels explain or inspect the current deployment. They are useful for debugging and admin setup, but they are not part of the basic verification path."
+        title="Recovery-Only Ghost Diagnostics, Compatibility, And Admin Helpers"
+        description="These panels explain or inspect recovery-oriented ghost derivation and deployment details. They are debug/admin helpers and are not part of the normal verification flow."
       >
         <Panel
           testId="panel-ghost-context"
-          title="Ghost Derivation Context"
+          title="Ghost Recovery Derivation Context"
           badge="Derived Data"
-          description="Pure derivation helper for ghost scope and root commitment from the same locally entered scoped unique identifier that drives the ghost wallet address for issuance."
+          description="Debug-only helper for inspecting ghost recovery derivation from a fresh zkPassport proof. This does not ask for raw uniqueIdentifier input; it derives locally from zkPassport exactly like rooted issuance does."
         >
           <Field label="Credential type for scope">
             <select value={String(ghostCredentialType)} onChange={event => setGhostCredentialType(Number(event.target.value) as CredentialType)}>
@@ -1853,12 +2294,45 @@ export function App() {
               <option value={String(CredentialType.Instagram)}>Instagram</option>
             </select>
           </Field>
-          <button data-testid="derive-ghost-context" disabled={busyAction !== null || !activeAccount} onClick={() => void handleDeriveGhostContext()}>
-            Derive ghost and root context
-          </button>
+          <div className="button-row">
+            <button
+              data-testid="derive-ghost-context"
+              disabled={busyAction !== null || hasActiveZkPassportRequest}
+              onClick={() => void handleDeriveGhostContext()}
+            >
+              Derive from fresh zkPassport proof
+            </button>
+            <button
+              className="secondary-button"
+              disabled={busyAction !== null || activeGhostContextRequest === null}
+              onClick={() => handleCancelGhostContextRequest()}
+            >
+              Cancel ghost derivation request
+            </button>
+          </div>
+          <div className="sub-card">
+            <KeyValue label="zkPassport stage" value={ghostContextStage} />
+            <KeyValue label="Proofs generated" value={String(ghostContextProofCount)} />
+            <KeyValue label="Request scope" value={env.zkPassportRequestScope} />
+            {activeGhostContextRequest ? <KeyValue label="Request id" value={activeGhostContextRequest.requestId} /> : null}
+          </div>
+          {activeGhostContextRequest ? (
+            <div className="sub-card">
+              <p className="label">Scan with zkPassport mobile app</p>
+              <div style={{ background: "white", borderRadius: "12px", padding: "12px", width: "fit-content" }}>
+                <QRCode value={activeGhostContextRequest.url} size={180} />
+              </div>
+              <p className="muted-text">
+                If you are on mobile, open directly:{" "}
+                <a href={activeGhostContextRequest.url} target="_blank" rel="noreferrer">
+                  Open zkPassport request link
+                </a>
+              </p>
+            </div>
+          ) : null}
           {ghostMaterialPreview ? (
             <div className="sub-card">
-              <KeyValue label="Scoped unique identifier (local input)" value={ghostIdentifierInput.trim()} />
+              <KeyValue label="Derivation source" value="fresh zkPassport proof" />
               <KeyValue label="Derived ghost wallet address" value={ghostMaterialPreview.address} />
               <KeyValue label="Configured derivation version" value={env.zkPassportGhostDerivationVersion} />
               <KeyValue label="Recovery scope" value={ghostMaterialPreview.scope} />
@@ -1866,7 +2340,7 @@ export function App() {
               <KeyValue testId="ghost-context-root-commitment" label="Root commitment" value={ghostMaterialPreview.rootCommitment} />
             </div>
           ) : (
-            <p className="muted-text">Derive context only from scoped values and keep raw identifiers private.</p>
+            <p className="muted-text">Start a fresh zkPassport proof to derive context locally without exposing raw identifiers.</p>
           )}
         </Panel>
 

@@ -5,6 +5,8 @@ import {
   hydrateVerificationApiEnvFromFiles,
   loadVerificationApiConfigFromEnv,
   verifyAndIssuePassport,
+  verifyAndRefreshRootAuthority,
+  type VerifyAndRefreshRootAuthorityRequest,
   type VerifyAndIssueRequest,
 } from "./service.js";
 
@@ -36,6 +38,19 @@ app.post("/zkpassport/verify-and-issue", async (req, res) => {
   try {
     const payload = req.body as VerifyAndIssueRequest;
     const result = await verifyAndIssuePassport(config, payload, loadIssuanceContext);
+    res.status(200).json(result);
+  } catch (error) {
+    const message = errorMessage(error);
+    res.status(400).json({
+      error: message,
+    });
+  }
+});
+
+app.post("/zkpassport/verify-and-refresh-root-authority", async (req, res) => {
+  try {
+    const payload = req.body as VerifyAndRefreshRootAuthorityRequest;
+    const result = await verifyAndRefreshRootAuthority(config, payload, loadIssuanceContext);
     res.status(200).json(result);
   } catch (error) {
     const message = errorMessage(error);
