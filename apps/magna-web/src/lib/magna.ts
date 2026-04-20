@@ -692,10 +692,26 @@ export class MagnaBrowserClient {
   }
 
   async syncOrchestratorSender(): Promise<void> {
-    if (!this.env.orchestratorAddress) {
+    let senderAddress = this.env.orchestratorAddress ? toAddress(this.env.orchestratorAddress) : undefined;
+    if (
+      !senderAddress &&
+      "getAccounts" in this.wallet &&
+      typeof (this.wallet as { getAccounts?: unknown }).getAccounts === "function"
+    ) {
+      senderAddress = await resolveOrchestratorSenderAddress(this.wallet, this.env);
+    }
+    if (
+      !senderAddress &&
+      this.env.enableLocalTestBootstrap &&
+      "createSchnorrAccount" in this.wallet &&
+      typeof (this.wallet as { createSchnorrAccount?: unknown }).createSchnorrAccount === "function"
+    ) {
+      senderAddress = await ensureImportedLocalTestAccountAddress(this.wallet as any, this.env.localTestAccountIndex);
+    }
+    if (!senderAddress) {
       return;
     }
-    await this.wallet.registerSender(toAddress(this.env.orchestratorAddress), "magna-orchestrator");
+    await this.wallet.registerSender(senderAddress, "magna-orchestrator");
   }
 
   private async syncWalletPxeIfAvailable(): Promise<void> {
@@ -1028,12 +1044,30 @@ export class MagnaBrowserClient {
 
   async fetchRootRecoveryHint(ownerAddress: string, rootCommitment: bigint | string): Promise<unknown> {
     await this.ensureContractsRegistered();
+    await this.ensureUserAccountIsDeployed();
+    await this.syncOrchestratorSender();
     const normalizedRootCommitment = typeof rootCommitment === "bigint" ? rootCommitment : BigInt(rootCommitment);
-    const hintedRootRecovery = await this.issuer.methods
-      .get_root_recovery_hinted(toAddress(ownerAddress), toField(normalizedRootCommitment))
-      .simulate({ from: toAddress(ownerAddress) })
-      .then(simulation => unwrapSimulationResult(simulation));
-    return hintedRootRecovery;
+    for (let attempt = 0; attempt < HINT_SYNC_ATTEMPTS; attempt += 1) {
+      try {
+        await this.syncWalletPxeIfAvailable();
+        return await this.issuer.methods
+          .get_root_recovery_hinted(toAddress(ownerAddress), toField(normalizedRootCommitment))
+          .simulate({ from: toAddress(ownerAddress) })
+          .then(simulation => unwrapSimulationResult(simulation));
+      } catch (error) {
+        if (!this.isHintedNoteLookupPendingError(error) || attempt === HINT_SYNC_ATTEMPTS - 1) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `Fetch root recovery hint failed for root ${normalizedRootCommitment.toString()} on owner ${ownerAddress}: ${message}`,
+          );
+        }
+        await sleep(HINT_SYNC_DELAY_MS);
+      }
+    }
+
+    throw new Error(
+      `Fetch root recovery hint timed out for root ${normalizedRootCommitment.toString()} on owner ${ownerAddress}.`,
+    );
   }
 
   async recoverRoot(hintedRootRecoveryNote: unknown, newActiveOwner: string): Promise<TxOutcome> {

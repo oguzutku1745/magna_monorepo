@@ -49,6 +49,7 @@ npm run -w @magna/verification-api dev
 - `GET /health`
 - `POST /zkpassport/verify-and-issue`
 - `POST /zkpassport/verify-and-refresh-root-authority`
+- `POST /zkpassport/verify-for-root-recovery`
 
 ### `POST /zkpassport/verify-and-issue` body
 
@@ -89,3 +90,21 @@ Notes:
 - The backend verifies a fresh zkPassport proof first.
 - The existing rooted hints are supplied by the frontend/user wallet and forwarded to the orchestrator-backed contract call.
 - Renewal keeps the same rooted lineage anchor and refreshes authority on-chain rather than deriving a brand-new root.
+
+### `POST /zkpassport/verify-for-root-recovery` body
+
+```json
+{
+  "proofs": [],
+  "originalQuery": {},
+  "queryResult": {},
+  "expectedGhostOwner": "0x...",
+  "ghostDerivationVersion": "v2_scoped",
+  "ageThreshold": 21
+}
+```
+
+Notes:
+- This endpoint is a server-verified recovery preflight for rooted recovery.
+- It verifies the fresh zkPassport proof and checks that the proof-derived ghost owner matches the expected ghost owner for recovery.
+- It does not send `recover_root(...)`; that transaction must still be sent from the ghost account owner side.

@@ -99,6 +99,17 @@ export type GhostAccountLifecycleResult = {
   feePayer: string;
 };
 
+export type TransientGhostWalletSession = {
+  wallet: Wallet;
+  ghostAddress: string;
+  derivationVersion: GhostDerivationVersion;
+  scope: string;
+  deploymentStatus: "deployed" | "counterfactual";
+  localState: "derived-each-time";
+  feePayer: string;
+  dispose: () => Promise<void>;
+};
+
 type EmbeddedWalletStoredAccount = {
   secretKey: Fr;
   salt: Fr;
@@ -843,15 +854,14 @@ function fieldFromHexString(value: string, label: string): Fr {
   }
 }
 
-export async function ensureGhostAccountLifecycle(
+async function prepareGhostAccountOnWallet(
+  wallet: EmbeddedWallet,
   options: GhostAccountLifecycleOptions,
 ): Promise<GhostAccountLifecycleResult> {
   const uniqueIdentifier = options.uniqueIdentifier.trim();
   if (!uniqueIdentifier) {
     throw new Error("Scoped unique identifier is required to derive the ghost account.");
   }
-  const wallet = await createEmbeddedWallet(options.nodeUrl, true);
-  try {
   const derivationVersion = options.derivationVersion ?? SCOPED_GHOST_DERIVATION_VERSION;
   const ghostMaterial = deriveGhostKeyMaterial({
     uniqueIdentifier,
@@ -894,9 +904,41 @@ export async function ensureGhostAccountLifecycle(
     localState: "derived-each-time",
     feePayer: deployment.feePayerAddress ?? funding?.fromAddress ?? "not-configured",
   };
+}
+
+export async function ensureGhostAccountLifecycle(
+  options: GhostAccountLifecycleOptions,
+): Promise<GhostAccountLifecycleResult> {
+  const wallet = await createEmbeddedWallet(options.nodeUrl, true);
+  try {
+    return await prepareGhostAccountOnWallet(wallet, options);
   } finally {
     await wallet.stop();
   }
+}
+
+export async function createTransientGhostWalletSession(
+  options: GhostAccountLifecycleOptions,
+): Promise<TransientGhostWalletSession> {
+  const wallet = await createEmbeddedWallet(options.nodeUrl, true);
+  const lifecycle = await prepareGhostAccountOnWallet(wallet, options);
+  let disposed = false;
+  return {
+    wallet,
+    ghostAddress: lifecycle.address,
+    derivationVersion: lifecycle.derivationVersion,
+    scope: lifecycle.scope,
+    deploymentStatus: lifecycle.deploymentStatus,
+    localState: lifecycle.localState,
+    feePayer: lifecycle.feePayer,
+    dispose: async () => {
+      if (disposed) {
+        return;
+      }
+      disposed = true;
+      await wallet.stop();
+    },
+  };
 }
 
 export type { WalletProvider };

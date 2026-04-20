@@ -1998,6 +1998,148 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
     );
   }, 240_000);
 
+  it("allows rooted lineage to be re-issued after root recovery using fresh hints", async () => {
+    const ready = requireContext(ctx);
+    const rootCommitment = 1_010_101n;
+    const initialExpiryTs = 2_193_456_000n;
+    const initialClaimsHash = computeClaimsHash(
+      1n,
+      ready.credentialType,
+      packAlpha3("FRA"),
+      27,
+      initialExpiryTs,
+    );
+    const reissuedMinAge = 29;
+    const reissuedNationality = packAlpha3("DEU");
+    const reissuedExpiryTs = 2_293_456_000n;
+    const reissuedClaimsHash = computeClaimsHash(
+      1n,
+      ready.credentialType,
+      reissuedNationality,
+      reissuedMinAge,
+      reissuedExpiryTs,
+    );
+
+    const registerRootedTx = await runStep("register_rooted_passport(root recovery reissue scope)", async () => {
+      return await ready.issuer.methods
+        .register_rooted_passport(
+          ready.activeOwner,
+          ready.ghostOwner,
+          rootCommitment,
+          initialClaimsHash,
+          initialExpiryTs,
+        )
+        .send({ from: ready.orchestrator });
+    });
+    const registerRootedTxHash = logTxReceipt("register_rooted_passport_root_recovery_reissue_scope", registerRootedTx);
+
+    const hintedRootRecovery = (await runStep("get_root_recovery_hinted(root recovery reissue scope)", async () => {
+      return await ready.issuer.methods
+        .get_root_recovery_hinted(ready.ghostOwner, rootCommitment)
+        .simulate({ from: ready.ghostOwner });
+    })) as HintedRootRecovery;
+
+    const rootRecoverTx = await runStep("recover_root(root recovery reissue scope)", async () => {
+      return await ready.issuer.methods
+        .recover_root(hintedRootRecovery, ready.newActiveOwner)
+        .send({ from: ready.ghostOwner });
+    });
+    const rootRecoverTxHash = logTxReceipt("recover_root_root_recovery_reissue_scope", rootRecoverTx);
+
+    const rotatedRootStatus = (await runStep("get_root_status_hinted(rotated root recovery reissue scope)", async () => {
+      return await ready.issuer.methods
+        .get_root_status_hinted(ready.newActiveOwner, rootCommitment)
+        .simulate({ from: ready.newActiveOwner });
+    })) as HintedRootStatus;
+    const rotatedRootRecovery = (await runStep("get_root_recovery_hinted(rotated root recovery reissue scope)", async () => {
+      return await ready.issuer.methods
+        .get_root_recovery_hinted(ready.ghostOwner, rootCommitment)
+        .simulate({ from: ready.ghostOwner });
+    })) as HintedRootRecovery;
+    expect(toBigIntValue(rotatedRootStatus.note.root_commitment)).toEqual(rootCommitment);
+    expect(toBigIntValue(rotatedRootRecovery.note.root_commitment)).toEqual(rootCommitment);
+
+    await expect(
+      runStep("get_root_authority_hinted(rotated root recovery reissue scope) [should fail pre-reissue]", async () => {
+        return await ready.issuer.methods
+          .get_root_authority_hinted(ready.newActiveOwner, rootCommitment, initialClaimsHash)
+          .simulate({ from: ready.newActiveOwner });
+      }),
+    ).rejects.toBeDefined();
+
+    const reissueAuthorityTx = await runStep("register_root_authority(root recovery reissue scope)", async () => {
+      return await ready.issuer.methods
+        .register_root_authority(ready.newActiveOwner, rootCommitment, reissuedClaimsHash, reissuedExpiryTs)
+        .send({ from: ready.orchestrator });
+    });
+    const reissueAuthorityTxHash = logTxReceipt(
+      "register_root_authority_root_recovery_reissue_scope",
+      reissueAuthorityTx,
+    );
+
+    const reissueLinkedTx = await runStep("register_linked_credential(root recovery reissue scope)", async () => {
+      return await ready.issuer.methods
+        .register_linked_credential(
+          ready.newActiveOwner,
+          ready.ghostOwner,
+          rootCommitment,
+          reissuedClaimsHash,
+          ready.credentialType,
+          reissuedExpiryTs,
+        )
+        .send({ from: ready.orchestrator });
+    });
+    const reissueLinkedTxHash = logTxReceipt("register_linked_credential_root_recovery_reissue_scope", reissueLinkedTx);
+
+    const reissuedRootAuthority = (await runStep(
+      "get_root_authority_hinted(reissued root recovery reissue scope)",
+      async () =>
+        await ready.issuer.methods
+          .get_root_authority_hinted(ready.newActiveOwner, rootCommitment, reissuedClaimsHash)
+          .simulate({ from: ready.newActiveOwner }),
+    )) as HintedRootAuthority;
+    const reissuedLinkedCredential = (await runStep(
+      "get_linked_credential_hinted(reissued root recovery reissue scope)",
+      async () =>
+        await ready.issuer.methods
+          .get_linked_credential_hinted(ready.newActiveOwner, rootCommitment, reissuedClaimsHash)
+          .simulate({ from: ready.newActiveOwner }),
+    )) as HintedLinkedCredential;
+    const reissuedLinkedStatus = (await runStep(
+      "get_linked_status_hinted(reissued root recovery reissue scope)",
+      async () =>
+        await ready.issuer.methods
+          .get_linked_status_hinted(ready.newActiveOwner, rootCommitment, reissuedClaimsHash)
+          .simulate({ from: ready.newActiveOwner }),
+    )) as HintedLinkedStatus;
+
+    await runStep("verify_linked(root recovery reissue scope after reissue)", async () => {
+      await ready.issuer.methods
+        .verify_linked(
+          { credential_type: ready.credentialType, constraints: buildConstraints() },
+          rotatedRootStatus,
+          reissuedRootAuthority,
+          reissuedLinkedCredential,
+          reissuedLinkedStatus,
+          reissuedMinAge,
+          reissuedNationality,
+          0,
+        )
+        .simulate({ from: ready.newActiveOwner });
+    });
+
+    ready.txHashesByPhase.root_linked_reissue_after_recovery = [
+      registerRootedTxHash,
+      rootRecoverTxHash,
+      reissueAuthorityTxHash,
+      reissueLinkedTxHash,
+    ];
+    logTrace(
+      "passed.allows rooted lineage to be re-issued after root recovery using fresh hints.tx_ids",
+      ready.txHashesByPhase.root_linked_reissue_after_recovery,
+    );
+  }, 240_000);
+
   it("supports linked company sponsor gateway verify path for instagram ownership", async () => {
     const ready = requireContext(ctx);
     const instagramCredentialType = 3;
@@ -2152,6 +2294,16 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
 
   it("rejects linked instagram verify when rooted passport authority has expired", async () => {
     const ready = requireContext(ctx);
+    const expiredAuthorityOwnerDeployment = await createAndDeploySchnorrAccount(
+      ready.wallet,
+      ready.orchestrator,
+      "instagram-authority-expiry-owner",
+    );
+    const expiredAuthorityOwner = expiredAuthorityOwnerDeployment.address;
+    const expiredAuthorityOwnerDeployTxHash = logTxReceipt(
+      "deploy_instagram_authority_expiry_owner",
+      expiredAuthorityOwnerDeployment.deployTx,
+    );
     const instagramCredentialType = 3;
     const instagramHandleHash = computeInstagramHandleHash("expiredauthority581");
     const instagramExpiryTs = 2_393_456_000n;
@@ -2173,7 +2325,7 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
 
     const registerRootTx = await runStep("register_root(instagram authority expiry scope)", async () => {
       return await ready.issuer.methods
-        .register_root(ready.activeOwner, ready.ghostOwner, rootCommitment)
+        .register_root(expiredAuthorityOwner, ready.ghostOwner, rootCommitment)
         .send({ from: ready.orchestrator });
     });
     const registerRootTxHash = logTxReceipt("register_root_instagram_authority_expiry_scope", registerRootTx);
@@ -2183,7 +2335,7 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
       async () =>
         await ready.issuer.methods
           .register_root_authority(
-            ready.activeOwner,
+            expiredAuthorityOwner,
             rootCommitment,
             authorityClaimsHash,
             expiredAuthorityExpiryTs,
@@ -2198,7 +2350,7 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
     const registerLinkedTx = await runStep("register_linked_credential(instagram authority expiry scope)", async () => {
       return await ready.issuer.methods
         .register_linked_credential(
-          ready.activeOwner,
+          expiredAuthorityOwner,
           ready.ghostOwner,
           rootCommitment,
           instagramClaimsHash,
@@ -2216,29 +2368,29 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
       "get_root_status_hinted(instagram authority expiry scope)",
       async () =>
         await ready.issuer.methods
-          .get_root_status_hinted(ready.activeOwner, rootCommitment)
-          .simulate({ from: ready.activeOwner }),
+          .get_root_status_hinted(expiredAuthorityOwner, rootCommitment)
+          .simulate({ from: expiredAuthorityOwner }),
     )) as HintedRootStatus;
     const hintedRootAuthority = (await runStep(
       "get_root_authority_hinted(instagram authority expiry scope)",
       async () =>
         await ready.issuer.methods
-          .get_root_authority_hinted(ready.activeOwner, rootCommitment, authorityClaimsHash)
-          .simulate({ from: ready.activeOwner }),
+          .get_root_authority_hinted(expiredAuthorityOwner, rootCommitment, authorityClaimsHash)
+          .simulate({ from: expiredAuthorityOwner }),
     )) as HintedRootAuthority;
     const hintedLinkedCredential = (await runStep(
       "get_linked_credential_hinted(instagram authority expiry scope)",
       async () =>
         await ready.issuer.methods
-          .get_linked_credential_hinted(ready.activeOwner, rootCommitment, instagramClaimsHash)
-          .simulate({ from: ready.activeOwner }),
+          .get_linked_credential_hinted(expiredAuthorityOwner, rootCommitment, instagramClaimsHash)
+          .simulate({ from: expiredAuthorityOwner }),
     )) as HintedLinkedCredential;
     const hintedLinkedStatus = (await runStep(
       "get_linked_status_hinted(instagram authority expiry scope)",
       async () =>
         await ready.issuer.methods
-          .get_linked_status_hinted(ready.activeOwner, rootCommitment, instagramClaimsHash)
-          .simulate({ from: ready.activeOwner }),
+          .get_linked_status_hinted(expiredAuthorityOwner, rootCommitment, instagramClaimsHash)
+          .simulate({ from: expiredAuthorityOwner }),
     )) as HintedLinkedStatus;
 
     await expect(
@@ -2253,11 +2405,12 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
             instagramHandleHash,
             0,
           )
-          .send({ from: ready.activeOwner });
+          .send({ from: expiredAuthorityOwner });
       }),
     ).rejects.toBeDefined();
 
     ready.txHashesByPhase.instagram_authority_expiry = [
+      expiredAuthorityOwnerDeployTxHash,
       registerRootTxHash,
       registerRootAuthorityTxHash,
       registerLinkedTxHash,

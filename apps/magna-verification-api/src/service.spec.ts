@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   applyHydratedEnvEntries,
+  verifyRootRecoveryPreflight,
   resolveGhostDerivationVersion,
+  resolveRootRecoveryGhostDerivationVersion,
   resolveVerificationMode,
   loadVerificationApiConfigFromEnv,
   normalizePassportClaimsFromQueryResult,
@@ -178,5 +180,88 @@ describe("issuance mode and ghost derivation resolution", () => {
   it("honors explicit ghost derivation override", () => {
     expect(resolveGhostDerivationVersion("v1_legacy_unscoped", "rooted")).toBe("v1_legacy_unscoped");
     expect(resolveGhostDerivationVersion("v2_scoped", "passport")).toBe("v2_scoped");
+  });
+
+  it("uses scoped ghost derivation by default for rooted recovery preflight", () => {
+    expect(resolveRootRecoveryGhostDerivationVersion(undefined)).toBe("v2_scoped");
+    expect(resolveRootRecoveryGhostDerivationVersion("v1_legacy_unscoped")).toBe("v1_legacy_unscoped");
+  });
+});
+
+describe("verifyRootRecoveryPreflight", () => {
+  const config = {
+    port: 4310,
+    allowedOrigin: "*",
+    zkPassportDomain: "localhost",
+    zkPassportDevMode: true,
+    aztecNodeUrl: "http://localhost:8080",
+    issuerAddress: "0xissuer",
+    localTestAccountIndex: 0,
+  };
+
+  const normalized = normalizePassportClaimsFromQueryResult({
+    age: {
+      gte: {
+        result: true,
+        expected: 21,
+      },
+    },
+    nationality: {
+      disclose: {
+        result: "DEU",
+      },
+    },
+    expiry_date: {
+      disclose: {
+        result: "2031-07-20",
+      },
+    },
+  });
+
+  it("returns verified preflight when proof-derived ghost owner matches expected owner", async () => {
+    const result = await verifyRootRecoveryPreflight(
+      config,
+      {
+        proofs: [{}] as never[],
+        originalQuery: {} as never,
+        queryResult: {} as never,
+        expectedGhostOwner: "0xghost",
+        ageThreshold: 21,
+      },
+      {
+        verifyPassportClaims: async () => ({
+          verification: { verified: true, uniqueIdentifier: "uid-123" },
+          normalized,
+        }),
+        deriveGhostOwner: async () => "0xghost",
+      },
+    );
+
+    expect(result.matchesExpectedGhostOwner).toBe(true);
+    expect(result.ghostDerivationVersion).toBe("v2_scoped");
+    expect(result.derivedGhostOwner).toBe("0xghost");
+  });
+
+  it("fails preflight when proof-derived ghost owner mismatches expected owner", async () => {
+    await expect(
+      verifyRootRecoveryPreflight(
+        config,
+        {
+          proofs: [{}] as never[],
+          originalQuery: {} as never,
+          queryResult: {} as never,
+          expectedGhostOwner: "0xexpected",
+          ghostDerivationVersion: "v2_scoped",
+          ageThreshold: 21,
+        },
+        {
+          verifyPassportClaims: async () => ({
+            verification: { verified: true, uniqueIdentifier: "uid-123" },
+            normalized,
+          }),
+          deriveGhostOwner: async () => "0xderived",
+        },
+      ),
+    ).rejects.toThrow("proof does not match the configured ghost owner");
   });
 });

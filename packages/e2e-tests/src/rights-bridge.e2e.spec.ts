@@ -31,6 +31,19 @@ const COMPANY_SPONSOR_MAX_FEE_CAP = 1_000_000_000_000_000n;
 const STABLE_PRICE_PER_VERIFY = 150_000n; // 0.15 USDC with 6 decimals
 const INITIAL_STABLE_SUPPLY = 1_000_000_000_000n;
 const AZTEC_WAIT_FOR_NODE_MS = Number.parseInt(process.env.AZTEC_WAIT_FOR_NODE_MS ?? "240000", 10);
+const TRANSIENT_LOCAL_NETWORK_TX_RETRY_ATTEMPTS = Number.parseInt(
+  process.env.AZTEC_TRANSIENT_TX_RETRY_ATTEMPTS ?? "3",
+  10,
+);
+const TRANSIENT_LOCAL_NETWORK_TX_RETRY_BACKOFF_MS = Number.parseInt(
+  process.env.AZTEC_TRANSIENT_TX_RETRY_BACKOFF_MS ?? "250",
+  10,
+);
+const TRANSIENT_LOCAL_NETWORK_TX_ERROR_MARKERS = [
+  "Invalid tx: Invalid expiration timestamp",
+  "Invalid tx: Block header not found",
+  "Tx dropped by P2P node",
+] as const;
 
 type L1Artifact = {
   abi: readonly unknown[];
@@ -104,14 +117,55 @@ function loadL1Artifact(sourceName: string, contractName: string): L1Artifact {
   return artifact;
 }
 
+function errorDetails(error: unknown): string {
+  if (error instanceof Error) {
+    return `${error.name}: ${error.message}`;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isTransientLocalNetworkTxError(error: unknown): boolean {
+  const details = errorDetails(error);
+  return TRANSIENT_LOCAL_NETWORK_TX_ERROR_MARKERS.some(marker => details.includes(marker));
+}
+
+async function runRetriedStep<T>(label: string, work: () => Promise<T>): Promise<T> {
+  let attempt = 1;
+  while (true) {
+    try {
+      return await work();
+    } catch (error) {
+      if (!isTransientLocalNetworkTxError(error) || attempt >= TRANSIENT_LOCAL_NETWORK_TX_RETRY_ATTEMPTS) {
+        throw error;
+      }
+      console.info(
+        `[rights-bridge:e2e] ${label} transient local-network tx error; rebuilding tx ` +
+          `(attempt=${attempt} max_attempts=${TRANSIENT_LOCAL_NETWORK_TX_RETRY_ATTEMPTS} backoff_ms=${TRANSIENT_LOCAL_NETWORK_TX_RETRY_BACKOFF_MS}): ${errorDetails(error)}`,
+      );
+      if (TRANSIENT_LOCAL_NETWORK_TX_RETRY_BACKOFF_MS > 0) {
+        await sleep(TRANSIENT_LOCAL_NETWORK_TX_RETRY_BACKOFF_MS);
+      }
+      attempt += 1;
+    }
+  }
+}
+
 async function mineTwoL2Blocks(ctx: BridgeContext): Promise<void> {
   const nudgeRecipient = AztecAddress.fromBigInt(Fr.random().toBigInt());
-  await ctx.l2NudgeToken.methods
-    .mint_to_public(nudgeRecipient, 1n)
-    .send({ from: ctx.orchestrator });
-  await ctx.l2NudgeToken.methods
-    .mint_to_public(nudgeRecipient, 1n)
-    .send({ from: ctx.orchestrator });
+  await runRetriedStep("mineTwoL2Blocks nudge #1", async () => {
+    return await ctx.l2NudgeToken.methods.mint_to_public(nudgeRecipient, 1n).send({ from: ctx.orchestrator });
+  });
+  await runRetriedStep("mineTwoL2Blocks nudge #2", async () => {
+    return await ctx.l2NudgeToken.methods.mint_to_public(nudgeRecipient, 1n).send({ from: ctx.orchestrator });
+  });
 }
 
 const suite = runE2E ? describe.sequential : describe.skip;
@@ -279,6 +333,7 @@ suite("Magna rights local-network L1->L2 bridge flow", () => {
 
   it("claims a purchase message on L2 and rejects replay", async () => {
     if (!ctx) throw new Error("bridge context missing");
+    const bridgeCtx = ctx;
 
     const rightsAmount = 7n;
     const packageIdField = Fr.random();
@@ -288,33 +343,33 @@ suite("Magna rights local-network L1->L2 bridge flow", () => {
     const secretHash = await computeSecretHash(secret);
     const paymentAmount = rightsAmount * STABLE_PRICE_PER_VERIFY;
 
-    const approveTxHash = await (ctx.l1Client.writeContract as (...args: any[]) => Promise<`0x${string}`>)({
-      address: ctx.paymentTokenAddress,
-      abi: ctx.paymentTokenArtifact.abi,
+    const approveTxHash = await (bridgeCtx.l1Client.writeContract as (...args: any[]) => Promise<`0x${string}`>)({
+      address: bridgeCtx.paymentTokenAddress,
+      abi: bridgeCtx.paymentTokenArtifact.abi,
       functionName: "approve",
-      args: [ctx.portalAddress, paymentAmount],
+      args: [bridgeCtx.portalAddress, paymentAmount],
     });
-    await ctx.l1Client.waitForTransactionReceipt({ hash: approveTxHash });
+    await bridgeCtx.l1Client.waitForTransactionReceipt({ hash: approveTxHash });
 
-    const purchaseTxHash = await (ctx.l1Client.writeContract as (...args: any[]) => Promise<`0x${string}`>)({
-      address: ctx.portalAddress,
-      abi: ctx.portalArtifact.abi,
+    const purchaseTxHash = await (bridgeCtx.l1Client.writeContract as (...args: any[]) => Promise<`0x${string}`>)({
+      address: bridgeCtx.portalAddress,
+      abi: bridgeCtx.portalArtifact.abi,
       functionName: "purchaseRights",
       args: [
-        ctx.companySponsor.address.toString() as `0x${string}`,
+        bridgeCtx.companySponsor.address.toString() as `0x${string}`,
         rightsAmount,
         pad(secretHash.toString() as `0x${string}`, { size: 32 }),
         packageId,
         extraPolicyHash,
       ],
     });
-    const purchaseReceipt = await ctx.l1Client.waitForTransactionReceipt({ hash: purchaseTxHash });
+    const purchaseReceipt = await bridgeCtx.l1Client.waitForTransactionReceipt({ hash: purchaseTxHash });
 
     const rightsPurchasedEvent = parseAbiItem(
       "event RightsPurchased(uint256 indexed purchaseId, bytes32 indexed sponsorAddressOnAztec, uint128 rightsAmount, bytes32 packageId, bytes32 creditNonce, bytes32 contentHash, bytes32 secretHash, bytes32 messageKey, uint256 messageLeafIndex, uint256 paymentAmount, address payer)",
     );
-    const purchasedLogs = await ctx.l1Client.getLogs({
-      address: ctx.portalAddress,
+    const purchasedLogs = await bridgeCtx.l1Client.getLogs({
+      address: bridgeCtx.portalAddress,
       event: rightsPurchasedEvent,
       fromBlock: purchaseReceipt.blockNumber,
       toBlock: purchaseReceipt.blockNumber,
@@ -326,8 +381,8 @@ suite("Magna rights local-network L1->L2 bridge flow", () => {
     const inboxMessageSentEvent = parseAbiItem(
       "event MessageSent(uint256 indexed checkpointNumber, uint256 index, bytes32 indexed hash, bytes16 rollingHash)",
     );
-    const inboxLogs = await ctx.l1Client.getLogs({
-      address: ctx.inboxAddress,
+    const inboxLogs = await bridgeCtx.l1Client.getLogs({
+      address: bridgeCtx.inboxAddress,
       event: inboxMessageSentEvent,
       fromBlock: purchaseReceipt.blockNumber,
       toBlock: purchaseReceipt.blockNumber,
@@ -335,46 +390,49 @@ suite("Magna rights local-network L1->L2 bridge flow", () => {
     expect(inboxLogs.length).toBeGreaterThan(0);
     const messageLeafIndex = inboxLogs[0].args.index!;
 
-    const before = await ctx.rightsRegistry.methods
-      .get_remaining_verifies(ctx.companySponsor.address)
-      .simulate({ from: ctx.activeOwner })
+    const before = await bridgeCtx.rightsRegistry.methods
+      .get_remaining_verifies(bridgeCtx.companySponsor.address)
+      .simulate({ from: bridgeCtx.activeOwner })
       .then(result => result.result as bigint);
 
-    await mineTwoL2Blocks(ctx);
+    await mineTwoL2Blocks(bridgeCtx);
 
-    await ctx.rightsRegistry.methods
-      .claim_l1_credit(
-        ctx.companySponsor.address,
-        rightsAmount,
-        packageIdField,
-        Fr.fromHexString(creditNonce),
-        secret,
-        messageLeafIndex,
-      )
-      .send({ from: ctx.orchestrator });
-
-    const after = await ctx.rightsRegistry.methods
-      .get_remaining_verifies(ctx.companySponsor.address)
-      .simulate({ from: ctx.activeOwner })
-      .then(result => result.result as bigint);
-    expect(after).toEqual(before + rightsAmount);
-
-    await expect(
-      ctx.rightsRegistry.methods
+    await runRetriedStep("claim_l1_credit(primary sponsor)", async () => {
+      return await bridgeCtx.rightsRegistry.methods
         .claim_l1_credit(
-          ctx.companySponsor.address,
+          bridgeCtx.companySponsor.address,
           rightsAmount,
           packageIdField,
           Fr.fromHexString(creditNonce),
           secret,
           messageLeafIndex,
         )
-        .send({ from: ctx.orchestrator }),
+        .send({ from: bridgeCtx.orchestrator });
+    });
+
+    const after = await bridgeCtx.rightsRegistry.methods
+      .get_remaining_verifies(bridgeCtx.companySponsor.address)
+      .simulate({ from: bridgeCtx.activeOwner })
+      .then(result => result.result as bigint);
+    expect(after).toEqual(before + rightsAmount);
+
+    await expect(
+      bridgeCtx.rightsRegistry.methods
+        .claim_l1_credit(
+          bridgeCtx.companySponsor.address,
+          rightsAmount,
+          packageIdField,
+          Fr.fromHexString(creditNonce),
+          secret,
+          messageLeafIndex,
+        )
+        .send({ from: bridgeCtx.orchestrator }),
     ).rejects.toBeDefined();
   }, 420_000);
 
   it("isolates L1->L2 claimed rights per sponsor address", async () => {
     if (!ctx) throw new Error("bridge context missing");
+    const bridgeCtx = ctx;
 
     const sponsorB = AztecAddress.fromBigInt(Fr.random().toBigInt());
     const rightsAmount = 4n;
@@ -385,26 +443,26 @@ suite("Magna rights local-network L1->L2 bridge flow", () => {
     const secretHash = await computeSecretHash(secret);
     const paymentAmount = rightsAmount * STABLE_PRICE_PER_VERIFY;
 
-    const beforeSponsorA = await ctx.rightsRegistry.methods
-      .get_remaining_verifies(ctx.companySponsor.address)
-      .simulate({ from: ctx.activeOwner })
+    const beforeSponsorA = await bridgeCtx.rightsRegistry.methods
+      .get_remaining_verifies(bridgeCtx.companySponsor.address)
+      .simulate({ from: bridgeCtx.activeOwner })
       .then(result => result.result as bigint);
-    const beforeSponsorB = await ctx.rightsRegistry.methods
+    const beforeSponsorB = await bridgeCtx.rightsRegistry.methods
       .get_remaining_verifies(sponsorB)
-      .simulate({ from: ctx.activeOwner })
+      .simulate({ from: bridgeCtx.activeOwner })
       .then(result => result.result as bigint);
 
-    const approveTxHash = await (ctx.l1Client.writeContract as (...args: any[]) => Promise<`0x${string}`>)({
-      address: ctx.paymentTokenAddress,
-      abi: ctx.paymentTokenArtifact.abi,
+    const approveTxHash = await (bridgeCtx.l1Client.writeContract as (...args: any[]) => Promise<`0x${string}`>)({
+      address: bridgeCtx.paymentTokenAddress,
+      abi: bridgeCtx.paymentTokenArtifact.abi,
       functionName: "approve",
-      args: [ctx.portalAddress, paymentAmount],
+      args: [bridgeCtx.portalAddress, paymentAmount],
     });
-    await ctx.l1Client.waitForTransactionReceipt({ hash: approveTxHash });
+    await bridgeCtx.l1Client.waitForTransactionReceipt({ hash: approveTxHash });
 
-    const purchaseTxHash = await (ctx.l1Client.writeContract as (...args: any[]) => Promise<`0x${string}`>)({
-      address: ctx.portalAddress,
-      abi: ctx.portalArtifact.abi,
+    const purchaseTxHash = await (bridgeCtx.l1Client.writeContract as (...args: any[]) => Promise<`0x${string}`>)({
+      address: bridgeCtx.portalAddress,
+      abi: bridgeCtx.portalArtifact.abi,
       functionName: "purchaseRights",
       args: [
         sponsorB.toString() as `0x${string}`,
@@ -414,13 +472,13 @@ suite("Magna rights local-network L1->L2 bridge flow", () => {
         extraPolicyHash,
       ],
     });
-    const purchaseReceipt = await ctx.l1Client.waitForTransactionReceipt({ hash: purchaseTxHash });
+    const purchaseReceipt = await bridgeCtx.l1Client.waitForTransactionReceipt({ hash: purchaseTxHash });
 
     const rightsPurchasedEvent = parseAbiItem(
       "event RightsPurchased(uint256 indexed purchaseId, bytes32 indexed sponsorAddressOnAztec, uint128 rightsAmount, bytes32 packageId, bytes32 creditNonce, bytes32 contentHash, bytes32 secretHash, bytes32 messageKey, uint256 messageLeafIndex, uint256 paymentAmount, address payer)",
     );
-    const purchasedLogs = await ctx.l1Client.getLogs({
-      address: ctx.portalAddress,
+    const purchasedLogs = await bridgeCtx.l1Client.getLogs({
+      address: bridgeCtx.portalAddress,
       event: rightsPurchasedEvent,
       fromBlock: purchaseReceipt.blockNumber,
       toBlock: purchaseReceipt.blockNumber,
@@ -431,8 +489,8 @@ suite("Magna rights local-network L1->L2 bridge flow", () => {
     const inboxMessageSentEvent = parseAbiItem(
       "event MessageSent(uint256 indexed checkpointNumber, uint256 index, bytes32 indexed hash, bytes16 rollingHash)",
     );
-    const inboxLogs = await ctx.l1Client.getLogs({
-      address: ctx.inboxAddress,
+    const inboxLogs = await bridgeCtx.l1Client.getLogs({
+      address: bridgeCtx.inboxAddress,
       event: inboxMessageSentEvent,
       fromBlock: purchaseReceipt.blockNumber,
       toBlock: purchaseReceipt.blockNumber,
@@ -440,26 +498,28 @@ suite("Magna rights local-network L1->L2 bridge flow", () => {
     expect(inboxLogs.length).toBeGreaterThan(0);
     const messageLeafIndex = inboxLogs[0].args.index!;
 
-    await mineTwoL2Blocks(ctx);
+    await mineTwoL2Blocks(bridgeCtx);
 
-    await ctx.rightsRegistry.methods
-      .claim_l1_credit(
-        sponsorB,
-        rightsAmount,
-        packageIdField,
-        Fr.fromHexString(creditNonce),
-        secret,
-        messageLeafIndex,
-      )
-      .send({ from: ctx.orchestrator });
+    await runRetriedStep("claim_l1_credit(secondary sponsor)", async () => {
+      return await bridgeCtx.rightsRegistry.methods
+        .claim_l1_credit(
+          sponsorB,
+          rightsAmount,
+          packageIdField,
+          Fr.fromHexString(creditNonce),
+          secret,
+          messageLeafIndex,
+        )
+        .send({ from: bridgeCtx.orchestrator });
+    });
 
-    const afterSponsorA = await ctx.rightsRegistry.methods
-      .get_remaining_verifies(ctx.companySponsor.address)
-      .simulate({ from: ctx.activeOwner })
+    const afterSponsorA = await bridgeCtx.rightsRegistry.methods
+      .get_remaining_verifies(bridgeCtx.companySponsor.address)
+      .simulate({ from: bridgeCtx.activeOwner })
       .then(result => result.result as bigint);
-    const afterSponsorB = await ctx.rightsRegistry.methods
+    const afterSponsorB = await bridgeCtx.rightsRegistry.methods
       .get_remaining_verifies(sponsorB)
-      .simulate({ from: ctx.activeOwner })
+      .simulate({ from: bridgeCtx.activeOwner })
       .then(result => result.result as bigint);
 
     expect(afterSponsorA).toEqual(beforeSponsorA);

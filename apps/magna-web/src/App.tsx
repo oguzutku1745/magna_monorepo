@@ -31,6 +31,7 @@ import {
   bindExternalProviderDisconnect,
   beginExternalWalletConnection,
   confirmExternalWalletConnection,
+  createTransientGhostWalletSession,
   createManagedWalletSession,
   createPasskeyWalletSession,
   ensureGhostAccountLifecycle,
@@ -45,9 +46,11 @@ import {
 import {
   startPassportZkRequest,
   verifyAndRefreshRootAuthorityThroughBackend,
+  verifyRootRecoveryPreflightThroughBackend,
   verifyAndIssueThroughBackend,
   type ActiveZkPassportRequest,
   type VerifyAndIssueResponse as ZkPassportIssueResponse,
+  type VerifyRootRecoveryPreflightResponse as ZkPassportRecoveryPreflightResponse,
   type VerifyAndRefreshRootAuthorityResponse as ZkPassportRenewalResponse,
   type ZkPassportLifecycleEvent,
 } from "./lib/zkpassport";
@@ -125,6 +128,16 @@ function describeTxOutcome(
 
 function formatHex(value: bigint): string {
   return `0x${value.toString(16)}`;
+}
+
+function resolveGhostDerivationVersion(
+  value: string | undefined,
+  fallback: "v1_legacy_unscoped" | "v2_scoped",
+): "v1_legacy_unscoped" | "v2_scoped" {
+  if (value === "v1_legacy_unscoped" || value === "v2_scoped") {
+    return value;
+  }
+  return fallback;
 }
 
 const CHAIN_FINGERPRINT_STORAGE_KEY = "magna-web:chain-fingerprint:v1";
@@ -315,6 +328,7 @@ export function App() {
   const [activeZkRequest, setActiveZkRequest] = useState<ActiveZkPassportRequest | null>(null);
   const [activeGhostContextRequest, setActiveGhostContextRequest] = useState<ActiveZkPassportRequest | null>(null);
   const [activeRenewalRequest, setActiveRenewalRequest] = useState<ActiveZkPassportRequest | null>(null);
+  const [activeRecoveryRequest, setActiveRecoveryRequest] = useState<ActiveZkPassportRequest | null>(null);
   const [zkPassportStage, setZkPassportStage] = useState<string>("idle");
   const [zkPassportProofCount, setZkPassportProofCount] = useState<number>(0);
   const [ghostContextStage, setGhostContextStage] = useState<string>("idle");
@@ -323,6 +337,11 @@ export function App() {
   const [renewalStage, setRenewalStage] = useState<string>("idle");
   const [renewalProofCount, setRenewalProofCount] = useState<number>(0);
   const [zkPassportLastRenewal, setZkPassportLastRenewal] = useState<ZkPassportRenewalResponse | null>(null);
+  const [recoveryStage, setRecoveryStage] = useState<string>("idle");
+  const [recoveryProofCount, setRecoveryProofCount] = useState<number>(0);
+  const [zkPassportLastRecoveryPreflight, setZkPassportLastRecoveryPreflight] =
+    useState<ZkPassportRecoveryPreflightResponse | null>(null);
+  const [lastRootRecoveryTxHash, setLastRootRecoveryTxHash] = useState<string | null>(null);
   const [ghostLifecycle, setGhostLifecycle] = useState<GhostAccountLifecycleResult | null>(null);
   const [lastIssuedPassportRef, setLastIssuedPassportRef] = useState<LastIssuedPassportRef | null>(() =>
     loadStoredLastIssuedPassportRef(),
@@ -364,6 +383,8 @@ export function App() {
           setLastIssuedPassportRef(null);
           setGhostLifecycle(null);
           setZkPassportLastRenewal(null);
+          setZkPassportLastRecoveryPreflight(null);
+          setLastRootRecoveryTxHash(null);
         }
         window.localStorage.setItem(CHAIN_FINGERPRINT_STORAGE_KEY, nextFingerprint);
       })
@@ -407,6 +428,8 @@ export function App() {
       setGhostLifecycle(null);
       setLastIssuedPassportRef(null);
       setZkPassportLastRenewal(null);
+      setZkPassportLastRecoveryPreflight(null);
+      setLastRootRecoveryTxHash(null);
       setPendingConnection(null);
     });
   }, [chainResetNotice, session]);
@@ -459,12 +482,21 @@ export function App() {
     };
   }, [activeRenewalRequest]);
 
+  useEffect(() => {
+    return () => {
+      activeRecoveryRequest?.cancel();
+    };
+  }, [activeRecoveryRequest]);
+
   const activeAccount = useMemo(
     () => session?.accounts.find(account => account.address === selectedAccount) ?? session?.activeAccount ?? null,
     [selectedAccount, session],
   );
   const hasActiveZkPassportRequest =
-    activeZkRequest !== null || activeGhostContextRequest !== null || activeRenewalRequest !== null;
+    activeZkRequest !== null ||
+    activeGhostContextRequest !== null ||
+    activeRenewalRequest !== null ||
+    activeRecoveryRequest !== null;
   const externalSession = session?.kind === "external" ? session : null;
   const connectedExternalProviderId = externalSession?.metadata?.providerId ?? null;
   const operatorFeePayerAddress = useMemo(() => {
@@ -833,7 +865,7 @@ export function App() {
       setError("zkPassport age threshold must be a valid integer.");
       return;
     }
-    if (activeGhostContextRequest || activeRenewalRequest) {
+    if (activeGhostContextRequest || activeRenewalRequest || activeRecoveryRequest) {
       setError("Finish or cancel the current zkPassport flow before starting issuance.");
       return;
     }
@@ -1026,7 +1058,7 @@ export function App() {
       setError("Choose an active account before issuing a credential.");
       return;
     }
-    if (activeGhostContextRequest || activeRenewalRequest) {
+    if (activeGhostContextRequest || activeRenewalRequest || activeRecoveryRequest) {
       setError("Finish or cancel the current zkPassport flow before issuing via the dev fallback.");
       return;
     }
@@ -1073,7 +1105,7 @@ export function App() {
       setError("Choose an active account before fetching hinted notes.");
       return;
     }
-    if (activeZkRequest || activeGhostContextRequest || activeRenewalRequest) {
+    if (activeZkRequest || activeGhostContextRequest || activeRenewalRequest || activeRecoveryRequest) {
       setError("Wait for the current zkPassport request to finish before fetching hinted notes.");
       return;
     }
@@ -1185,7 +1217,7 @@ export function App() {
       setError("Passport authority renewal requires a known ghost owner address.");
       return;
     }
-    if (activeZkRequest || activeGhostContextRequest) {
+    if (activeZkRequest || activeGhostContextRequest || activeRecoveryRequest) {
       setError("Wait for the current zkPassport request to finish before starting renewal.");
       return;
     }
@@ -1325,26 +1357,227 @@ export function App() {
   };
 
   const handleRecoverRoot = async () => {
-    if (!session || session.kind === "external" || !hints || !isRootedPassportHints(hints)) {
-      setError("Root recovery requires an in-app session and rooted hinted notes.");
-      return;
-    }
     if (!activeAccount) {
-      setError("Choose an active account before root recovery.");
+      setError("Choose an active account before starting rooted recovery.");
       return;
     }
-    const ghostOwnerAddress = zkPassportLastIssue?.ghostOwner ?? lastIssuedPassportRef?.ghostOwner ?? ghostLifecycle?.address;
+    if (!session || session.kind === "external") {
+      setError("Rooted recovery currently supports in-app passkey/managed sessions only.");
+      return;
+    }
+    if (!env.verificationApiUrl) {
+      setError("Set VITE_MAGNA_VERIFICATION_API_URL to enable rooted recovery preflight verification.");
+      return;
+    }
+    if (!hints || !isRootedPassportHints(hints)) {
+      setError("Fetch rooted hinted notes before starting rooted recovery.");
+      return;
+    }
+    const ghostOwnerAddress =
+      zkPassportLastIssue?.ghostOwner ?? lastIssuedPassportRef?.ghostOwner ?? ghostLifecycle?.address;
     if (!ghostOwnerAddress) {
       setError("Root recovery requires a known ghost owner address.");
       return;
     }
-    const result = await runAction("Recover rooted passport lineage", async () => {
-      const ghostClient = new MagnaBrowserClient(session.wallet, env, ghostOwnerAddress);
-      const hintedRootRecovery = await ghostClient.fetchRootRecoveryHint(ghostOwnerAddress, hints.rootCommitment);
-      return await ghostClient.recoverRoot(hintedRootRecovery, activeAccount.address);
-    });
-    if (result) {
-      setStatusMessage(describeTxOutcome("Root recovery transaction", result));
+    if (activeZkRequest || activeGhostContextRequest || activeRenewalRequest) {
+      setError("Wait for the current zkPassport request to finish before starting rooted recovery.");
+      return;
+    }
+
+    const verificationApiUrl = env.verificationApiUrl;
+    const canonicalClaims = resolveCanonicalClaimsForm(hints);
+    const ageThreshold = Number.parseInt(canonicalClaims.ageThreshold, 10);
+    if (!Number.isFinite(ageThreshold)) {
+      setError("Recovery age threshold must be a valid integer.");
+      return;
+    }
+    const recoveryDerivationVersion = resolveGhostDerivationVersion(
+      zkPassportLastIssue?.ghostDerivationVersion ?? lastIssuedPassportRef?.ghostDerivationVersion,
+      env.zkPassportGhostDerivationVersion,
+    );
+
+    if (activeRecoveryRequest) {
+      activeRecoveryRequest.cancel();
+      setActiveRecoveryRequest(null);
+    }
+
+    setError(null);
+    setRecoveryProofCount(0);
+    setRecoveryStage("creating_request");
+    setStatusMessage("Creating zkPassport root recovery request...");
+    appendLog("Create zkPassport root recovery request started");
+    if (env.zkPassportDevMode) {
+      appendLog("zkPassport dev mode enabled (mock proofs allowed) for root recovery");
+    }
+
+    try {
+      const request = await startPassportZkRequest({
+        ageThreshold,
+        metadata: {
+          name: env.zkPassportRequestName,
+          logo: env.zkPassportRequestLogo,
+          purpose: env.zkPassportRequestPurpose,
+          scope: env.zkPassportRequestScope,
+        },
+        devMode: env.zkPassportDevMode,
+        onEvent: (event: ZkPassportLifecycleEvent) => {
+          switch (event.type) {
+            case "request_created":
+              setRecoveryStage("awaiting_scan");
+              setStatusMessage("zkPassport root recovery request created. Scan QR code or open the deep link.");
+              appendLog(`zkPassport root recovery request created: ${event.requestId}`);
+              break;
+            case "bridge_connected":
+              setStatusMessage("zkPassport root recovery bridge connected.");
+              appendLog("zkPassport root recovery bridge connected");
+              break;
+            case "request_received":
+              setRecoveryStage("request_received");
+              setStatusMessage("zkPassport root recovery request received on mobile app.");
+              appendLog("zkPassport root recovery request received on mobile app");
+              break;
+            case "generating_proof":
+              setRecoveryStage("generating_proof");
+              setStatusMessage("zkPassport is generating proof(s) for root recovery.");
+              appendLog("zkPassport generating proof(s) for root recovery");
+              break;
+            case "proof_generated":
+              setRecoveryStage("proof_generated");
+              setRecoveryProofCount(event.proofCount);
+              setStatusMessage(`zkPassport proof generated for root recovery (${event.proofCount}).`);
+              appendLog(`zkPassport proof generated for root recovery (${event.proofCount})`);
+              break;
+            case "result_received":
+              setRecoveryStage("result_received");
+              setStatusMessage("zkPassport returned root recovery results. Running server preflight.");
+              appendLog(`zkPassport root recovery result received (verified=${event.verified})`);
+              break;
+          }
+        },
+      });
+      setActiveRecoveryRequest(request);
+
+      void request.completion
+        .then(async (completion) => {
+          if (completion.status === "rejected") {
+            setActiveRecoveryRequest(null);
+            setRecoveryStage("rejected");
+            setStatusMessage("zkPassport root recovery request rejected by user.");
+            appendLog("zkPassport root recovery request rejected");
+            return;
+          }
+          if (!completion.uniqueIdentifier) {
+            throw new Error("zkPassport verification succeeded but uniqueIdentifier is missing for rooted recovery.");
+          }
+
+          setRecoveryStage("submitting_preflight");
+          const preflight = await runAction("Verify zkPassport proofs for rooted recovery", async () =>
+            verifyRootRecoveryPreflightThroughBackend(verificationApiUrl, {
+              proofs: completion.proofs,
+              originalQuery: completion.originalQuery,
+              queryResult: completion.queryResult,
+              expectedGhostOwner: ghostOwnerAddress,
+              ghostDerivationVersion: recoveryDerivationVersion,
+              ageThreshold,
+            }),
+          );
+          if (!preflight) {
+            setActiveRecoveryRequest(null);
+            setRecoveryStage("preflight_failed");
+            return;
+          }
+          setZkPassportLastRecoveryPreflight(preflight);
+          setClaimsForm(claimsFormFromNormalizedClaims(preflight.normalizedClaims));
+
+          setRecoveryStage("recovering_root");
+          const recovered = await runAction("Recover rooted passport lineage", async () => {
+            const runRecoveryAttempt = async (attempt: {
+              deploymentFromAddress?: string;
+              deployWithLocalTestAccount?: boolean;
+              localTestAccountIndex?: number;
+            }) => {
+              const transientGhost = await createTransientGhostWalletSession({
+                nodeUrl: env.aztecNodeUrl,
+                uniqueIdentifier: completion.uniqueIdentifier!,
+                credentialType: CredentialType.Passport,
+                derivationVersion: recoveryDerivationVersion,
+                ...attempt,
+              });
+              try {
+                if (transientGhost.ghostAddress !== preflight.derivedGhostOwner) {
+                  throw new Error(
+                    `Ghost derivation mismatch during rooted recovery. preflight=${preflight.derivedGhostOwner} local=${transientGhost.ghostAddress}`,
+                  );
+                }
+                const ghostClient = new MagnaBrowserClient(transientGhost.wallet, env, transientGhost.ghostAddress);
+                const hintedRootRecovery = await ghostClient.fetchRootRecoveryHint(
+                  transientGhost.ghostAddress,
+                  hints.rootCommitment,
+                );
+                const outcome = await ghostClient.recoverRoot(hintedRootRecovery, activeAccount.address);
+                return {
+                  outcome,
+                  ghostAddress: transientGhost.ghostAddress,
+                };
+              } finally {
+                await transientGhost.dispose();
+              }
+            };
+
+            try {
+              return await runRecoveryAttempt({
+                deploymentFromAddress: operatorFeePayerAddress ?? activeAccount.address,
+              });
+            } catch (primaryError) {
+              if (!env.enableLocalTestBootstrap) {
+                throw primaryError;
+              }
+              appendLog(
+                "Rooted recovery ghost deployment with preferred payer failed, retrying with local test payer.",
+              );
+              return await runRecoveryAttempt({
+                deployWithLocalTestAccount: true,
+                localTestAccountIndex: env.localTestAccountIndex,
+              });
+            }
+          });
+          if (!recovered) {
+            setActiveRecoveryRequest(null);
+            setRecoveryStage("recover_failed");
+            return;
+          }
+
+          setActiveRecoveryRequest(null);
+          setRecoveryStage("completed");
+          setLastRootRecoveryTxHash(recovered.outcome.txHash ?? null);
+          setHints(null);
+          setGhostLifecycle(null);
+          setLastIssuedPassportRef(null);
+          setZkPassportLastIssue(null);
+          setZkPassportLastRenewal(null);
+          setStatusMessage(
+            `${describeTxOutcome("Root recovery transaction", recovered.outcome)} ` +
+              "Old linked lineage is now invalidated; re-issue rooted passport lineage before verifying again.",
+          );
+          appendLog(
+            `Rooted recovery completed from ghost ${recovered.ghostAddress}. Re-issue rooted lineage before next verify.`,
+          );
+        })
+        .catch((caught) => {
+          const message = errorMessage(caught);
+          setActiveRecoveryRequest(null);
+          setRecoveryStage("error");
+          setError(`zkPassport root recovery flow failed: ${message}`);
+          setStatusMessage(`zkPassport root recovery flow failed: ${message}`);
+          appendLog(`zkPassport root recovery flow failed: ${message}`);
+        });
+    } catch (caught) {
+      const message = errorMessage(caught);
+      setActiveRecoveryRequest(null);
+      setRecoveryStage("error");
+      setError(`Create zkPassport root recovery request failed: ${message}`);
+      setStatusMessage(`Create zkPassport root recovery request failed: ${message}`);
+      appendLog(`Create zkPassport root recovery request failed: ${message}`);
     }
   };
 
@@ -1473,9 +1706,20 @@ export function App() {
     appendLog("Cancelled zkPassport renewal request");
   };
 
+  const handleCancelRecoveryRequest = () => {
+    if (!activeRecoveryRequest) {
+      return;
+    }
+    activeRecoveryRequest.cancel();
+    setActiveRecoveryRequest(null);
+    setRecoveryStage("cancelled");
+    setStatusMessage("Cancelled zkPassport root recovery request.");
+    appendLog("Cancelled zkPassport root recovery request");
+  };
+
   const handleDeriveGhostContext = async () => {
-    if (activeZkRequest) {
-      setError("Wait for the current zkPassport issuance request to finish before deriving ghost context.");
+    if (activeZkRequest || activeRenewalRequest || activeRecoveryRequest) {
+      setError("Wait for the current zkPassport flow to finish before deriving ghost context.");
       return;
     }
     const ageThreshold = Number.parseInt(claimsForm.ageThreshold, 10);
@@ -2155,6 +2399,92 @@ export function App() {
           <p className="muted-text">
             This renewal flow now requires a fresh zkPassport proof before the backend orchestrator sends the on-chain
             `refresh_root_authority(...)` call.
+          </p>
+          {!env.requireRealSends ? (
+            <p className="muted-text">
+              This app forbids fake success paths. Set <code>VITE_MAGNA_REQUIRE_REAL_SENDS=true</code> to run critical flows.
+            </p>
+          ) : null}
+        </Panel>
+      </WorkflowSection>
+
+      <WorkflowSection
+        eyebrow="User Flow"
+        title="Recovery"
+        description="Recovery is root-wide authority rotation. It requires a fresh zkPassport proof, server preflight verification, deterministic ghost re-derivation, and an on-chain `recover_root(...)` send from the ghost account."
+      >
+        <Panel
+          testId="panel-recovery"
+          title="Rooted Recovery"
+          badge="Root Kill-Switch"
+          description="Use this only when rooted lineage authority must be rotated to a new active owner account. This is not daily verify and not renewal."
+        >
+          <div className="button-row">
+            <button
+              data-testid="recover-root"
+              className="secondary-button"
+              disabled={
+                busyAction !== null ||
+                !activeAccount ||
+                !hints ||
+                !isRootedPassportHints(hints) ||
+                !env.verificationApiUrl ||
+                !env.requireRealSends ||
+                !session ||
+                session.kind === "external" ||
+                hasActiveZkPassportRequest
+              }
+              onClick={() => void handleRecoverRoot()}
+            >
+              Start rooted recovery
+            </button>
+            <button
+              className="secondary-button"
+              disabled={busyAction !== null || activeRecoveryRequest === null}
+              onClick={() => handleCancelRecoveryRequest()}
+            >
+              Cancel recovery request
+            </button>
+          </div>
+          <div className="sub-card">
+            <KeyValue label="zkPassport stage" value={recoveryStage} />
+            <KeyValue label="Proofs generated" value={String(recoveryProofCount)} />
+            <KeyValue label="Verification API" value={env.verificationApiUrl ?? "not configured"} />
+            <KeyValue label="Request scope" value={env.zkPassportRequestScope} />
+            <KeyValue
+              label="Proof mode"
+              value={env.zkPassportDevMode ? "dev mode (mock proofs allowed)" : "strict mode (real proofs only)"}
+            />
+            {activeRecoveryRequest ? <KeyValue label="Request id" value={activeRecoveryRequest.requestId} /> : null}
+          </div>
+          {activeRecoveryRequest ? (
+            <div className="sub-card">
+              <p className="label">Scan with zkPassport mobile app</p>
+              <div style={{ background: "white", borderRadius: "12px", padding: "12px", width: "fit-content" }}>
+                <QRCode value={activeRecoveryRequest.url} size={180} />
+              </div>
+              <p className="muted-text">
+                If you are on mobile, open directly:{" "}
+                <a href={activeRecoveryRequest.url} target="_blank" rel="noreferrer">
+                  Open zkPassport request link
+                </a>
+              </p>
+            </div>
+          ) : null}
+          {zkPassportLastRecoveryPreflight ? (
+            <div className="sub-card">
+              <KeyValue label="Preflight expected ghost owner" value={zkPassportLastRecoveryPreflight.expectedGhostOwner} />
+              <KeyValue label="Preflight derived ghost owner" value={zkPassportLastRecoveryPreflight.derivedGhostOwner} />
+              <KeyValue label="Ghost derivation version" value={zkPassportLastRecoveryPreflight.ghostDerivationVersion} />
+              <KeyValue label="Latest recovery tx" value={lastRootRecoveryTxHash ?? "not yet sent"} />
+            </div>
+          ) : null}
+          <p className="muted-text">
+            Recovery runs from ghost authority and emits a root nullifier, so old linked descendants become unusable until
+            rooted lineage is re-issued and re-linked from supported flows.
+          </p>
+          <p className="muted-text">
+            After successful recovery, fetch rooted hints again only after re-issuing rooted passport lineage.
           </p>
           {!env.requireRealSends ? (
             <p className="muted-text">

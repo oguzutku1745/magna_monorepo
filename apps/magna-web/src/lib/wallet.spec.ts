@@ -166,7 +166,12 @@ vi.mock("./aztec", () => ({
   stringifyAddress: (value: { toString: () => string } | string) => (typeof value === "string" ? value : value.toString()),
 }));
 
-import { createManagedWalletSession, createPasskeyWalletSession, ensureGhostAccountLifecycle } from "./wallet";
+import {
+  createManagedWalletSession,
+  createPasskeyWalletSession,
+  createTransientGhostWalletSession,
+  ensureGhostAccountLifecycle,
+} from "./wallet";
 
 describe("wallet session persistence", () => {
   beforeEach(() => {
@@ -181,6 +186,7 @@ describe("wallet session persistence", () => {
     testState.wallet.createECDSARAccount.mockClear();
     testState.wallet.createECDSAKAccount.mockClear();
     testState.wallet.getContractMetadata.mockClear();
+    testState.wallet.registerSender.mockClear();
     testState.wallet.registerContract.mockClear();
     testState.wallet.walletDB.retrieveAccount.mockClear();
     testState.wallet.pxe.debug.sync.mockClear();
@@ -377,5 +383,24 @@ describe("wallet session persistence", () => {
     expect(lifecycle.deploymentStatus).toBe("deployed");
     expect(testState.deployCalls).toHaveLength(0);
     expect(lifecycle.localState).toBe("derived-each-time");
+  });
+
+  it("creates a transient ghost wallet session for root recovery sends", async () => {
+    const validFeePayer = `0x${"1".repeat(64)}`;
+    const session = await createTransientGhostWalletSession({
+      nodeUrl: "http://127.0.0.1:8080",
+      uniqueIdentifier: "12345",
+      credentialType: 1,
+      deploymentFromAddress: validFeePayer,
+    });
+
+    expect(session.ghostAddress).toBe("0xghost-passport-account");
+    expect(session.localState).toBe("derived-each-time");
+    expect(testState.wallet.stop).not.toHaveBeenCalled();
+
+    await session.dispose();
+    expect(testState.wallet.stop).toHaveBeenCalledTimes(1);
+    await session.dispose();
+    expect(testState.wallet.stop).toHaveBeenCalledTimes(1);
   });
 });

@@ -505,6 +505,60 @@ describe("magna app helpers", () => {
     expect(issuerContractMock.methods.get_linked_recovery_hinted).not.toHaveBeenCalled();
   });
 
+  it("retries root recovery hint lookup while PXE catches up to the ghost account", async () => {
+    let lookupAttempt = 0;
+    issuerContractMock.methods.get_root_recovery_hinted = vi.fn(() => ({
+      simulate: vi.fn(async () => {
+        lookupAttempt += 1;
+        if (lookupAttempt === 1) {
+          throw new Error("root recovery note not found");
+        }
+        return { result: { note: { root_commitment: 99n } } };
+      }),
+    }));
+
+    const env = getAppEnv({
+      VITE_MAGNA_ISSUER_ADDRESS: "0xissuer",
+    });
+    const debugSyncState = {
+      callCount: 0,
+      async sync() {
+        this.callCount += 1;
+      },
+    };
+    const walletMock = {
+      pxe: {
+        debug: debugSyncState,
+      },
+      getContractMetadata: vi.fn(async () => ({
+        instance: {},
+        initializationStatus: "INITIALIZED",
+        isContractPublished: true,
+      })),
+    } as any;
+    const client = new MagnaBrowserClient(walletMock, env, "0xghost");
+
+    const hint = await client.fetchRootRecoveryHint("0xghost", "99");
+
+    expect(hint).toEqual({ note: { root_commitment: 99n } });
+    expect(debugSyncState.callCount).toBe(3);
+    expect(issuerContractMock.methods.get_root_recovery_hinted).toHaveBeenCalledTimes(2);
+  });
+
+  it("registers the orchestrator sender before discovering root recovery notes", async () => {
+    const wallet = buildReadyWalletMock() as any;
+    wallet.getAccounts = vi.fn(async () => []);
+    const env = getAppEnv({
+      VITE_MAGNA_ISSUER_ADDRESS: "0xissuer",
+      VITE_MAGNA_ORCHESTRATOR_ADDRESS: "0xorchestrator",
+    });
+    const client = new MagnaBrowserClient(wallet, env, "0xghost");
+
+    await client.fetchRootRecoveryHint("0xghost", "99");
+
+    expect(wallet.registerSender).toHaveBeenCalledWith("0xorchestrator", "magna-orchestrator");
+  });
+
   it("sends rooted sponsored verify with sponsor additional scope", async () => {
     const rootedSponsoredSend = vi.fn(async () => ({ txHash: "0xrooted-sponsored" }));
     sponsorContracts.set("0xsponsor-a", {

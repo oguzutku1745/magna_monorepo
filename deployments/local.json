@@ -10,48 +10,48 @@
     "l1PaymentTokenDecimals": 6
   },
   "resolvedAztec": {
-    "registryAddress": "0x996785fe937d92edbf420f3bf70acc62ecd6f655",
-    "rollupAddress": "0x1c1521cf734CD13B02e8150951c3bF2B438be780",
-    "inboxAddress": "0xDa5E6a7EA9fF5349316acFB8a20D591919542aED",
-    "rollupVersion": "1746425342",
+    "registryAddress": "0x0677591dd9d1a85e6596bf2ee9c36b4a3ff8aaf4",
+    "rollupAddress": "0xcaCd0CCb258C2a9f98224f7602A65EBe80C2459F",
+    "inboxAddress": "0xf988A48eaECe248EC3B8ED3829C334366D27B569",
+    "rollupVersion": "4008077751",
     "l1ChainId": "31337"
   },
   "l1": {
     "treasuryAddress": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
     "paymentTokenAddress": "0x95401dc811bb5740090279ba06cfa8fcf6113778",
-    "portalAddress": "0xa95a928eec085801d981d13ffe749872d8fd5bec",
+    "portalAddress": "0xb9a62f59f8c1359e24830e4fd209954e21b7df37",
     "txHashes": {
-      "initializePortal": "0x2027671141e0fc0ad182c09a256c288d8d27250f41d92b16103659c742427e1c"
+      "initializePortal": "0x45fa1fb67614ac7185d2dfecbd4be9a9ee8b04868b384b4efea6165e889d07d4"
     }
   },
   "l2": {
     "adminAddress": "0x13aaeade7d4d8a9a83d2ed31281c2d673816743a189928bcef0e8e30cb292854",
     "treasuryAddress": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-    "rightsRegistryAddress": "0x2400cd6dc01d6ece372303e49fe694739543948e0c29c5c7394cd3ad20aca35a",
-    "purchaseAdapterAddress": "0x0b61850f13abf626349e5fb7391d6fba8b0637709adbc538dc074f4373efc2fb",
-    "paymentTokenAddress": "0x10e6a4bb4b93e42993314f57e8372b037172ef824cc68d477493cc8c4e0b53e9",
+    "rightsRegistryAddress": "0x2e60f10cb89b3dcc0be0c8e8f7e230befa597c7927321d73da9db08f935fc8f1",
+    "purchaseAdapterAddress": "0x21e22447820e24d7fa89463757a6331daf790b7608434680b706c395ce89a404",
+    "paymentTokenAddress": "0x16f0380cc24fff1358043650659e43bfbcd1bc440abbf8b40dd53453b50f117d",
     "paymentTokenDeployedByScript": true,
     "txHashes": {
-      "deployRightsRegistry": "0x07c86598b172e0056bf0032b0d6c2b10af72d9aeb96555564ab05d9bd5c70ea9",
-      "deployPaymentToken": "0x0ac6b613661259945d2b818ae15a103699f5f86f5a65116ced6fe04149d18c00",
-      "deployPurchaseAdapter": "0x1d5727319043c794c7222cba803dee3717dbac393287826d8ae694d2284154eb",
-      "initializePurchaseAdapter": "0x192e57143a3bc6ab4a8500881605214a3bf67bca4af69bf88ea084a84ee1661a"
+      "deployRightsRegistry": "0x031a9f63a50dd37e1050e0476167671d20e203f52205e2d2105e533d01fd4ef1",
+      "deployPaymentToken": "0x2b91d4c0074ca8611a526cd357a6c379a894683c3086a109c34bbf9ec0de97f4",
+      "deployPurchaseAdapter": "0x0eb22a76363acb335f4c0d607d96db19d564714534aae57b5dc1f9fa20a8bc94",
+      "initializePurchaseAdapter": "0x2a853250878cf42867846a2d7ec65754d57b6adcfbcd9a05b895916e39a26a28"
     },
-    "issuerAddress": "0x1a48904c04529228bce494bce01d1db7d92b0a80ea976a589ae473cd146f3036",
-    "consumerAddress": "0x28306cbbd6345a8390273d0dcd8211932f17ecee993f54a78fdee40c80adbcb6",
-    "companySponsorAddress": "0x266ca7eb890e828fe34a2769be3659c02262d262370e893436c624b2893f3fd9",
+    "issuerAddress": "0x27aa5ca2da323f8e7acd9694cbb45d22d9b8bceb3a1eaf975c150a2dcb1ae7cf",
+    "consumerAddress": "0x01b56b1c674eb54c06c300c50efc68aad809dafb2aa6092c19c6361cffe72bca",
+    "companySponsorAddress": "0x15233c81c25a2f2d0cb9a5a282d89032a15d85d6e14827c2aac1c27430a90b54",
     "companySponsorAddresses": [
-      "0x266ca7eb890e828fe34a2769be3659c02262d262370e893436c624b2893f3fd9"
+      "0x15233c81c25a2f2d0cb9a5a282d89032a15d85d6e14827c2aac1c27430a90b54"
     ],
-    "activeCompanySponsorAddress": "0x266ca7eb890e828fe34a2769be3659c02262d262370e893436c624b2893f3fd9",
+    "activeCompanySponsorAddress": "0x15233c81c25a2f2d0cb9a5a282d89032a15d85d6e14827c2aac1c27430a90b54",
     "webBootstrap": {
       "orchestratorAddress": "0x13aaeade7d4d8a9a83d2ed31281c2d673816743a189928bcef0e8e30cb292854",
       "txHashes": {
-        "deployIssuer": "0x26cf6a4c58e77a044515359fd4b282b68a0695bfce7f038c24192a0abc3b534c",
-        "deployCompanySponsor": "0x1cbf0338f4818408fe911be954e37b7e4318019a02ed3fc40cf37f7dc70f0caf",
-        "deployConsumer": "0x2ce0f06b1da65ba86bfe5e3d6067e3bb98e1b5a76ffad6087aecafc540543873",
-        "seedSponsorRights": "0x0ddfcd2e59ab6f64d92cd79da93e1c43ef3c015d8fff0a161ef8fe2eafb48e87",
-        "sponsorFeeJuiceClaim": "0x0670f24aee22bfaf2ffd9fcf6ce01217714377bb16bfbf55eeb62bb900a8b669"
+        "deployIssuer": "0x0704e5f8f15e25807d1fac0ef1f42d4ad31b38ae495804df262a51bdaa969fb7",
+        "deployCompanySponsor": "0x0fa711c29cdbfc830fb43f3ac916876b9846cae46b5baf56e781f33fd6f7c8d7",
+        "deployConsumer": "0x16f638b3640f8c5c1f0bf7d5458e1eab1571ae15a94814eb7796f7b3aa2f8292",
+        "seedSponsorRights": "0x16c99dfbd130ceb16bf717105e69d7521006490e73535a4f764315456bf10f6d",
+        "sponsorFeeJuiceClaim": "0x2105ca7bb10e03dcf916ce9f6e3027e9cf80320e77cf7c3078cb2d3a7eee2a80"
       }
     }
   },
@@ -63,7 +63,7 @@
     "packageIdDefault": "0x0000000000000000000000000000000000000000000000000000000000000001"
   },
   "timestamps": {
-    "deployedAt": "2026-04-15T22:42:16.418Z",
-    "webBootstrappedAt": "2026-04-15T22:43:24.609Z"
+    "deployedAt": "2026-04-20T22:46:53.509Z",
+    "webBootstrappedAt": "2026-04-20T22:48:11.790Z"
   }
 }

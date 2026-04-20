@@ -82,12 +82,38 @@ export type VerifyAndRefreshRootAuthorityPayload = {
   ageThreshold: number;
 };
 
+export type VerifyRootRecoveryPreflightPayload = {
+  proofs: ProofResult[];
+  originalQuery: Query;
+  queryResult: QueryResult;
+  expectedGhostOwner: string;
+  ghostDerivationVersion?: GhostDerivationVersion;
+  ageThreshold: number;
+};
+
 export type VerifyAndRefreshRootAuthorityResponse = {
   renewalTxHash?: string;
   ghostOwner: string;
   rootCommitment: string;
   claimsHash: string;
   orchestratorAddress: string;
+  verificationSummary: {
+    verified: true;
+    uniqueIdentifierPresent: true;
+  };
+  normalizedClaims: {
+    nationalityAlpha3: string;
+    minAgeProven: number;
+    passportExpiryDate: string;
+    expiryTs: string;
+  };
+};
+
+export type VerifyRootRecoveryPreflightResponse = {
+  expectedGhostOwner: string;
+  derivedGhostOwner: string;
+  ghostDerivationVersion: GhostDerivationVersion;
+  matchesExpectedGhostOwner: true;
   verificationSummary: {
     verified: true;
     uniqueIdentifierPresent: true;
@@ -292,6 +318,17 @@ export async function verifyAndRefreshRootAuthorityThroughBackend(
   return await postVerificationApi<VerifyAndRefreshRootAuthorityResponse>(
     verificationApiUrl,
     "/zkpassport/verify-and-refresh-root-authority",
+    payload,
+  );
+}
+
+export async function verifyRootRecoveryPreflightThroughBackend(
+  verificationApiUrl: string,
+  payload: VerifyRootRecoveryPreflightPayload,
+): Promise<VerifyRootRecoveryPreflightResponse> {
+  return await postVerificationApi<VerifyRootRecoveryPreflightResponse>(
+    verificationApiUrl,
+    "/zkpassport/verify-for-root-recovery",
     payload,
   );
 }

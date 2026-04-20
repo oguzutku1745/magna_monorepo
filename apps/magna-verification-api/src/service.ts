@@ -57,6 +57,15 @@ export type VerifyAndRefreshRootAuthorityRequest = {
   ageThreshold?: number;
 };
 
+export type VerifyRootRecoveryPreflightRequest = {
+  proofs: ProofResult[];
+  originalQuery: Query;
+  queryResult: QueryResult;
+  expectedGhostOwner: string;
+  ghostDerivationVersion?: GhostDerivationVersion;
+  ageThreshold?: number;
+};
+
 export type VerifyAndIssueResponse = {
   issuanceTxHash?: string;
   ghostOwner: string;
@@ -83,6 +92,23 @@ export type VerifyAndRefreshRootAuthorityResponse = {
   rootCommitment: string;
   claimsHash: string;
   orchestratorAddress: string;
+  verificationSummary: {
+    verified: true;
+    uniqueIdentifierPresent: true;
+  };
+  normalizedClaims: {
+    nationalityAlpha3: string;
+    minAgeProven: number;
+    passportExpiryDate: string;
+    expiryTs: string;
+  };
+};
+
+export type VerifyRootRecoveryPreflightResponse = {
+  expectedGhostOwner: string;
+  derivedGhostOwner: string;
+  ghostDerivationVersion: GhostDerivationVersion;
+  matchesExpectedGhostOwner: true;
   verificationSummary: {
     verified: true;
     uniqueIdentifierPresent: true;
@@ -410,6 +436,12 @@ export function resolveGhostDerivationVersion(
   return mode === "rooted" ? "v2_scoped" : "v1_legacy_unscoped";
 }
 
+export function resolveRootRecoveryGhostDerivationVersion(
+  inputVersion: GhostDerivationVersion | undefined,
+): GhostDerivationVersion {
+  return inputVersion ?? "v2_scoped";
+}
+
 function readTxHash(receipt: unknown): string | undefined {
   if (!receipt || typeof receipt !== "object") {
     return undefined;
@@ -669,6 +701,44 @@ export async function verifyAndRefreshRootAuthority(
     rootCommitment,
     claimsHash: claimsHash.toString(),
     orchestratorAddress: context.orchestratorAddress.toString(),
+    verificationSummary: {
+      verified: true,
+      uniqueIdentifierPresent: true,
+    },
+    normalizedClaims: {
+      nationalityAlpha3: normalized.nationalityAlpha3,
+      minAgeProven: normalized.claims.minAgeProven,
+      passportExpiryDate: normalized.passportExpiryDate,
+      expiryTs: normalized.claims.expiryTs.toString(),
+    },
+  };
+}
+
+export async function verifyRootRecoveryPreflight(
+  config: VerificationApiConfig,
+  input: VerifyRootRecoveryPreflightRequest,
+  dependencies?: {
+    verifyPassportClaims?: typeof verifyZkPassportPassportClaims;
+    deriveGhostOwner?: typeof deriveGhostOwnerAddress;
+  },
+): Promise<VerifyRootRecoveryPreflightResponse> {
+  const expectedGhostOwner = requireString(input.expectedGhostOwner, "expectedGhostOwner");
+  const ghostDerivationVersion = resolveRootRecoveryGhostDerivationVersion(input.ghostDerivationVersion);
+  const verifyPassportClaims = dependencies?.verifyPassportClaims ?? verifyZkPassportPassportClaims;
+  const deriveGhostOwner = dependencies?.deriveGhostOwner ?? deriveGhostOwnerAddress;
+  const { verification, normalized } = await verifyPassportClaims(config, input);
+  const derivedGhostOwner = await deriveGhostOwner(verification.uniqueIdentifier, ghostDerivationVersion);
+  if (derivedGhostOwner !== expectedGhostOwner) {
+    throw new Error(
+      `Fresh zkPassport proof does not match the configured ghost owner. expected=${expectedGhostOwner} derived=${derivedGhostOwner}`,
+    );
+  }
+
+  return {
+    expectedGhostOwner,
+    derivedGhostOwner,
+    ghostDerivationVersion,
+    matchesExpectedGhostOwner: true,
     verificationSummary: {
       verified: true,
       uniqueIdentifierPresent: true,
