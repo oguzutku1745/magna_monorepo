@@ -30,6 +30,7 @@ export type VerificationApiConfig = {
   port: number;
   allowedOrigin: string;
   zkPassportDomain: string;
+  zkPassportScope: string;
   zkPassportDevMode: boolean;
   aztecNodeUrl: string;
   issuerAddress: string;
@@ -226,6 +227,8 @@ export function loadVerificationApiConfigFromEnv(): VerificationApiConfig {
     allowedOrigin: process.env.MAGNA_VERIFICATION_ALLOWED_ORIGIN?.trim() || "*",
     // For local dev we default to localhost if no explicit domain is provided.
     zkPassportDomain: readFirstEnv(["MAGNA_ZKPASSPORT_DOMAIN"]) ?? "localhost",
+    zkPassportScope:
+      readFirstEnv(["MAGNA_ZKPASSPORT_SCOPE", "VITE_MAGNA_ZKPASSPORT_REQUEST_SCOPE"]) ?? "magna-passport-onboarding",
     zkPassportDevMode: parseBoolean(
       readFirstEnv(["MAGNA_ZKPASSPORT_DEV_MODE", "VITE_MAGNA_ZKPASSPORT_DEV_MODE"]),
       false,
@@ -573,6 +576,7 @@ async function verifyZkPassportPassportClaims(
     proofs: input.proofs,
     originalQuery: input.originalQuery,
     queryResult: input.queryResult,
+    scope: config.zkPassportScope,
     devMode: config.zkPassportDevMode,
   });
   const verification = toZkPassportResult(verificationRaw);

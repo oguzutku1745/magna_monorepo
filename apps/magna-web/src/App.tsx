@@ -1100,9 +1100,15 @@ export function App() {
     }
   };
 
+  const isAwaitingReissue = recoveryStage === "completed" && !lastIssuedPassportRef;
+
   const handleFetchHints = async () => {
     if (!activeAccount) {
       setError("Choose an active account before fetching hinted notes.");
+      return;
+    }
+    if (isAwaitingReissue) {
+      setStatusMessage("Recovery complete — re-issue your rooted passport (scan again) before fetching hints.");
       return;
     }
     if (activeZkRequest || activeGhostContextRequest || activeRenewalRequest || activeRecoveryRequest) {
@@ -2253,10 +2259,10 @@ export function App() {
         >
           <button
             data-testid="fetch-hints"
-            disabled={busyAction !== null || !activeAccount || !env.issuerAddress || hasActiveZkPassportRequest}
+            disabled={busyAction !== null || !activeAccount || !env.issuerAddress || hasActiveZkPassportRequest || isAwaitingReissue}
             onClick={() => void handleFetchHints()}
           >
-            Fetch hinted notes
+            {isAwaitingReissue ? "Re-issue required before fetching hints" : "Fetch hinted notes"}
           </button>
           {hints ? (
             <div className="sub-card">

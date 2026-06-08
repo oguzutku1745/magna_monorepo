@@ -17,7 +17,10 @@ describe("packAlpha3", () => {
 
 describe("instagram hashing", () => {
   it("matches zkPoke username hashing for deterministic handle binding", () => {
-    assert.equal(computeInstagramHandleHash("denemedeneme581"), 10314n);
+    assert.equal(
+      computeInstagramHandleHash("denemedeneme581"),
+      21800137438672550822996462157901125537325126536773334526859055600762133677092n,
+    );
   });
 
   it("changes claims hash when the handle hash changes", () => {

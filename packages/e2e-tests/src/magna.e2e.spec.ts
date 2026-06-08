@@ -36,6 +36,12 @@ import {
   MagnaVerifyMeterHookContract,
   MagnaIssuerContract,
 } from "@magna/contracts-bindings";
+import {
+  CredentialType,
+  computeInstagramClaimsHash,
+  computeInstagramHandleHash,
+  poseidon2FieldHasher,
+} from "@magna/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const runE2E = process.env.AZTEC_E2E === "1";
@@ -407,32 +413,6 @@ function computeClaimsHash(
       BigInt(credentialType),
       nationalityPacked,
       BigInt(minAgeProven),
-      expiryTs,
-    ],
-    MAGNA_CLAIMS_DS,
-  ).toBigInt();
-}
-
-function computeInstagramHandleHash(handle: string): bigint {
-  const bytes = Buffer.from(handle, "utf8");
-  let sum = 0n;
-  for (let i = 0; i < bytes.length; i += 1) {
-    sum += BigInt(bytes[i] ?? 0) * BigInt(i + 1);
-  }
-  return sum;
-}
-
-function computeInstagramClaimsHash(
-  schemaVersion: bigint,
-  credentialType: number,
-  handleHash: bigint,
-  expiryTs: bigint,
-): bigint {
-  return poseidon2HashWithSeparator(
-    [
-      schemaVersion,
-      BigInt(credentialType),
-      handleHash,
       expiryTs,
     ],
     MAGNA_CLAIMS_DS,
@@ -2146,10 +2126,13 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
     const instagramHandleHash = computeInstagramHandleHash("denemedeneme581");
     const instagramExpiryTs = 2_393_456_000n;
     const instagramClaimsHash = computeInstagramClaimsHash(
-      1n,
-      instagramCredentialType,
-      instagramHandleHash,
-      instagramExpiryTs,
+      {
+        schemaVersion: 1,
+        credentialType: CredentialType.Instagram,
+        handleHash: instagramHandleHash,
+        expiryTs: instagramExpiryTs,
+      },
+      poseidon2FieldHasher,
     );
     const rootCommitment = 555_555n;
     const authorityClaimsHash = computeClaimsHash(
@@ -2308,10 +2291,13 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
     const instagramHandleHash = computeInstagramHandleHash("expiredauthority581");
     const instagramExpiryTs = 2_393_456_000n;
     const instagramClaimsHash = computeInstagramClaimsHash(
-      1n,
-      instagramCredentialType,
-      instagramHandleHash,
-      instagramExpiryTs,
+      {
+        schemaVersion: 1,
+        credentialType: CredentialType.Instagram,
+        handleHash: instagramHandleHash,
+        expiryTs: instagramExpiryTs,
+      },
+      poseidon2FieldHasher,
     );
     const rootCommitment = 666_666n;
     const expiredAuthorityExpiryTs = 1n;
@@ -2430,10 +2416,13 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
     const instagramExpiryTs = 2_393_456_000n;
     const refreshedAuthorityExpiryTs = 2_493_456_000n;
     const instagramClaimsHash = computeInstagramClaimsHash(
-      1n,
-      instagramCredentialType,
-      instagramHandleHash,
-      instagramExpiryTs,
+      {
+        schemaVersion: 1,
+        credentialType: CredentialType.Instagram,
+        handleHash: instagramHandleHash,
+        expiryTs: instagramExpiryTs,
+      },
+      poseidon2FieldHasher,
     );
     const rootCommitment = 777_777n;
     const initialAuthorityClaimsHash = computeClaimsHash(

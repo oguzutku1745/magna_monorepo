@@ -125,6 +125,7 @@ describe("loadVerificationApiConfigFromEnv", () => {
 
     const config = loadVerificationApiConfigFromEnv();
     expect(config.zkPassportDomain).toBe("localhost");
+    expect(config.zkPassportScope).toBe("magna-passport-onboarding");
     expect(config.zkPassportDevMode).toBe(false);
     expect(config.issuerAddress).toBe("0xissuer");
     expect(config.aztecNodeUrl).toBe("http://localhost:8080");
@@ -193,6 +194,7 @@ describe("verifyRootRecoveryPreflight", () => {
     port: 4310,
     allowedOrigin: "*",
     zkPassportDomain: "localhost",
+    zkPassportScope: "magna-passport-onboarding",
     zkPassportDevMode: true,
     aztecNodeUrl: "http://localhost:8080",
     issuerAddress: "0xissuer",

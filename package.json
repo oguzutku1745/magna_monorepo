@@ -13,6 +13,7 @@
     "lint": "npm run -ws lint",
     "verification-api:dev": "npm run -w @magna/verification-api dev",
     "web:bootstrap:local": "node ./scripts/bootstrap-web-local.mjs",
+    "fund:fee-juice": "node ./scripts/fund-fee-juice.mjs",
     "vectors:sync": "node ./scripts/sync-golden-vectors.mjs",
     "aztec:version": "VERSION=4.2.0-aztecnr-rc.2 aztec --version",
     "compile:issuer": "node ./scripts/aztec-tooling.mjs compile ./contracts/magna-issuer",
@@ -43,7 +44,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@zkpassport/sdk": "^0.13.0",
+    "@zkpassport/sdk": "0.15.1",
     "react-qr-code": "^2.0.18"
   }
 }

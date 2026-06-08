@@ -10,6 +10,7 @@ export const MAGNA_CLAIMS_DS = 0x4d414743n; // "MAGC"
 export const MAGNA_REVOCATION_DS = 0x4d415247n; // "MARG"
 export const MAGNA_ROOT_AUTHORITY_REVOCATION_DS = 0x4d415241n; // "MARA"
 export const MAGNA_GHOST_DS = 0x4d414748n; // "MAGH"
+export const MAGNA_INSTAGRAM_HANDLE_DS = 0x4d414948n; // "MAIH"
 export const MAGNA_ROOT_DS = 0x4d414749n; // "MAGI"
 // Backward-compatible alias.
 export const MAGNA_RECOVERY_DS = MAGNA_GHOST_DS;
@@ -42,16 +43,21 @@ export function computePassportClaimsHash(
   ]);
 }
 
-function simpleIndexedByteHash(bytes: Uint8Array): bigint {
-  let sum = 0n;
-  for (let i = 0; i < bytes.length; i += 1) {
-    sum += BigInt(bytes[i] ?? 0) * BigInt(i + 1);
-  }
-  return sum;
-}
-
 export function computeInstagramHandleHash(handle: string): bigint {
-  return simpleIndexedByteHash(textEncoder.encode(handle));
+  const bytes = textEncoder.encode(handle);
+  if (bytes.length > 31) {
+    throw new Error(
+      `instagram handle does not fit in a single field: ${bytes.length} bytes (max 31)`,
+    );
+  }
+  let packed = 0n;
+  for (const byte of bytes) {
+    packed = (packed << 8n) | BigInt(byte);
+  }
+  return poseidon2FieldHasher(MAGNA_INSTAGRAM_HANDLE_DS, [
+    BigInt(bytes.length),
+    packed,
+  ]);
 }
 
 export function computeInstagramClaimsHash(
