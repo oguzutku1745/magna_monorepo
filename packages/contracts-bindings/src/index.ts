@@ -21,6 +21,10 @@ export {
   MagnaRightsPurchaseL2Contract,
   MagnaRightsPurchaseL2ContractArtifact,
 } from "./MagnaRightsPurchaseL2.js";
+export {
+  MagnaWebAuthnAccountContract,
+  MagnaWebAuthnAccountContractArtifact,
+} from "./MagnaWebAuthnAccount.js";
 
 export type ContractMethod = (...args: unknown[]) => ContractFunctionInteraction;
 export type ContractLike = {

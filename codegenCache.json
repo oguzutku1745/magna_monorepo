@@ -26,5 +26,9 @@
   "magna_rights_purchase_l2-MagnaRightsPurchaseL2.json": {
     "contractName": "MagnaRightsPurchaseL2",
     "hash": "cab2f67e5ac0be2a5c3292e7d7903fcd26bfe1211386ff52452ec549be3d1d9b"
+  },
+  "magna_webauthn_account-MagnaWebAuthnAccount.json": {
+    "contractName": "MagnaWebAuthnAccount",
+    "hash": "d0bdf7471724893cbd0bb9c5f8e8952b19bd9039939150557e158b52ef5e541f"
   }
 }
