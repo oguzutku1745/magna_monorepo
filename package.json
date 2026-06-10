@@ -29,6 +29,7 @@
     "test:contracts:issuer": "node ./scripts/aztec-tooling.mjs test ./contracts/magna-issuer",
     "test:contracts:company-rights-registry": "node ./scripts/aztec-tooling.mjs test ./contracts/magna-company-rights-registry",
     "test:contracts:company-sponsor": "node ./scripts/aztec-tooling.mjs test ./contracts/magna-company-sponsor",
+    "test:contracts:webauthn": "node ./scripts/aztec-tooling.mjs test ./contracts/magna-webauthn",
     "test:client": "npm run -w @magna/client test",
     "test:ci": "npm run vectors:sync && npm run test:contracts:verify-meter-hook && npm run test:contracts:issuer && npm run test:contracts:company-rights-registry && npm run test:contracts:company-sponsor && npm run test:client",
     "codegen:issuer": "node ./scripts/aztec-tooling.mjs codegen ./contracts/magna-issuer ./packages/contracts-bindings/src",
