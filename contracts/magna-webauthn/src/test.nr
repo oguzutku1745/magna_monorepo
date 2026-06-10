@@ -1,5 +1,9 @@
 use crate::base64url::base64url_encode_32;
 use crate::verify::compute_webauthn_message_hash;
+use crate::envelope::{
+    assert_authenticator_flags, assert_no_cross_origin_true, assert_origin_at,
+    assert_rp_id_hash, assert_type_and_challenge,
+};
 
 #[test]
 fn test_base64url_encode_all_zero() {
@@ -100,4 +104,123 @@ fn test_tampered_client_data_changes_hash() {
         FIX_PUBKEY_X, FIX_PUBKEY_Y, FIX_SIGNATURE, message_hash,
     );
     assert(!ok);
+}
+
+
+fn fixture_rp_id_hash() -> [u8; 32] {
+    let mut h: [u8; 32] = [0; 32];
+    for i in 0..32 {
+        h[i] = FIX_AD_BYTES[i];
+    }
+    h
+}
+
+fn fixture_origin() -> ([u8; 64], u32) {
+    let origin_str = "http://localhost:5184".as_bytes(); // [u8; 21]
+    let mut origin: [u8; 64] = [0; 64];
+    for i in 0..21 {
+        origin[i] = origin_str[i];
+    }
+    (origin, 21)
+}
+
+#[test]
+fn test_type_and_challenge_pass_on_fixture() {
+    assert_type_and_challenge(fixture_cdj(), FIX_CHALLENGE);
+}
+
+#[test(should_fail)]
+fn test_wrong_challenge_fails() {
+    let mut wrong = FIX_CHALLENGE;
+    wrong[0] = wrong[0] + 1;
+    assert_type_and_challenge(fixture_cdj(), wrong);
+}
+
+#[test(should_fail)]
+fn test_wrong_type_fails() {
+    let mut cdj_bytes = FIX_CDJ_BYTES;
+    cdj_bytes[9] = 88; // 'w' of webauthn.get -> 'X'
+    let mut cdj: BoundedVec<u8, 256> = BoundedVec::new();
+    for i in 0..134 { cdj.push(cdj_bytes[i]); }
+    assert_type_and_challenge(cdj, FIX_CHALLENGE);
+}
+
+#[test]
+fn test_origin_passes_on_fixture() {
+    let (origin, origin_len) = fixture_origin();
+    assert_origin_at(fixture_cdj(), 81, origin, origin_len);
+}
+
+#[test(should_fail)]
+fn test_wrong_origin_fails() {
+    let mut origin: [u8; 64] = [0; 64];
+    let evil = "http://localhost:5185".as_bytes();
+    for i in 0..21 { origin[i] = evil[i]; }
+    assert_origin_at(fixture_cdj(), 81, origin, 21);
+}
+
+#[test(should_fail)]
+fn test_origin_prefix_attack_fails() {
+    // Claimed origin is a strict prefix of the real one; must fail the
+    // closing-quote check (next char is '4', not '"').
+    let mut origin: [u8; 64] = [0; 64];
+    let prefix = "http://localhost:518".as_bytes();
+    for i in 0..20 { origin[i] = prefix[i]; }
+    assert_origin_at(fixture_cdj(), 81, origin, 20);
+}
+
+#[test]
+fn test_cross_origin_false_fixture_passes_scan() {
+    assert_no_cross_origin_true(fixture_cdj());
+}
+
+#[test(should_fail)]
+fn test_cross_origin_true_fails_scan() {
+    let target = "{\"type\":\"webauthn.get\",\"challenge\":\"ULLEP9ORBrr7ug2jT8Qw4fkePJbqKs7ivDQRn5Kzd1A\",\"origin\":\"http://localhost:5184\",\"crossOrigin\":true}"
+        .as_bytes();
+    let mut v: BoundedVec<u8, 256> = BoundedVec::new();
+    for i in 0..target.len() { v.push(target[i]); }
+    assert_no_cross_origin_true(v);
+}
+
+#[test]
+fn test_rp_id_hash_passes_on_fixture() {
+    assert_rp_id_hash(fixture_ad(), fixture_rp_id_hash());
+}
+
+#[test(should_fail)]
+fn test_wrong_rp_id_hash_fails() {
+    let mut wrong = fixture_rp_id_hash();
+    wrong[31] = wrong[31] + 1;
+    assert_rp_id_hash(fixture_ad(), wrong);
+}
+
+#[test]
+fn test_flags_pass_on_fixture() {
+    assert_authenticator_flags(fixture_ad());
+}
+
+#[test(should_fail)]
+fn test_missing_uv_flag_fails() {
+    let mut ad_bytes = FIX_AD_BYTES;
+    ad_bytes[32] = 0x01; // UP only
+    let mut v: BoundedVec<u8, 64> = BoundedVec::new();
+    for i in 0..37 { v.push(ad_bytes[i]); }
+    assert_authenticator_flags(v);
+}
+
+#[test(should_fail)]
+fn test_missing_up_flag_fails() {
+    let mut ad_bytes = FIX_AD_BYTES;
+    ad_bytes[32] = 0x04; // UV only
+    let mut v: BoundedVec<u8, 64> = BoundedVec::new();
+    for i in 0..37 { v.push(ad_bytes[i]); }
+    assert_authenticator_flags(v);
+}
+
+#[test(should_fail)]
+fn test_short_authenticator_data_fails() {
+    let mut v: BoundedVec<u8, 64> = BoundedVec::new();
+    for i in 0..32 { v.push(FIX_AD_BYTES[i]); }
+    assert_authenticator_flags(v);
 }
