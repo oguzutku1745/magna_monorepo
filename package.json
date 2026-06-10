@@ -21,15 +21,17 @@
     "compile:company-sponsor": "node ./scripts/aztec-tooling.mjs compile ./contracts/magna-company-sponsor",
     "compile:verify-meter-hook": "node ./scripts/aztec-tooling.mjs compile ./contracts/magna-verify-meter-hook",
     "compile:consumer": "node ./scripts/aztec-tooling.mjs compile ./contracts/magna-consumer",
+    "compile:webauthn-account": "node ./scripts/aztec-tooling.mjs compile ./contracts/magna-webauthn-account",
     "compile:verify-meter-hook-instant": "node ./scripts/aztec-tooling.mjs compile ./contracts/magna-verify-meter-hook-instant",
     "compile:rights-purchase-l2": "node ./scripts/aztec-tooling.mjs compile ./contracts/magna-rights-purchase-l2",
-    "compile:contracts": "npm run compile:issuer && npm run compile:company-rights-registry && npm run compile:company-sponsor && npm run compile:verify-meter-hook && npm run compile:consumer && npm run compile:verify-meter-hook-instant && npm run compile:rights-purchase-l2",
+    "compile:contracts": "npm run compile:issuer && npm run compile:company-rights-registry && npm run compile:company-sponsor && npm run compile:verify-meter-hook && npm run compile:consumer && npm run compile:verify-meter-hook-instant && npm run compile:rights-purchase-l2 && npm run compile:webauthn-account",
     "magna:testnet": "node ./scripts/magna-testnet-validate.mjs",
     "test:contracts:verify-meter-hook": "node ./scripts/aztec-tooling.mjs test ./contracts/magna-verify-meter-hook",
     "test:contracts:issuer": "node ./scripts/aztec-tooling.mjs test ./contracts/magna-issuer",
     "test:contracts:company-rights-registry": "node ./scripts/aztec-tooling.mjs test ./contracts/magna-company-rights-registry",
     "test:contracts:company-sponsor": "node ./scripts/aztec-tooling.mjs test ./contracts/magna-company-sponsor",
     "test:contracts:webauthn": "node ./scripts/aztec-tooling.mjs test ./contracts/magna-webauthn",
+    "test:contracts:webauthn-account": "node ./scripts/aztec-tooling.mjs test ./contracts/magna-webauthn-account",
     "test:client": "npm run -w @magna/client test",
     "test:ci": "npm run vectors:sync && npm run test:contracts:verify-meter-hook && npm run test:contracts:issuer && npm run test:contracts:company-rights-registry && npm run test:contracts:company-sponsor && npm run test:client",
     "codegen:issuer": "node ./scripts/aztec-tooling.mjs codegen ./contracts/magna-issuer ./packages/contracts-bindings/src",
@@ -37,9 +39,10 @@
     "codegen:company-sponsor": "node ./scripts/aztec-tooling.mjs codegen ./contracts/magna-company-sponsor ./packages/contracts-bindings/src",
     "codegen:verify-meter-hook": "node ./scripts/aztec-tooling.mjs codegen ./contracts/magna-verify-meter-hook ./packages/contracts-bindings/src",
     "codegen:consumer": "node ./scripts/aztec-tooling.mjs codegen ./contracts/magna-consumer ./packages/contracts-bindings/src",
+    "codegen:webauthn-account": "node ./scripts/aztec-tooling.mjs codegen ./contracts/magna-webauthn-account ./packages/contracts-bindings/src",
     "codegen:verify-meter-hook-instant": "node ./scripts/aztec-tooling.mjs codegen ./contracts/magna-verify-meter-hook-instant ./packages/contracts-bindings/src",
     "codegen:rights-purchase-l2": "node ./scripts/aztec-tooling.mjs codegen ./contracts/magna-rights-purchase-l2 ./packages/contracts-bindings/src",
-    "codegen:contracts": "npm run codegen:issuer && npm run codegen:company-rights-registry && npm run codegen:company-sponsor && npm run codegen:verify-meter-hook && npm run codegen:consumer && npm run codegen:verify-meter-hook-instant && npm run codegen:rights-purchase-l2"
+    "codegen:contracts": "npm run codegen:issuer && npm run codegen:company-rights-registry && npm run codegen:company-sponsor && npm run codegen:verify-meter-hook && npm run codegen:consumer && npm run codegen:verify-meter-hook-instant && npm run codegen:rights-purchase-l2 && npm run codegen:webauthn-account"
   },
   "engines": {
     "node": ">=20"

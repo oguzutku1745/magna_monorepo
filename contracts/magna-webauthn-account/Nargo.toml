@@ -1,0 +1,10 @@
+[package]
+name = "magna_webauthn_account"
+authors = [""]
+compiler_version = ">=0.25.0"
+type = "contract"
+
+[dependencies]
+aztec = { git = "https://github.com/AztecProtocol/aztec-packages/", tag = "v4.2.0-aztecnr-rc.2", directory = "noir-projects/aztec-nr/aztec" }
+magna_webauthn = { path = "../magna-webauthn" }
+sha256 = { tag = "v0.3.0", git = "https://github.com/noir-lang/sha256" }
