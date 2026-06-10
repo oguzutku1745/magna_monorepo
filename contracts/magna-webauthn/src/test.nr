@@ -273,3 +273,38 @@ fn test_wrong_challenge_fails_envelope() {
         fixture_rp_id_hash(), origin, origin_len,
     );
 }
+
+
+#[test]
+fn test_generated_assertion_verifies() {
+    let mut ad: BoundedVec<u8, 64> = BoundedVec::new();
+    for i in 0..37 {
+        ad.push(crate::generated_fixtures::GEN_AD[i]);
+    }
+    let mut cdj: BoundedVec<u8, 256> = BoundedVec::new();
+    for i in 0..crate::generated_fixtures::GEN_CDJ_LEN {
+        cdj.push(crate::generated_fixtures::GEN_CDJ[i]);
+    }
+    let envelope = WebAuthnEnvelope {
+        authenticator_data: ad,
+        client_data_json: cdj,
+        signature: crate::generated_fixtures::GEN_SIGNATURE,
+        origin_index: crate::generated_fixtures::GEN_ORIGIN_INDEX,
+    };
+    let rp_id_hash = sha256::digest("localhost".as_bytes());
+    let mut origin: [u8; 64] = [0; 64];
+    let origin_str = "http://localhost:5184".as_bytes();
+    for i in 0..21 {
+        origin[i] = origin_str[i];
+    }
+    let ok = verify_webauthn_get_assertion(
+        envelope,
+        crate::generated_fixtures::GEN_PUBKEY_X,
+        crate::generated_fixtures::GEN_PUBKEY_Y,
+        crate::generated_fixtures::GEN_CHALLENGE,
+        rp_id_hash,
+        origin,
+        21,
+    );
+    assert(ok);
+}

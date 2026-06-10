@@ -15,6 +15,7 @@
     "web:bootstrap:local": "node ./scripts/bootstrap-web-local.mjs",
     "fund:fee-juice": "node ./scripts/fund-fee-juice.mjs",
     "vectors:sync": "node ./scripts/sync-golden-vectors.mjs",
+    "vectors:webauthn": "node ./scripts/gen-webauthn-fixtures.mjs",
     "aztec:version": "VERSION=4.2.0-aztecnr-rc.2 aztec --version",
     "compile:issuer": "node ./scripts/aztec-tooling.mjs compile ./contracts/magna-issuer",
     "compile:company-rights-registry": "node ./scripts/aztec-tooling.mjs compile ./contracts/magna-company-rights-registry",

@@ -1,4 +1,5 @@
 mod base64url;
+mod generated_fixtures;
 pub mod envelope;
 mod test;
 mod verify;
