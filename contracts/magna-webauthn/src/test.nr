@@ -1,5 +1,6 @@
 use crate::base64url::base64url_encode_32;
 use crate::verify::compute_webauthn_message_hash;
+use crate::{verify_webauthn_get_assertion, WebAuthnEnvelope};
 use crate::envelope::{
     assert_authenticator_flags, assert_no_cross_origin_true, assert_origin_at,
     assert_rp_id_hash, assert_type_and_challenge,
@@ -64,6 +65,14 @@ global FIX_AD_BYTES: [u8; 37] = [
 global FIX_CHALLENGE: [u8; 32] = [
     80, 178, 196, 63, 211, 145, 6, 186, 251, 186, 13, 163, 79, 196, 48, 225, 249, 30, 60, 150,
     234, 42, 206, 226, 188, 52, 17, 159, 146, 179, 119, 80,
+];
+global OTHER_VALID_PUBKEY_X: [u8; 32] = [
+    139, 86, 118, 230, 15, 13, 30, 204, 6, 133, 248, 82, 54, 101, 178, 189, 126, 170,
+    84, 48, 0, 106, 149, 40, 133, 99, 30, 73, 2, 210, 205, 200,
+];
+global OTHER_VALID_PUBKEY_Y: [u8; 32] = [
+    184, 8, 42, 248, 97, 207, 125, 175, 201, 50, 10, 102, 148, 60, 53, 169, 208, 70,
+    112, 255, 179, 218, 110, 33, 33, 135, 156, 9, 30, 230, 17, 26,
 ];
 
 pub fn fixture_cdj() -> BoundedVec<u8, 256> {
@@ -223,4 +232,44 @@ fn test_short_authenticator_data_fails() {
     let mut v: BoundedVec<u8, 64> = BoundedVec::new();
     for i in 0..32 { v.push(FIX_AD_BYTES[i]); }
     assert_authenticator_flags(v);
+}
+
+fn fixture_envelope() -> WebAuthnEnvelope<256, 64> {
+    WebAuthnEnvelope {
+        authenticator_data: fixture_ad(),
+        client_data_json: fixture_cdj(),
+        signature: FIX_SIGNATURE,
+        origin_index: 81,
+    }
+}
+
+#[test]
+fn test_full_assertion_verifies() {
+    let (origin, origin_len) = fixture_origin();
+    let ok = verify_webauthn_get_assertion(
+        fixture_envelope(), FIX_PUBKEY_X, FIX_PUBKEY_Y, FIX_CHALLENGE,
+        fixture_rp_id_hash(), origin, origin_len,
+    );
+    assert(ok);
+}
+
+#[test]
+fn test_wrong_public_key_fails_signature() {
+    let (origin, origin_len) = fixture_origin();
+    let ok = verify_webauthn_get_assertion(
+        fixture_envelope(), OTHER_VALID_PUBKEY_X, OTHER_VALID_PUBKEY_Y, FIX_CHALLENGE,
+        fixture_rp_id_hash(), origin, origin_len,
+    );
+    assert(!ok);
+}
+
+#[test(should_fail)]
+fn test_wrong_challenge_fails_envelope() {
+    let (origin, origin_len) = fixture_origin();
+    let mut wrong = FIX_CHALLENGE;
+    wrong[5] = wrong[5] + 1;
+    let _ = verify_webauthn_get_assertion(
+        fixture_envelope(), FIX_PUBKEY_X, FIX_PUBKEY_Y, wrong,
+        fixture_rp_id_hash(), origin, origin_len,
+    );
 }
