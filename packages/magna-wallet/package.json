@@ -1,0 +1,24 @@
+{
+  "name": "@magna/wallet",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/**/*.spec.js",
+    "lint": "echo \"no lint configured\""
+  },
+  "peerDependencies": {
+    "@aztec/aztec.js": "4.2.0-aztecnr-rc.2"
+  },
+  "dependencies": {
+    "@aztec/accounts": "4.2.0-aztecnr-rc.2",
+    "@aztec/foundation": "4.2.0-aztecnr-rc.2",
+    "@magna/contracts-bindings": "0.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}
