@@ -33,6 +33,7 @@ pub contract MagnaIssuer {
             MAGNA_REVOCATION_DS,
             MAGNA_ROOT_AUTHORITY_REVOCATION_DS,
             MAGNA_ROOT_REVOCATION_DS,
+            MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS,
             MAGNA_SPONSOR_POLICY_DELAY_SECONDS,
             MAGNA_SPONSOR_GATEWAY_DELAY_SECONDS,
             MAGNA_SPONSOR_RL_DS,
@@ -85,7 +86,16 @@ pub contract MagnaIssuer {
             DelayedPublicMutable<bool, MAGNA_SPONSOR_GATEWAY_DELAY_SECONDS, Context>,
             Context,
         >,
-        consumer_gateway: PublicImmutable<AztecAddress, Context>,
+        consumer_gateways: Map<
+            AztecAddress,
+            DelayedPublicMutable<bool, MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS, Context>,
+            Context,
+        >,
+        disabled_consumer_gateways: Map<
+            AztecAddress,
+            DelayedPublicMutable<bool, MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS, Context>,
+            Context,
+        >,
         // Sponsorship policy that is readable in private.
         // - sponsored_credential_type_mask: bitmask of supported credential types
         sponsored_credential_type_mask: DelayedPublicMutable<u64, MAGNA_SPONSOR_POLICY_DELAY_SECONDS, Context>,
@@ -132,10 +142,18 @@ pub contract MagnaIssuer {
     }
 
     #[external("public")]
-    fn initialize_consumer_gateway(gateway: AztecAddress) {
+    fn add_consumer_gateway(gateway: AztecAddress) {
         assert_orchestrator_sender(self.msg_sender(), self.storage.orchestrator.read());
         assert(gateway != AztecAddress::zero(), "gateway must be non-zero");
-        self.storage.consumer_gateway.initialize(gateway);
+        self.storage.consumer_gateways.at(gateway).schedule_value_change(true);
+    }
+
+    #[external("public")]
+    fn remove_consumer_gateway(gateway: AztecAddress) {
+        assert_orchestrator_sender(self.msg_sender(), self.storage.orchestrator.read());
+        assert(gateway != AztecAddress::zero(), "gateway must be non-zero");
+        self.storage.consumer_gateways.at(gateway).schedule_value_change(false);
+        self.storage.disabled_consumer_gateways.at(gateway).schedule_value_change(true);
     }
 
     #[external("public")]
@@ -153,8 +171,9 @@ pub contract MagnaIssuer {
 
     #[external("public")]
     #[view]
-    fn get_consumer_gateway() -> AztecAddress {
-        self.storage.consumer_gateway.read()
+    fn is_consumer_gateway(gateway: AztecAddress) -> bool {
+        self.storage.consumer_gateways.at(gateway).get_current_value() &
+            !self.storage.disabled_consumer_gateways.at(gateway).get_current_value()
     }
 
     #[external("utility")]
@@ -415,8 +434,10 @@ pub contract MagnaIssuer {
         sponsor_slot: u8,
     ) {
         assert(caller != AztecAddress::zero(), "caller must be non-zero");
-        let gateway = self.storage.consumer_gateway.read();
-        assert(self.msg_sender() == gateway, "consumer only");
+        let sender = self.msg_sender();
+        let allowlisted = self.storage.consumer_gateways.at(sender).get_current_value();
+        let disabled = self.storage.disabled_consumer_gateways.at(sender).get_current_value();
+        assert(allowlisted & !disabled, "consumer only");
         self.internal.verify_for_caller(
             caller,
             policy,

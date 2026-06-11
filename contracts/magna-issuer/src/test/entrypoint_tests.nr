@@ -1,7 +1,7 @@
 use crate::MagnaIssuer;
 use crate::internal::{
     claims::compute_passport_claims_hash,
-    constants::{MAGNA_CLAIMS_DS, MAGNA_REVOCATION_DS, SCHEMA_VERSION_V1},
+    constants::{MAGNA_CLAIMS_DS, MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS, MAGNA_REVOCATION_DS, SCHEMA_VERSION_V1},
     revocation::compute_revocation_nullifier,
 };
 use crate::test::setup::setup;
@@ -216,8 +216,10 @@ unconstrained fn test_verify_consumer_allows_configured_gateway_calls() {
 
     env.call_public(
         orchestrator,
-        MagnaIssuer::at(contract_address).initialize_consumer_gateway(consumer),
+        MagnaIssuer::at(contract_address).add_consumer_gateway(consumer),
     );
+    env.advance_next_block_timestamp_by(MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS);
+    env.mine_block();
 
     let claims_hash = base_claims_hash();
     env.call_private(
@@ -249,13 +251,62 @@ unconstrained fn test_verify_consumer_allows_configured_gateway_calls() {
 }
 
 #[test(should_fail_with = "consumer only")]
+unconstrained fn test_verify_consumer_rejects_removed_gateway_after_delay() {
+    let (mut env, contract_address, orchestrator, active_owner, ghost_owner, consumer) = setup();
+
+    env.call_public(
+        orchestrator,
+        MagnaIssuer::at(contract_address).add_consumer_gateway(consumer),
+    );
+    env.advance_next_block_timestamp_by(MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS);
+    env.mine_block();
+
+    let claims_hash = base_claims_hash();
+    env.call_private(
+        orchestrator,
+        MagnaIssuer::at(contract_address).register_credential(active_owner, ghost_owner, claims_hash, 1, 1_893_456_000),
+    );
+
+    let hinted_credential = env.call_private(
+        active_owner,
+        MagnaIssuer::at(contract_address).get_credential_hinted(active_owner, claims_hash),
+    );
+    let hinted_status = env.call_private(
+        active_owner,
+        MagnaIssuer::at(contract_address).get_status_hinted(active_owner, claims_hash),
+    );
+
+    env.call_public(
+        orchestrator,
+        MagnaIssuer::at(contract_address).remove_consumer_gateway(consumer),
+    );
+    env.advance_next_block_timestamp_by(MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS);
+    env.mine_block();
+
+    env.call_private(
+        consumer,
+        MagnaIssuer::at(contract_address).verify_consumer(
+            active_owner,
+            base_policy(),
+            hinted_credential,
+            hinted_status,
+            21,
+            pack_alpha3(67, 65, 78),
+            0,
+        ),
+    );
+}
+
+#[test(should_fail_with = "consumer only")]
 unconstrained fn test_verify_consumer_rejects_unconfigured_gateway_sender() {
     let (mut env, contract_address, orchestrator, active_owner, ghost_owner, consumer) = setup();
 
     env.call_public(
         orchestrator,
-        MagnaIssuer::at(contract_address).initialize_consumer_gateway(consumer),
+        MagnaIssuer::at(contract_address).add_consumer_gateway(consumer),
     );
+    env.advance_next_block_timestamp_by(MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS);
+    env.mine_block();
 
     let claims_hash = base_claims_hash();
     env.call_private(
@@ -292,8 +343,10 @@ unconstrained fn test_verify_consumer_rejects_owner_mismatch() {
 
     env.call_public(
         orchestrator,
-        MagnaIssuer::at(contract_address).initialize_consumer_gateway(consumer),
+        MagnaIssuer::at(contract_address).add_consumer_gateway(consumer),
     );
+    env.advance_next_block_timestamp_by(MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS);
+    env.mine_block();
 
     let claims_hash = base_claims_hash();
     env.call_private(
