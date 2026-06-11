@@ -14,8 +14,10 @@ import { ProtocolContractAddress } from "@aztec/aztec.js/protocol";
 import { getFeeJuiceBalance } from "@aztec/aztec.js/utils";
 import { createExtendedL1Client } from "@aztec/ethereum/client";
 import { deployL1Contract } from "@aztec/ethereum/deploy-l1-contract";
+import { EthCheatCodes } from "@aztec/ethereum/test";
 import { L1FeeJuicePortalManager } from "@aztec/aztec.js/ethereum";
 import { createLogger } from "@aztec/foundation/log";
+import { TestDateProvider } from "@aztec/foundation/timer";
 import { retryUntil } from "@aztec/foundation/retry";
 import { getNonNullifiedL1ToL2MessageWitness } from "@aztec/stdlib/messaging";
 import { EmbeddedWallet } from "@aztec/wallets/embedded";
@@ -37,6 +39,7 @@ const DEFAULT_INITIAL_SPONSOR_RIGHTS = 1_000_000n;
 const DEFAULT_L2_PRICE_PER_VERIFY = 150_000n;
 const DEFAULT_L2_STABLE_MINT_AMOUNT = 10_000_000_000_000n;
 const DEFAULT_L1_STABLE_INITIAL_SUPPLY = 1_000_000_000_000n;
+const MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS = 300n;
 const DEFAULT_LOCAL_TEST_ACCOUNT_INDEX = 0;
 const DEFAULT_L1_MNEMONIC =
   process.env.MNEMONIC ?? "test test test test test test test test test test test junk";
@@ -236,6 +239,45 @@ async function waitForNode(node, timeoutMs) {
     Math.max(1, Math.ceil(timeoutMs / 1000)),
     1,
   );
+}
+
+async function syncWalletPxeAfterWarp(label, wallet) {
+  const debugSync = wallet?.pxe?.debug?.sync;
+  if (!debugSync) {
+    await sleep(1_000);
+    return;
+  }
+  console.info(`[web-bootstrap] ${label} syncing PXE after L1 warp`);
+  await retryUntil(
+    async () => {
+      try {
+        await debugSync.call(wallet.pxe.debug);
+        return true;
+      } catch {
+        return undefined;
+      }
+    },
+    `${label} PXE sync after warp`,
+    30,
+    1,
+  );
+}
+
+async function warpForwardSeconds({ l1RpcUrls, l1Mnemonic, label, seconds, wallet }) {
+  const l1Client = createExtendedL1Client(l1RpcUrls, l1Mnemonic);
+  const currentTimestamp = BigInt((await l1Client.getBlock()).timestamp);
+  const targetTimestamp = currentTimestamp + seconds + 1n;
+  const cheatCodes = new EthCheatCodes(
+    l1RpcUrls,
+    new TestDateProvider(),
+    createLogger("magna:web-bootstrap:time-warp"),
+  );
+  await cheatCodes.warp(targetTimestamp, { silent: true, resetBlockInterval: true });
+  console.info(
+    `[web-bootstrap] ${label} warped time ` +
+      `(from_ts=${currentTimestamp.toString()} to_ts=${targetTimestamp.toString()})`,
+  );
+  await syncWalletPxeAfterWarp(label, wallet);
 }
 
 async function mineTwoL2BlocksForBridgeIngestion(l2NudgeToken, orchestrator, label = "bridge ingestion") {
@@ -610,9 +652,21 @@ async function main() {
         from: orchestrator,
       });
     });
-    await runRetriedStep("issuer.initialize_consumer_gateway", async () => {
-      return await issuer.methods.initialize_consumer_gateway(consumer.address).send({ from: orchestrator });
+    await runRetriedStep("issuer.add_consumer_gateway", async () => {
+      return await issuer.methods.add_consumer_gateway(consumer.address).send({ from: orchestrator });
     });
+    await warpForwardSeconds({
+      l1RpcUrls,
+      l1Mnemonic,
+      label: "issuer.add_consumer_gateway activation",
+      seconds: MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS,
+      wallet,
+    });
+    await mineTwoL2BlocksForBridgeIngestion(
+      l2PaymentToken,
+      orchestrator,
+      "consumer gateway activation",
+    );
     await runRetriedStep("mint L2 payment token to orchestrator", async () => {
       return await l2PaymentToken.methods
         .mint_to_public(orchestrator, DEFAULT_L2_STABLE_MINT_AMOUNT)

@@ -90,7 +90,7 @@ export class MagnaIssuerContract extends ContractBase {
   }
   
 
-  public static get storage(): ContractStorageLayout<'orchestrator' | 'verify_meter_hook' | 'company_sponsor_gateways' | 'disabled_company_sponsor_gateways' | 'consumer_gateway' | 'sponsored_credential_type_mask' | 'verify_meter_count' | 'credential_notes' | 'status_notes' | 'recovery_notes' | 'root_status_notes' | 'root_recovery_notes' | 'root_authority_notes' | 'linked_credential_notes' | 'linked_status_notes' | 'linked_recovery_notes'> {
+  public static get storage(): ContractStorageLayout<'orchestrator' | 'verify_meter_hook' | 'company_sponsor_gateways' | 'disabled_company_sponsor_gateways' | 'consumer_gateways' | 'disabled_consumer_gateways' | 'sponsored_credential_type_mask' | 'verify_meter_count' | 'credential_notes' | 'status_notes' | 'recovery_notes' | 'root_status_notes' | 'root_recovery_notes' | 'root_authority_notes' | 'linked_credential_notes' | 'linked_status_notes' | 'linked_recovery_notes'> {
       return {
         orchestrator: {
       slot: new Fr(1n),
@@ -104,8 +104,11 @@ company_sponsor_gateways: {
 disabled_company_sponsor_gateways: {
       slot: new Fr(6n),
     },
-consumer_gateway: {
+consumer_gateways: {
       slot: new Fr(7n),
+    },
+disabled_consumer_gateways: {
+      slot: new Fr(8n),
     },
 sponsored_credential_type_mask: {
       slot: new Fr(9n),
@@ -140,7 +143,7 @@ linked_status_notes: {
 linked_recovery_notes: {
       slot: new Fr(22n),
     }
-      } as ContractStorageLayout<'orchestrator' | 'verify_meter_hook' | 'company_sponsor_gateways' | 'disabled_company_sponsor_gateways' | 'consumer_gateway' | 'sponsored_credential_type_mask' | 'verify_meter_count' | 'credential_notes' | 'status_notes' | 'recovery_notes' | 'root_status_notes' | 'root_recovery_notes' | 'root_authority_notes' | 'linked_credential_notes' | 'linked_status_notes' | 'linked_recovery_notes'>;
+      } as ContractStorageLayout<'orchestrator' | 'verify_meter_hook' | 'company_sponsor_gateways' | 'disabled_company_sponsor_gateways' | 'consumer_gateways' | 'disabled_consumer_gateways' | 'sponsored_credential_type_mask' | 'verify_meter_count' | 'credential_notes' | 'status_notes' | 'recovery_notes' | 'root_status_notes' | 'root_recovery_notes' | 'root_authority_notes' | 'linked_credential_notes' | 'linked_status_notes' | 'linked_recovery_notes'>;
     }
     
 
@@ -150,11 +153,11 @@ linked_recovery_notes: {
     /** add_company_sponsor_gateway(gateway: struct) */
     add_company_sponsor_gateway: ((gateway: AztecAddressLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
+    /** add_consumer_gateway(gateway: struct) */
+    add_consumer_gateway: ((gateway: AztecAddressLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
+
     /** constructor(orchestrator_address: struct, verify_meter_hook_address: struct) */
     constructor: ((orchestrator_address: AztecAddressLike, verify_meter_hook_address: AztecAddressLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
-
-    /** get_consumer_gateway() */
-    get_consumer_gateway: (() => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
     /** get_credential_hinted(owner: struct, claims_hash: field) */
     get_credential_hinted: ((owner: AztecAddressLike, claims_hash: FieldLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
@@ -189,11 +192,11 @@ linked_recovery_notes: {
     /** get_verify_meter_count() */
     get_verify_meter_count: (() => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
-    /** initialize_consumer_gateway(gateway: struct) */
-    initialize_consumer_gateway: ((gateway: AztecAddressLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
-
     /** is_company_sponsor_gateway(gateway: struct) */
     is_company_sponsor_gateway: ((gateway: AztecAddressLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
+
+    /** is_consumer_gateway(gateway: struct) */
+    is_consumer_gateway: ((gateway: AztecAddressLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
     /** offchain_receive(messages: struct) */
     offchain_receive: ((messages: { ciphertext: FieldLike[], recipient: AztecAddressLike, tx_hash: OptionLike<FieldLike>, anchor_block_timestamp: (bigint | number) }[]) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
@@ -227,6 +230,9 @@ linked_recovery_notes: {
 
     /** remove_company_sponsor_gateway(gateway: struct) */
     remove_company_sponsor_gateway: ((gateway: AztecAddressLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
+
+    /** remove_consumer_gateway(gateway: struct) */
+    remove_consumer_gateway: ((gateway: AztecAddressLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
     /** revoke_linked_credential(hinted_recovery: struct) */
     revoke_linked_credential: ((hinted_recovery: { note: { root_commitment: FieldLike, revocation_secret: FieldLike, claims_hash: FieldLike, credential_type: (bigint | number), expiry_ts: (bigint | number) }, contract_address: AztecAddressLike, owner: AztecAddressLike, randomness: FieldLike, storage_slot: FieldLike, metadata: { stage: (bigint | number), maybe_note_nonce: FieldLike } }) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;

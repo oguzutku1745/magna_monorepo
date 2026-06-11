@@ -81,6 +81,7 @@ const L1_STABLE_PRICE_PER_VERIFY = 150_000n; // 0.15 units at 6 decimals
 const INITIAL_L1_STABLE_SUPPLY = 1_000_000_000_000n;
 const MAGNA_CLAIMS_DS = 0x4d414743;
 const MAGNA_REVOCATION_DS = 0x4d415247;
+const MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS = 300n;
 const MAGNA_SPONSOR_RL_WINDOW_SECONDS = 86_400n;
 const MAX_CONSTRAINTS = 8;
 const TRANSIENT_LOCAL_NETWORK_TX_ERROR_MARKERS = [
@@ -185,6 +186,23 @@ async function warpToNextSponsorRateLimitWindow(
       `${label} post-warp L2 advance`,
     );
   }
+}
+
+async function warpForwardSeconds(label: string, seconds: bigint, wallet?: EmbeddedWallet): Promise<void> {
+  const l1Client = createExtendedL1Client(L1_RPC_URLS, L1_MNEMONIC);
+  const currentTimestamp = BigInt((await l1Client.getBlock()).timestamp);
+  const targetTimestamp = currentTimestamp + seconds + 1n;
+  const cheatCodes = new EthCheatCodes(
+    L1_RPC_URLS,
+    new TestDateProvider(),
+    createLogger("magna:e2e:time-warp"),
+  );
+  await cheatCodes.warp(targetTimestamp, { silent: true, resetBlockInterval: true });
+  console.info(
+    `[e2e] ${label} warped time ` +
+      `(from_ts=${currentTimestamp.toString()} to_ts=${targetTimestamp.toString()})`,
+  );
+  await syncWalletPxeAfterWarp(label, wallet);
 }
 
 function packAlpha3(alpha3: string): bigint {
@@ -1192,15 +1210,22 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
     );
     const seedSponsorRightsTxHash = seedSponsorTopup.purchaseTxHash;
 
-    const initializeConsumerGatewayReceipt = await runStep("issuer.initialize_consumer_gateway(consumer)", async () => {
+    const addConsumerGatewayReceipt = await runStep("issuer.add_consumer_gateway(consumer)", async () => {
       return await issuer.methods
-        .initialize_consumer_gateway(consumer.address)
+        .add_consumer_gateway(consumer.address)
         .send({ from: orchestrator });
     });
-    const initializeConsumerGatewayTxHash = logTxReceipt(
-      "bootstrap.issuer_initialize_consumer_gateway",
-      initializeConsumerGatewayReceipt,
+    const addConsumerGatewayTxHash = logTxReceipt(
+      "bootstrap.issuer_add_consumer_gateway",
+      addConsumerGatewayReceipt,
     );
+    await runStep("warp for issuer.add_consumer_gateway activation", async () => {
+      await warpForwardSeconds(
+        "issuer.add_consumer_gateway activation",
+        MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS,
+        wallet,
+      );
+    });
 
     const credentialType = 1;
     const nationalityPacked = packAlpha3("CAN");
@@ -1257,7 +1282,7 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
           mintL2StableTxHash,
           initializeL2PurchaseAdapterTxHash,
           seedSponsorRightsTxHash,
-          initializeConsumerGatewayTxHash,
+          addConsumerGatewayTxHash,
         ],
       },
     };
