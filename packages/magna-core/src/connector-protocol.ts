@@ -1,0 +1,153 @@
+import { bytesToHex } from "./bytes.js";
+import { MAX_CONSTRAINTS } from "./policy.js";
+import { ClaimId, ConstraintOp, CredentialType, type Policy } from "./types.js";
+import type { SignedSessionAssertion } from "./session-assertion.js";
+
+export type WirePolicy = {
+  credentialType: Policy["credentialType"];
+  constraints: { claimId: number; op: number; value: string }[];
+};
+
+export type LoginRequest = {
+  v: 1;
+  kind: "magna:login-request";
+  clientId: string;
+  origin: string;
+  requestId: string;
+  sessionChallenge: string;
+  policy: WirePolicy;
+  policyHash: string;
+  responseMode: "postMessage" | "redirectCode";
+  redirectUri?: string;
+};
+
+export type LoginResponse = {
+  v: 1;
+  kind: "magna:login-response";
+  requestId: string;
+  assertion: SignedSessionAssertion;
+};
+
+export type LoginErrorResponse = {
+  v: 1;
+  kind: "magna:login-error";
+  requestId: string;
+  error: string;
+};
+
+const MAX_DECIMAL_DIGITS = 78;
+
+function webCrypto(): Crypto {
+  const cryptoApi = globalThis.crypto;
+  if (!cryptoApi) {
+    throw new Error("Web Crypto API is unavailable");
+  }
+  return cryptoApi;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isEnumValue<T extends Record<string, string | number>>(enumObject: T, value: unknown): boolean {
+  return typeof value === "number" && Number.isInteger(value) && Object.values(enumObject).includes(value);
+}
+
+function assertCanonicalDecimal(value: unknown): asserts value is string {
+  if (typeof value !== "string" || !/^(0|[1-9]\d*)$/.test(value) || value.length > MAX_DECIMAL_DIGITS) {
+    throw new Error("policy constraint value must be a canonical bounded decimal string");
+  }
+}
+
+function assertWirePolicy(policy: unknown): asserts policy is WirePolicy {
+  if (!isObject(policy)) {
+    throw new Error("policy must be an object");
+  }
+  if (!isEnumValue(CredentialType, policy.credentialType)) {
+    throw new Error("policy credentialType is invalid");
+  }
+  if (!Array.isArray(policy.constraints) || policy.constraints.length > MAX_CONSTRAINTS) {
+    throw new Error(`policy constraints must contain at most ${MAX_CONSTRAINTS} entries`);
+  }
+  for (const constraint of policy.constraints) {
+    if (!isObject(constraint)) {
+      throw new Error("policy constraint must be an object");
+    }
+    if (!isEnumValue(ClaimId, constraint.claimId)) {
+      throw new Error("policy constraint claimId is invalid");
+    }
+    if (!isEnumValue(ConstraintOp, constraint.op)) {
+      throw new Error("policy constraint op is invalid");
+    }
+    assertCanonicalDecimal(constraint.value);
+  }
+}
+
+function assertHex(value: unknown, byteLength: number, label: string, prefixed = false): asserts value is string {
+  if (typeof value !== "string") {
+    throw new Error(`${label} must be a string`);
+  }
+  const pattern = prefixed
+    ? new RegExp(`^0x[0-9a-f]{${byteLength * 2}}$`)
+    : new RegExp(`^[0-9a-f]{${byteLength * 2}}$`);
+  if (!pattern.test(value)) {
+    throw new Error(`${label} must be ${byteLength} bytes of lowercase hex${prefixed ? " with 0x prefix" : ""}`);
+  }
+}
+
+export function assertLoginRequest(value: unknown): asserts value is LoginRequest {
+  if (!isObject(value)) {
+    throw new Error("login request must be an object");
+  }
+  if (value.v !== 1 || value.kind !== "magna:login-request") {
+    throw new Error("login request has invalid version or kind");
+  }
+  if (typeof value.clientId !== "string" || value.clientId.length === 0) {
+    throw new Error("login request clientId is required");
+  }
+  if (typeof value.origin !== "string" || value.origin.length === 0) {
+    throw new Error("login request origin is required");
+  }
+  assertHex(value.requestId, 16, "requestId");
+  assertHex(value.sessionChallenge, 32, "sessionChallenge");
+  assertHex(value.policyHash, 32, "policyHash", true);
+  assertWirePolicy(value.policy);
+  if (value.responseMode !== "postMessage" && value.responseMode !== "redirectCode") {
+    throw new Error("login request responseMode is invalid");
+  }
+  if (value.responseMode === "redirectCode" && typeof value.redirectUri !== "string") {
+    throw new Error("redirectUri is required for redirectCode responseMode");
+  }
+}
+
+export function randomHex(byteLength: number): string {
+  if (!Number.isSafeInteger(byteLength) || byteLength < 0) {
+    throw new Error("byteLength must be a non-negative safe integer");
+  }
+  const bytes = webCrypto().getRandomValues(new Uint8Array(byteLength));
+  return bytesToHex(bytes);
+}
+
+/** Wire-format policy: bigint values as decimal strings. */
+export function policyToWire(policy: Policy): WirePolicy {
+  return {
+    credentialType: policy.credentialType,
+    constraints: policy.constraints.map(c => ({
+      claimId: Number(c.claimId),
+      op: Number(c.op),
+      value: c.value.toString(),
+    })),
+  };
+}
+
+export function policyFromWire(wire: WirePolicy): Policy {
+  assertWirePolicy(wire);
+  return {
+    credentialType: wire.credentialType,
+    constraints: wire.constraints.map(c => ({
+      claimId: c.claimId,
+      op: c.op,
+      value: BigInt(c.value),
+    })),
+  } as Policy;
+}
