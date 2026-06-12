@@ -16,7 +16,7 @@
     "@aztec/noir-contracts.js": "4.2.0-aztecnr-rc.2",
     "@aztec/stdlib": "4.2.0-aztecnr-rc.2",
     "@aztec/wallets": "4.2.0-aztecnr-rc.2",
-    "@magna/client": "0.1.0",
+    "@magna/client": "0.2.0",
     "@magna/contracts-bindings": "0.1.0",
     "@magna/wallet": "0.1.0"
   },
