@@ -5,7 +5,11 @@ import {
 } from "./encoding.js";
 import { deriveGhostKeyMaterial } from "./ghost.js";
 import { deriveRootCommitment } from "./root.js";
-import { normalizePolicy } from "@magna/core";
+import { CredentialType, normalizePolicy } from "@magna/core";
+import { AztecAddress } from "@aztec/aztec.js/addresses";
+import { Fr } from "@aztec/aztec.js/fields";
+import { prepareGhostAccountOnWallet, type GhostAccountLifecycleOptions, type GhostAccountLifecycleResult } from "../embedded/lifecycle.js";
+import type { EmbeddedWallet } from "@aztec/wallets/embedded";
 import { buildCompanySponsorFeeConfig } from "./sponsorship.js";
 import type { ContractLike } from "@magna/contracts-bindings";
 import type {
@@ -29,15 +33,61 @@ import type {
   VerifyPassportInput,
 } from "./types.js";
 
+type ContractCall = {
+  send: (opts: { from: string; fee?: unknown; additionalScopes?: unknown[] }) => Promise<unknown>;
+  simulate?: (opts: { from: any }) => Promise<unknown>;
+};
+
 type AztecContract = {
   address?: unknown;
-  methods: Record<
-    string,
-    (...args: unknown[]) => { send: (opts: { from: string; fee?: unknown; additionalScopes?: unknown[] }) => Promise<unknown> }
-  >;
+  methods: Record<string, (...args: unknown[]) => ContractCall>;
 };
 type BoundContract = ContractLike;
 type SendableContract = AztecContract | BoundContract;
+
+export type CredentialHints = {
+  claimsHash: string;
+  hintedCredentialNote: unknown;
+  hintedStatusNote: unknown;
+};
+
+export type VerificationSponsorContext = {
+  sponsored?: boolean;
+  sponsorContract?: SendableContract;
+};
+
+export type RecoverOntoNewDeviceInput = {
+  wallet: EmbeddedWallet;
+  ghost: GhostAccountLifecycleOptions;
+  recovery: RecoverInput;
+};
+
+export type RecoverOntoNewDeviceResult = {
+  ghost: GhostAccountLifecycleResult;
+  receipt: unknown;
+};
+
+function unwrapSimulationResult<T>(value: T | { result: T }): T {
+  if (value && typeof value === "object" && "result" in value) {
+    return value.result as T;
+  }
+  return value as T;
+}
+
+function toAztecAddress(value: string): AztecAddress {
+  return AztecAddress.fromString(value);
+}
+
+function toField(value: bigint | string): Fr {
+  return new Fr(typeof value === "bigint" ? value : BigInt(value));
+}
+
+function requireSimulate(methodName: string, call: ContractCall): (opts: { from: any }) => Promise<unknown> {
+  if (!call.simulate) {
+    throw new Error(`${methodName} does not support simulate`);
+  }
+  return call.simulate;
+}
 
 export type MagnaVerificationEngineConfig = {
   orchestratorAddress: string;
@@ -114,6 +164,44 @@ export class MagnaVerificationEngine {
 
   deriveRootCommitment(input: RootCommitmentInput) {
     return deriveRootCommitment(input);
+  }
+
+  async findCredentialHints(ownerAddress: string, claimsHash: bigint | string): Promise<CredentialHints> {
+    const owner = toAztecAddress(ownerAddress);
+    const claimField = toField(claimsHash);
+    const credentialCall = this.issuerContract.methods.get_credential_hinted(owner, claimField);
+    const statusCall = this.issuerContract.methods.get_status_hinted(owner, claimField);
+    const [hintedCredentialNote, hintedStatusNote] = await Promise.all([
+      requireSimulate("get_credential_hinted", credentialCall)({ from: owner }).then(value => unwrapSimulationResult(value)),
+      requireSimulate("get_status_hinted", statusCall)({ from: owner }).then(value => unwrapSimulationResult(value)),
+    ]);
+    return {
+      claimsHash: claimsHash.toString(),
+      hintedCredentialNote,
+      hintedStatusNote,
+    };
+  }
+
+  async runVerification(
+    input: VerifyPassportInput | VerifyInstagramInput,
+    from: string,
+    sponsorContext: VerificationSponsorContext = {},
+  ) {
+    const credentialType = normalizePolicy(input.policy).credentialType;
+    if (credentialType === CredentialType.Instagram) {
+      return sponsorContext.sponsored || sponsorContext.sponsorContract
+        ? this.loginWithInstagramCompanySponsor(input as VerifyInstagramInput, from, sponsorContext.sponsorContract)
+        : this.loginWithInstagram(input as VerifyInstagramInput, from);
+    }
+    return sponsorContext.sponsored || sponsorContext.sponsorContract
+      ? this.loginWithCompanySponsor(input as VerifyPassportInput, from, sponsorContext.sponsorContract)
+      : this.loginWithMagna(input as VerifyPassportInput, from);
+  }
+
+  async recoverOntoNewDevice(input: RecoverOntoNewDeviceInput): Promise<RecoverOntoNewDeviceResult> {
+    const ghost = await prepareGhostAccountOnWallet(input.wallet, input.ghost);
+    const receipt = await this.recover(input.recovery, ghost.address);
+    return { ghost, receipt };
   }
 
   async registerPassport(input: RegisterPassportInput) {

@@ -558,4 +558,75 @@ describe("MagnaVerificationEngine login flows", () => {
       from: "0x4444444444444444444444444444444444444444",
     });
   });
+
+
+  it("findCredentialHints reads live hinted issuer notes", async () => {
+    const hintedCredentialNote = { id: "credential" };
+    const hintedStatusNote = { id: "status" };
+    const simulateFrom: unknown[] = [];
+    const client = new MagnaVerificationEngine({
+      orchestratorAddress: "0x1111111111111111111111111111111111111111111111111111111111111111",
+      issuerContract: {
+        methods: {
+          get_credential_hinted: () => ({
+            send: async () => ({ ok: true }),
+            simulate: async (opts: { from: unknown }) => {
+              simulateFrom.push(opts.from);
+              return { result: hintedCredentialNote };
+            },
+          }),
+          get_status_hinted: () => ({
+            send: async () => ({ ok: true }),
+            simulate: async (opts: { from: unknown }) => {
+              simulateFrom.push(opts.from);
+              return hintedStatusNote;
+            },
+          }),
+        },
+      } as never,
+    });
+
+    const owner = "0x2222222222222222222222222222222222222222222222222222222222222222";
+    const hints = await client.findCredentialHints(owner, 123n);
+    assert.deepEqual(hints, {
+      claimsHash: "123",
+      hintedCredentialNote,
+      hintedStatusNote,
+    });
+    assert.equal(simulateFrom.length, 2);
+  });
+
+  it("runVerification routes instagram sponsored checks through the sponsor contract", async () => {
+    let sponsorCalled = false;
+    const sponsor = {
+      address: { toString: () => "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+      methods: {
+        sponsored_verify_instagram: () => ({
+          send: async () => {
+            sponsorCalled = true;
+            return { ok: true };
+          },
+        }),
+      },
+    };
+    const client = new MagnaVerificationEngine({
+      orchestratorAddress: "0x1111111111111111111111111111111111111111111111111111111111111111",
+      issuerContract: { methods: {} } as never,
+      companySponsorContracts: [sponsor as never],
+    });
+
+    await client.runVerification(
+      {
+        policy: { credentialType: CredentialType.Instagram, constraints: [] },
+        hintedCredentialNote: { id: "credential" },
+        hintedStatusNote: { id: "status" },
+        claimsWitness: { handleHash: 99n },
+      },
+      "0x2222222222222222222222222222222222222222222222222222222222222222",
+      { sponsored: true },
+    );
+
+    assert.equal(sponsorCalled, true);
+  });
+
 });

@@ -17,7 +17,8 @@
     "@aztec/accounts": "4.2.0-aztecnr-rc.2",
     "@aztec/foundation": "4.2.0-aztecnr-rc.2",
     "@magna/contracts-bindings": "0.1.0",
-    "@magna/core": "0.1.0"
+    "@magna/core": "0.1.0",
+    "@aztec/wallet-sdk": "4.2.0-aztecnr-rc.2"
   },
   "devDependencies": {
     "typescript": "^5.7.3"
