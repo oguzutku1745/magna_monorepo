@@ -34,13 +34,13 @@ import type {
 } from "./types.js";
 
 type ContractCall = {
-  send: (opts: { from: string; fee?: unknown; additionalScopes?: unknown[] }) => Promise<unknown>;
-  simulate?: (opts: { from: any }) => Promise<unknown>;
+  send: (opts: any) => Promise<unknown>;
+  simulate?: (opts: any) => Promise<unknown>;
 };
 
 type AztecContract = {
   address?: unknown;
-  methods: Record<string, (...args: unknown[]) => ContractCall>;
+  methods: Record<string, (...args: any[]) => ContractCall>;
 };
 type BoundContract = ContractLike;
 type SendableContract = AztecContract | BoundContract;
@@ -82,7 +82,7 @@ function toField(value: bigint | string): Fr {
   return new Fr(typeof value === "bigint" ? value : BigInt(value));
 }
 
-function requireSimulate(methodName: string, call: ContractCall): (opts: { from: any }) => Promise<unknown> {
+function requireSimulate(methodName: string, call: ContractCall): (opts: any) => Promise<unknown> {
   if (!call.simulate) {
     throw new Error(`${methodName} does not support simulate`);
   }
@@ -94,6 +94,7 @@ export type MagnaVerificationEngineConfig = {
   issuerContract: SendableContract;
   companySponsorContract?: SendableContract;
   companySponsorContracts?: SendableContract[];
+  consumerContractFactory?: (address: string) => SendableContract;
   hasher?: Hasher;
 };
 
@@ -107,6 +108,7 @@ export class MagnaVerificationEngine {
   private readonly companySponsorContract?: AztecContract;
   private readonly companySponsorContracts: AztecContract[];
   private readonly companySponsorContractsByAddress: Map<string, AztecContract>;
+  private readonly consumerContractFactory?: (address: string) => SendableContract;
   private readonly hasher: Hasher;
 
   constructor(config: MagnaVerificationEngineConfig) {
@@ -114,6 +116,7 @@ export class MagnaVerificationEngine {
     this.issuerContract = config.issuerContract;
     this.companySponsorContract = config.companySponsorContract;
     this.companySponsorContracts = config.companySponsorContracts ?? [];
+    this.consumerContractFactory = config.consumerContractFactory;
     this.companySponsorContractsByAddress = new Map();
     if (this.companySponsorContract?.address) {
       this.companySponsorContractsByAddress.set(String(this.companySponsorContract.address), this.companySponsorContract);
@@ -202,6 +205,40 @@ export class MagnaVerificationEngine {
     const ghost = await prepareGhostAccountOnWallet(input.wallet, input.ghost);
     const receipt = await this.recover(input.recovery, ghost.address);
     return { ghost, receipt };
+  }
+
+
+  async loginWithMagnaThroughConsumer(input: {
+    policy: VerifyPassportInput["policy"];
+    consumerGatewayAddress: string;
+    claimsHash: bigint | string;
+    claimsWitness: VerifyPassportInput["claimsWitness"];
+    from: string;
+    sponsorSlot?: number;
+  }) {
+    if (!this.consumerContractFactory) {
+      throw new Error("consumerContractFactory is required for consumer-gateway login");
+    }
+    const hints = await this.findCredentialHints(input.from, input.claimsHash);
+    const policy = normalizePolicy(input.policy);
+    const consumer = this.consumerContractFactory(input.consumerGatewayAddress);
+    return consumer.methods
+      .login_with_magna(
+        {
+          credential_type: policy.credentialType,
+          constraints: policy.constraints.map(constraint => ({
+            claim_id: constraint.claimId,
+            op: constraint.op,
+            value: constraint.value,
+          })),
+        },
+        hints.hintedCredentialNote,
+        hints.hintedStatusNote,
+        input.claimsWitness.minAgeProven,
+        input.claimsWitness.nationalityAlpha3Packed,
+        input.sponsorSlot ?? 0,
+      )
+      .send({ from: input.from });
   }
 
   async registerPassport(input: RegisterPassportInput) {

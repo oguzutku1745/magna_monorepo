@@ -1,93 +1,100 @@
 # Login with Magna - Integration Guide
 
-## 1) Build policy request
+This guide covers the dApp-facing connector. A third-party dApp uses `@magna/client` only; passkeys, PXE, Aztec contracts, note discovery, and verification execution stay inside the Magna wallet origin.
 
-Define the dApp gate in terms of constraints:
+## 1) Configure the Connector
 
-- credential type: `PASSPORT`
-- constraints:
-  - `AGE_MIN_PROVEN GTE 18`
-  - `NATIONALITY_ALPHA3 NEQ USA`
+Install and configure `@magna/client` with the registered dApp id, the Magna wallet origin, and Magna's published P-256 session-signing public key:
 
-## 2) Ask user wallet/PXE to prove
+```ts
+import { MagnaClient } from "@magna/client";
 
-Use `@magna/client`:
+const magna = new MagnaClient({
+  clientId: "reference-dapp",
+  walletOrigin: "https://wallet.magna.xyz",
+  magnaPublicKeyJwk: MAGNA_SESSION_PUBLIC_JWK,
+});
+```
 
-- canonical rooted flow:
-  - call `loginWithLinkedMagna(...)` (or sponsored `loginWithLinkedCompanySponsor(...)`)
-  - pass rooted hints (`hintedRootStatusNote`, `hintedRootAuthorityNote`) plus linked credential hints and claims witness
-- legacy compatibility flow:
-  - call `loginWithMagna(...)` only when the credential lineage is explicitly rootless
+For local development, point `walletOrigin` at the local Magna web app, for example `http://localhost:5174`.
 
-Private proof generation remains local to the user PXE.
+## 2) Build a Policy
 
-## Rooted passport authority flow
+Policies are pure data from `@magna/core` re-exported by `@magna/client`:
 
-For the canonical linked model:
+```ts
+import { ClaimId, ConstraintOp, CredentialType, packAlpha3, type Policy } from "@magna/client";
 
-- onboard with `registerRootedPassport(...)` so the issuer mints:
-  - `RootStatusNote`
-  - `RootRecoveryNote`
-  - `RootAuthorityNote`
-  - the current linked passport credential lineage
-- for linked passport verifies, call `loginWithLinkedMagna(...)` and pass:
-  - `hintedRootStatusNote`
-  - `hintedRootAuthorityNote`
-  - the linked passport credential/status hints
-- if the user renews or replaces their passport, have the orchestrator accept a fresh zkPassport proof and call
-  `refreshRootAuthority(...)`
-- root recovery should be executed from the deterministic ghost account (`recoverRoot(...)`) so old linked descendants
-  become invalid immediately
+const passportGate: Policy = {
+  credentialType: CredentialType.Passport,
+  constraints: [
+    { claimId: ClaimId.AgeMinProven, op: ConstraintOp.Gte, value: 18n },
+    { claimId: ClaimId.NationalityAlpha3, op: ConstraintOp.Neq, value: packAlpha3("USA") },
+  ],
+};
+```
 
-Important outcomes:
+The connector computes the canonical policy hash and binds it into the wallet request. The dApp should not pass Aztec notes, claims witnesses, PXE handles, or contract instances.
 
-- passport nullified: root dies, all linked descendants die
-- passport expired only: root survives, but linked verifies pause until authority is refreshed
-- passport renewed/replaced: linked credentials can continue under the same `root_commitment` after refresh
+## 3) Popup Flow
 
-## Instagram ownership flow
+Use `MagnaClient.login(policy)` for the primary popup and `postMessage` flow:
 
-Magna now also supports an Instagram credential family for proving:
+```ts
+const result = await magna.login(passportGate);
 
-- the user owns an Instagram account, and
-- the credential is bound to a specific Instagram handle hash
+if (result.verified) {
+  unlockProtectedAction();
+}
+```
 
-For this family:
+The client opens `${walletOrigin}/authorize`, sends a `magna:login-request`, and only accepts `magna:login-response` messages from the configured `walletOrigin`. It validates the P-256 session assertion signature and checks `requestId`, `sessionChallenge`, `policyHash`, `clientId`, `origin`, and expiry before returning.
 
-- issue an `INSTAGRAM` credential with the canonical `handle_hash` and `expiry_ts`
-- build policy constraints using `INSTAGRAM_HANDLE_HASH EQ <hash>` and optional expiry checks
-- call `loginWithInstagram(...)` for rootless mode or `loginWithLinkedInstagram(...)` for rooted mode
-- rooted Instagram verifies must include both `hintedRootStatusNote` and `hintedRootAuthorityNote`
-- for gasless linked verification, call `loginWithLinkedInstagramCompanySponsor(...)`
+## 4) Redirect Fallback
 
-The Instagram handle hash should match the `zkPoke` username-hash convention so the issuance attestation
-and the Magna witness remain aligned.
+Use redirect mode when popups are blocked or for mobile contexts:
 
-## 3) Gate action on receipt
+```ts
+import { completeRedirectLogin, loginWithRedirect } from "@magna/client";
 
-- If tx succeeds, allow protected state transition.
-- If tx fails, deny access.
+await loginWithRedirect(
+  {
+    clientId: "reference-dapp",
+    walletOrigin: "https://wallet.magna.xyz",
+    magnaPublicKeyJwk: MAGNA_SESSION_PUBLIC_JWK,
+    redirectUri: `${window.location.origin}/login/callback`,
+  },
+  passportGate,
+);
+```
 
-## Gasless onboarding
+On the redirect callback page, exchange the one-time code and validate the signed assertion:
 
-- For legacy sandbox sponsorship, you can still use Aztec sponsored fee payment via `buildSponsoredFeeConfig(...)`.
-- For Magna company-sponsored verify flows, use `loginWithCompanySponsor(...)` or attach
-  `buildCompanySponsorFeeConfig(...)` so the tx reaches the account entrypoint with `MagnaCompanySponsor`
-  already marked as the external fee payer.
-- Company-sponsored verifies are now entitlement-gated:
-  - company buys rights on L1 through `MagnaRightsPortal.purchaseRights(...)`
-  - company/operator claims the L1 credit on L2 with `MagnaCompanyRightsRegistry.claim_l1_credit(...)`
-  - each successful sponsored verify consumes one right through the sponsor gateway
-- The opt-in live local-network suite covers the linked company-sponsor path when run with `AZTEC_E2E=1`.
-- The dedicated local-network bridge suite (`rights-bridge.e2e.spec.ts`) covers L1 purchase, L2 claim, and replay
-  rejection.
-- This live e2e path is not part of default `test:ci` today.
+```ts
+const result = await completeRedirectLogin({
+  clientId: "reference-dapp",
+  walletOrigin: "https://wallet.magna.xyz",
+  magnaPublicKeyJwk: MAGNA_SESSION_PUBLIC_JWK,
+  exchangeUrl: "https://wallet.magna.xyz/api/session/exchange",
+});
 
-## Recovery summary
+if (result?.verified) {
+  unlockProtectedAction();
+}
+```
 
-- Re-derive Ghost key material from scoped identifier.
-- Register stable orchestrator sender-for-tags.
-- Discover and spend `RecoveryNote`.
-- Emit kill-switch nullifier and re-mint fresh status.
-- For rooted credentials, `recover_root(...)` is the root-wide recovery/kill-switch path, while
-  `refreshRootAuthority(...)` is the non-destructive passport-renewal path.
+The pending redirect state is stored in `sessionStorage` and is single-use.
+
+## 5) Magna Wallet Local Setup
+
+For local wallet development, configure the Magna web app, not the integrating dApp, with the registered dApp origin, its consumer gateway, and the dev-only session signing key:
+
+```dotenv
+VITE_REFERENCE_DAPP_ORIGIN=http://localhost:5173
+VITE_REFERENCE_DAPP_GATEWAY=0x...
+VITE_MAGNA_SESSION_SIGNING_KEY=<base64-pkcs8-p256-private-key>
+```
+
+`VITE_MAGNA_SESSION_SIGNING_KEY` is local/dev only. Production must move session signing to a server-side signer or KMS-backed wallet service; do not ship a production signing private key in frontend env.
+
+The dApp receives only the signed session assertion and optional receipt metadata. It never receives passkey material, account secrets, PXE state, private notes, note hints, raw claims, or Aztec contract bindings.

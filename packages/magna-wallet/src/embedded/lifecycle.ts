@@ -71,14 +71,6 @@ export type ManagedWalletOptions = {
   deployWithLocalTestAccount?: boolean;
 };
 
-export type PasskeyWalletOptions = {
-  nodeUrl: string;
-  alias: string;
-  credentialId: string;
-  localTestAccountIndex?: number;
-  deployWithLocalTestAccount?: boolean;
-};
-
 export type GhostAccountLifecycleOptions = {
   nodeUrl: string;
   uniqueIdentifier: string;
@@ -154,45 +146,6 @@ function getWebCrypto(): Crypto {
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-}
-
-async function sha256(input: Uint8Array): Promise<Uint8Array> {
-  const digest = await getWebCrypto().subtle.digest("SHA-256", toArrayBuffer(input));
-  return new Uint8Array(digest);
-}
-
-function utf8Bytes(value: string): Uint8Array {
-  return new TextEncoder().encode(value);
-}
-
-function concatBytes(parts: Uint8Array[]): Uint8Array {
-  const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
-  const merged = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const part of parts) {
-    merged.set(part, offset);
-    offset += part.length;
-  }
-  return merged;
-}
-
-async function derivePasskeyDeterministicBytes(
-  credentialId: string,
-  domain: string,
-  length: number,
-): Promise<Uint8Array> {
-  if (length <= 0) {
-    throw new Error("Deterministic byte length must be greater than zero.");
-  }
-  const seed = concatBytes([utf8Bytes(domain), utf8Bytes(":"), utf8Bytes(credentialId)]);
-  const chunks: Uint8Array[] = [];
-  let counter = 0;
-  while (chunks.reduce((sum, chunk) => sum + chunk.length, 0) < length) {
-    const counterBytes = utf8Bytes(`:${counter}`);
-    chunks.push(await sha256(concatBytes([seed, counterBytes])));
-    counter += 1;
-  }
-  return concatBytes(chunks).slice(0, length);
 }
 
 function pickReusableManagedAccount(accounts: WalletAccount[], alias: string): WalletAccount | null {
@@ -496,36 +449,6 @@ async function generateValidSecp256r1PrivateKey(): Promise<Uint8Array> {
     }
   }
   throw new Error("Failed to generate a valid secp256r1 signing key.");
-}
-
-async function deriveValidSecp256r1PrivateKey(seedLabel: string, credentialId: string): Promise<Uint8Array> {
-  const ecdsa = new Ecdsa("secp256r1");
-  for (let attempt = 0; attempt < 64; attempt += 1) {
-    const domain = `${seedLabel}:${attempt}`;
-    const candidate = await derivePasskeyDeterministicBytes(credentialId, domain, 32);
-    try {
-      await ecdsa.computePublicKey(Buffer.from(candidate));
-      return candidate;
-    } catch {
-      // Keep trying deterministic variants until a valid scalar is found.
-    }
-  }
-  throw new Error("Failed to derive a valid deterministic secp256r1 signing key from passkey credential.");
-}
-
-async function derivePasskeyAccountMaterial(credentialId: string): Promise<{
-  secret: Fr;
-  salt: Fr;
-  signingKey: Uint8Array;
-}> {
-  const secretBytes = await derivePasskeyDeterministicBytes(credentialId, "magna-passkey-secret", 64);
-  const saltBytes = await derivePasskeyDeterministicBytes(credentialId, "magna-passkey-salt", 64);
-  const signingKey = await deriveValidSecp256r1PrivateKey("magna-passkey-signing-key", credentialId);
-  return {
-    secret: Fr.fromBufferReduce(Buffer.from(secretBytes)),
-    salt: Fr.fromBufferReduce(Buffer.from(saltBytes)),
-    signingKey,
-  };
 }
 
 export async function createEmbeddedWallet(nodeUrl: string, ephemeral: boolean): Promise<EmbeddedWallet> {
@@ -859,47 +782,6 @@ export async function createManagedWalletSession(
       deploymentStatus: deployment.isReady ? "deployed" : "counterfactual",
       sessionOrigin: "new",
       storageMode: readStorageMode(storageIsEphemeral),
-      feePayer: deployment.feePayerAddress ?? "not-configured",
-    },
-    filterWalletAccounts(
-      toWalletAccounts(await wallet.getAccounts()),
-      deployment.feePayerAddress ? [deployment.feePayerAddress] : [],
-    ),
-  );
-}
-
-export async function createPasskeyWalletSession(options: PasskeyWalletOptions): Promise<WalletSession> {
-  const wallet = await createEmbeddedWallet(options.nodeUrl, false);
-  const existingAccounts = toWalletAccounts(await wallet.getAccounts());
-  const material = await derivePasskeyAccountMaterial(options.credentialId);
-  const accountManager = await wallet.createECDSARAccount(
-    material.secret,
-    material.salt,
-    Buffer.from(material.signingKey),
-    options.alias,
-  );
-  await ensureAccountManagerRegistered(wallet, accountManager);
-  const deployment = await ensureAccountManagerDeployed(
-    wallet,
-    accountManager,
-    options.deployWithLocalTestAccount ? { localTestAccountIndex: options.localTestAccountIndex } : undefined,
-  );
-
-  return buildWalletSession(
-    "passkey",
-    `Passkey ${options.alias}`,
-    wallet,
-    async () => {
-      await wallet.stop();
-    },
-    accountManager.address.toString(),
-    {
-      accountFlavor: "secp256r1",
-      deploymentStatus: deployment.isReady ? "deployed" : "counterfactual",
-      sessionOrigin: existingAccounts.some(account => account.address === accountManager.address.toString()) ? "reused" : "new",
-      storageMode: "persistent",
-      walletAuth: "passkey-derived",
-      credentialId: options.credentialId,
       feePayer: deployment.feePayerAddress ?? "not-configured",
     },
     filterWalletAccounts(

@@ -50,26 +50,6 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
-async function sha256(input: Uint8Array): Promise<Uint8Array> {
-  const digest = await getWebCrypto().subtle.digest("SHA-256", toArrayBuffer(input));
-  return new Uint8Array(digest);
-}
-
-function utf8Bytes(value: string): Uint8Array {
-  return new TextEncoder().encode(value);
-}
-
-function concatBytes(parts: Uint8Array[]): Uint8Array {
-  const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
-  const merged = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const part of parts) {
-    merged.set(part, offset);
-    offset += part.length;
-  }
-  return merged;
-}
-
 function isIpLikeHost(hostname: string): boolean {
   if (!hostname) return false;
   const ipv4Pattern = /^\d{1,3}(?:\.\d{1,3}){3}$/;
@@ -186,25 +166,6 @@ export async function assertPasskeyCredential(credentialId: string): Promise<voi
   if (!(response instanceof PublicKeyCredential)) {
     throw new Error("Passkey authentication did not return a public key credential.");
   }
-}
-
-export async function derivePasskeyDeterministicBytes(
-  credentialId: string,
-  domain: string,
-  length: number,
-): Promise<Uint8Array> {
-  if (length <= 0) {
-    throw new Error("Deterministic byte length must be greater than zero.");
-  }
-  const seed = concatBytes([utf8Bytes(domain), utf8Bytes(":"), utf8Bytes(credentialId)]);
-  const chunks: Uint8Array[] = [];
-  let counter = 0;
-  while (chunks.reduce((sum, chunk) => sum + chunk.length, 0) < length) {
-    const counterBytes = utf8Bytes(`:${counter}`);
-    chunks.push(await sha256(concatBytes([seed, counterBytes])));
-    counter += 1;
-  }
-  return concatBytes(chunks).slice(0, length);
 }
 
 // Backward-compatible alias kept for existing call sites.

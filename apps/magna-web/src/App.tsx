@@ -33,7 +33,7 @@ import {
   confirmExternalWalletConnection,
   createTransientGhostWalletSession,
   createManagedWalletSession,
-  createPasskeyWalletSession,
+  createWebAuthnWalletSession,
   ensureGhostAccountLifecycle,
   startExternalWalletDiscovery,
   type ExternalWalletDiscovery,
@@ -820,10 +820,11 @@ export function App() {
             .slice(0, 48),
         ));
       await assertPasskeyCredential(record.credentialId);
-      const session = await createPasskeyWalletSession({
+      const session = await createWebAuthnWalletSession({
         nodeUrl: env.aztecNodeUrl,
         alias: managedAlias.trim() || "magna-user",
-        credentialId: record.credentialId,
+        userName: record.userName,
+        rpId: record.rpId,
         localTestAccountIndex: env.localTestAccountIndex,
         deployWithLocalTestAccount: env.enableLocalTestBootstrap,
       });

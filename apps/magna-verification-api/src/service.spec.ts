@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   applyHydratedEnvEntries,
   verifyRootRecoveryPreflight,
@@ -8,6 +8,7 @@ import {
   loadVerificationApiConfigFromEnv,
   normalizePassportClaimsFromQueryResult,
 } from "./service.js";
+import { clearSessionCodesForTest, createSessionCode, exchangeSessionCode } from "./session-code-store.js";
 
 describe("normalizePassportClaimsFromQueryResult", () => {
   it("maps disclosed zkPassport result into Magna passport claims", () => {
@@ -265,5 +266,33 @@ describe("verifyRootRecoveryPreflight", () => {
         },
       ),
     ).rejects.toThrow("proof does not match the configured ghost owner");
+  });
+});
+
+
+describe("session code store", () => {
+  afterEach(() => {
+    clearSessionCodesForTest();
+    vi.useRealTimers();
+  });
+
+  it("round-trips an assertion exactly once", () => {
+    const assertion = { verified: true, requestId: "req-1" };
+    const code = createSessionCode(assertion);
+
+    expect(exchangeSessionCode(code)).toBe(assertion);
+    expect(exchangeSessionCode(code)).toBeNull();
+  });
+
+  it("returns null for expired codes and consumes them", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const assertion = { verified: true, requestId: "req-expired" };
+    const code = createSessionCode(assertion);
+
+    vi.setSystemTime(62_000);
+
+    expect(exchangeSessionCode(code)).toBeNull();
+    expect(exchangeSessionCode(code)).toBeNull();
   });
 });

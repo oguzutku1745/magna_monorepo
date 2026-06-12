@@ -1,39 +1,56 @@
 import {
-  ClaimId,
-  ConstraintOp,
   CredentialType,
-  packAlpha3,
-  type MagnaVerificationEngine,
+  MagnaClient,
+  ageGteConstraint,
+  countryNeqConstraint,
+  type MagnaLoginResult,
   type Policy,
-} from "@magna/wallet";
+} from "@magna/client";
 
-type Dependencies = {
-  magnaClient: MagnaVerificationEngine;
-  userAddress: string;
-  hintedCredentialNote: unknown;
-  hintedStatusNote: unknown;
-  claimsWitness: {
-    minAgeProven: number;
-    nationalityAlpha3Packed: bigint;
-  };
+type ReferenceDappEnv = {
+  VITE_MAGNA_WALLET_ORIGIN?: string;
+  VITE_MAGNA_PUBLIC_KEY_JWK?: string;
 };
 
-export async function loginWithMagnaExample(deps: Dependencies) {
-  const policy: Policy = {
-    credentialType: CredentialType.Passport,
-    constraints: [
-      { claimId: ClaimId.AgeMinProven, op: ConstraintOp.Gte, value: 18n },
-      { claimId: ClaimId.NationalityAlpha3, op: ConstraintOp.Neq, value: packAlpha3("USA") },
-    ],
-  };
+function referenceEnv(): ReferenceDappEnv {
+  return (import.meta as ImportMeta & { env?: ReferenceDappEnv }).env ?? {};
+}
 
-  return deps.magnaClient.loginWithMagna(
-    {
-      policy,
-      hintedCredentialNote: deps.hintedCredentialNote,
-      hintedStatusNote: deps.hintedStatusNote,
-      claimsWitness: deps.claimsWitness,
-    },
-    deps.userAddress,
-  );
+export function packAlpha3(alpha3: string): bigint {
+  if (!/^[A-Z]{3}$/.test(alpha3)) {
+    throw new Error(`invalid alpha3 country code: ${alpha3}`);
+  }
+  const [a, b, c] = alpha3.split("").map(character => character.charCodeAt(0));
+  return (BigInt(a) << 16n) | (BigInt(b) << 8n) | BigInt(c);
+}
+
+export function passportAdultNonUsPolicy(): Policy {
+  return {
+    credentialType: CredentialType.Passport,
+    constraints: [ageGteConstraint(18), countryNeqConstraint(packAlpha3("USA"))],
+  };
+}
+
+export function createReferenceMagnaClient(env: ReferenceDappEnv = referenceEnv()): MagnaClient {
+  const publicKey = env.VITE_MAGNA_PUBLIC_KEY_JWK;
+  if (!publicKey) {
+    throw new Error("VITE_MAGNA_PUBLIC_KEY_JWK is required for Login with Magna");
+  }
+  return new MagnaClient({
+    clientId: "dapp_reference",
+    walletOrigin: env.VITE_MAGNA_WALLET_ORIGIN ?? "http://localhost:5174",
+    magnaPublicKeyJwk: JSON.parse(publicKey) as JsonWebKey,
+  });
+}
+
+export async function loginWithMagnaExample(
+  magna: MagnaClient = createReferenceMagnaClient(),
+): Promise<MagnaLoginResult> {
+  return magna.login(passportAdultNonUsPolicy());
+}
+
+export function unlockAppIfVerified(result: MagnaLoginResult, unlockApp: () => void): boolean {
+  if (!result.verified) return false;
+  unlockApp();
+  return true;
 }

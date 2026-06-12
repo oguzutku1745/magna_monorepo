@@ -117,9 +117,6 @@ const testState = vi.hoisted(() => {
         signingKey: { kind: "local-test-signing-key" },
       },
     ]),
-    derivePasskeyDeterministicBytes: vi.fn(async (_credentialId: string, _domain: string, length: number) =>
-      new Uint8Array(length).fill(7),
-    ),
     computePublicKey: vi.fn(async (_input: Uint8Array | Buffer) => new Uint8Array(33).fill(3)),
     getSchnorrAccountContractAddress,
     deployedAddresses,
@@ -157,10 +154,6 @@ vi.mock("@aztec/foundation/crypto/ecdsa", () => ({
   },
 }));
 
-vi.mock("./passkey", () => ({
-  derivePasskeyDeterministicBytes: testState.derivePasskeyDeterministicBytes,
-}));
-
 vi.mock("./aztec", () => ({
   getChainInfo: vi.fn(),
   stringifyAddress: (value: { toString: () => string } | string) => (typeof value === "string" ? value : value.toString()),
@@ -168,7 +161,6 @@ vi.mock("./aztec", () => ({
 
 import {
   createManagedWalletSession,
-  createPasskeyWalletSession,
   createTransientGhostWalletSession,
   ensureGhostAccountLifecycle,
 } from "./wallet";
@@ -194,7 +186,6 @@ describe("wallet session persistence", () => {
     testState.embeddedCreate.mockClear();
     testState.createAztecNodeClient.mockClear();
     testState.waitForNode.mockClear();
-    testState.derivePasskeyDeterministicBytes.mockClear();
     testState.computePublicKey.mockClear();
     testState.getSchnorrAccountContractAddress.mockClear();
   });
@@ -260,92 +251,19 @@ describe("wallet session persistence", () => {
     expect(session.metadata?.feePayer).toBe("0xmanaged-local-test-0");
   });
 
-  it("uses persistent storage for passkey wallets and restores the same account", async () => {
-    testState.storedAccounts.push({
-      alias: "old-passkey-alias",
-      item: {
-        toString: () => "0xpasskey-account",
-        equals: (other: { toString?: () => string } | string) =>
-          (typeof other === "string" ? other : other.toString?.()) === "0xpasskey-account",
-      },
-    });
-    testState.deployedAddresses.add("0xpasskey-account");
+  it("recovers managed account deploy races by rechecking initialization status", async () => {
+    testState.existingNullifierOnDeployAddresses.add("0xmanaged-magna-user");
 
-    const session = await createPasskeyWalletSession({
+    const session = await createManagedWalletSession({
       nodeUrl: "http://127.0.0.1:8080",
       alias: "magna-user",
-      credentialId: "stored-passkey-credential",
-    });
-
-    expect(testState.embeddedCreate).toHaveBeenCalledWith(
-      { kind: "node-client" },
-      expect.objectContaining({ ephemeral: false }),
-    );
-    expect(testState.wallet.createECDSARAccount).toHaveBeenCalledTimes(1);
-    expect(testState.wallet.registerContract).toHaveBeenCalledTimes(1);
-    expect(testState.wallet.pxe.debug.sync).toHaveBeenCalledTimes(2);
-    expect(testState.deployCalls).toHaveLength(0);
-    expect(session.activeAccount.address).toBe("0xpasskey-account");
-    expect(session.metadata?.storageMode).toBe("persistent");
-    expect(session.metadata?.deploymentStatus).toBe("deployed");
-    expect(session.metadata?.sessionOrigin).toBe("reused");
-  });
-
-  it("treats initialized accounts as deployed even if publication metadata is false", async () => {
-    testState.storedAccounts.push({
-      alias: "old-passkey-alias",
-      item: {
-        toString: () => "0xpasskey-account",
-        equals: (other: { toString?: () => string } | string) =>
-          (typeof other === "string" ? other : other.toString?.()) === "0xpasskey-account",
-      },
-    });
-    testState.initializedOnlyAddresses.add("0xpasskey-account");
-
-    const session = await createPasskeyWalletSession({
-      nodeUrl: "http://127.0.0.1:8080",
-      alias: "magna-user",
-      credentialId: "stored-passkey-credential",
-      localTestAccountIndex: 0,
+      flavor: "schnorr",
+      bootstrapWithLocalTestAccount: false,
       deployWithLocalTestAccount: true,
-    });
-
-    expect(testState.deployCalls).toHaveLength(0);
-    expect(session.metadata?.deploymentStatus).toBe("deployed");
-    expect(session.metadata?.sessionOrigin).toBe("reused");
-  });
-
-  it("deploys a new passkey account with the local test fee payer", async () => {
-    const session = await createPasskeyWalletSession({
-      nodeUrl: "http://127.0.0.1:8080",
-      alias: "magna-user",
-      credentialId: "stored-passkey-credential",
       localTestAccountIndex: 0,
-      deployWithLocalTestAccount: true,
     });
 
-    expect(testState.wallet.createECDSARAccount).toHaveBeenCalledTimes(1);
-    expect(testState.wallet.createSchnorrAccount).toHaveBeenCalledTimes(1);
-    expect(testState.deployCalls).toEqual([{ address: "0xpasskey-account", from: "0xmanaged-local-test-0" }]);
-    expect(session.activeAccount.address).toBe("0xpasskey-account");
-    expect(session.accounts.map(account => account.address)).toEqual(["0xpasskey-account"]);
-    expect(session.metadata?.deploymentStatus).toBe("deployed");
-    expect(session.metadata?.sessionOrigin).toBe("new");
-    expect(session.metadata?.feePayer).toBe("0xmanaged-local-test-0");
-  });
-
-  it("recovers from existing-nullifier deploy races by rechecking initialization status", async () => {
-    testState.existingNullifierOnDeployAddresses.add("0xpasskey-account");
-
-    const session = await createPasskeyWalletSession({
-      nodeUrl: "http://127.0.0.1:8080",
-      alias: "magna-user",
-      credentialId: "stored-passkey-credential",
-      localTestAccountIndex: 0,
-      deployWithLocalTestAccount: true,
-    });
-
-    expect(testState.deployCalls).toEqual([{ address: "0xpasskey-account", from: "0xmanaged-local-test-0" }]);
+    expect(testState.deployCalls).toEqual([{ address: "0xmanaged-magna-user", from: "0xmanaged-local-test-0" }]);
     expect(session.metadata?.deploymentStatus).toBe("deployed");
     expect(session.metadata?.sessionOrigin).toBe("new");
   });

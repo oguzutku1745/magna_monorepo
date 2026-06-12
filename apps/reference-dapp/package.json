@@ -4,12 +4,11 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@magna/client": "0.2.0",
-    "@magna/wallet": "0.1.0"
+    "@magna/client": "0.2.0"
   },
   "scripts": {
-    "build": "echo \"Static reference app\"",
-    "test": "echo \"No tests configured\"",
-    "lint": "echo \"No lint configured\""
+    "build": "tsc --noEmit --skipLibCheck --module NodeNext --moduleResolution NodeNext --target ES2022 src/login-with-magna.ts",
+    "test": "echo \\\"No tests configured\\\"",
+    "lint": "npm run build"
   }
 }

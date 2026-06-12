@@ -34,6 +34,7 @@ const DEFAULT_NETWORK_NAME = "local";
 const DEFAULT_WAIT_FOR_NODE_MS = 120_000;
 const DEFAULT_FEE_JUICE_WITNESS_WAIT_MS = 420_000;
 const DEFAULT_FEE_JUICE_WITNESS_POLL_MS = 15_000;
+const DEFAULT_PXE_SYNC_AFTER_WARP_ATTEMPTS = 120;
 const DEFAULT_SPONSOR_MAX_FEE_CAP = 1_000_000_000_000_000n;
 const DEFAULT_INITIAL_SPONSOR_RIGHTS = 1_000_000n;
 const DEFAULT_L2_PRICE_PER_VERIFY = 150_000n;
@@ -258,7 +259,7 @@ async function syncWalletPxeAfterWarp(label, wallet) {
       }
     },
     `${label} PXE sync after warp`,
-    30,
+    parseNumber(process.env.AZTEC_PXE_SYNC_AFTER_WARP_ATTEMPTS, DEFAULT_PXE_SYNC_AFTER_WARP_ATTEMPTS, "AZTEC_PXE_SYNC_AFTER_WARP_ATTEMPTS"),
     1,
   );
 }
@@ -399,6 +400,7 @@ function updateManifestWithWebBootstrap(manifestPath, details) {
   manifest.l2 = manifest.l2 ?? {};
   manifest.l2.issuerAddress = details.issuerAddress;
   manifest.l2.consumerAddress = details.consumerAddress;
+  manifest.l2.referenceDappConsumerAddress = details.referenceDappConsumerAddress;
   manifest.l2.companySponsorAddress = details.companySponsorAddress;
   manifest.l2.companySponsorAddresses = Array.from(
     new Set([...(manifest.l2.companySponsorAddresses ?? []), details.companySponsorAddress]),
@@ -641,6 +643,13 @@ async function main() {
     });
     const consumer = consumerDeployReceipt.contract;
 
+    const referenceDappConsumerDeployReceipt = await runRetriedStep("deploy reference dApp MagnaConsumer", async () => {
+      return await MagnaConsumerContract.deploy(wallet, issuer.address).send({
+        from: orchestrator,
+      });
+    });
+    const referenceDappConsumer = referenceDappConsumerDeployReceipt.contract;
+
     await runRetriedStep("companySponsor.initialize_issuer", async () => {
       return await companySponsor.methods.initialize_issuer(issuer.address).send({ from: orchestrator });
     });
@@ -654,6 +663,9 @@ async function main() {
     });
     await runRetriedStep("issuer.add_consumer_gateway", async () => {
       return await issuer.methods.add_consumer_gateway(consumer.address).send({ from: orchestrator });
+    });
+    await runRetriedStep("issuer.add_consumer_gateway(reference dApp)", async () => {
+      return await issuer.methods.add_consumer_gateway(referenceDappConsumer.address).send({ from: orchestrator });
     });
     await warpForwardSeconds({
       l1RpcUrls,
@@ -716,6 +728,10 @@ async function main() {
         "",
       deployConsumer:
         consumerDeployReceipt.receipt?.txHash?.toString?.() ?? consumerDeployReceipt.txHash?.toString?.() ?? "",
+      deployReferenceDappConsumer:
+        referenceDappConsumerDeployReceipt.receipt?.txHash?.toString?.() ??
+        referenceDappConsumerDeployReceipt.txHash?.toString?.() ??
+        "",
       seedSponsorRights: rightsTopUp.purchaseTxHash,
       ...(sponsorFeeJuiceClaimTxHash ? { sponsorFeeJuiceClaim: sponsorFeeJuiceClaimTxHash } : {}),
     };
@@ -725,6 +741,7 @@ async function main() {
       issuerAddress: issuer.address.toString(),
       companySponsorAddress: companySponsor.address.toString(),
       consumerAddress: consumer.address.toString(),
+      referenceDappConsumerAddress: referenceDappConsumer.address.toString(),
       txHashes,
     });
 
@@ -761,6 +778,7 @@ async function main() {
           issuerAddress: issuer.address.toString(),
           companySponsorAddress: companySponsor.address.toString(),
           consumerAddress: consumer.address.toString(),
+          referenceDappConsumerAddress: referenceDappConsumer.address.toString(),
           rightsRegistryAddress: rightsRegistry.address.toString(),
           purchaseAdapterAddress: l2RightsPurchase.address.toString(),
           paymentTokenAddress: l2PaymentToken.address.toString(),

@@ -323,3 +323,39 @@ button:disabled {
     letter-spacing: 0.12rem;
   }
 }
+
+
+.authorize-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.authorize-card {
+  width: min(100%, 440px);
+  padding: 28px;
+  border: 1px solid rgba(181, 197, 255, 0.16);
+  border-radius: 24px;
+  background: rgba(9, 17, 31, 0.82);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.2);
+}
+
+.authorize-card h1 {
+  margin: 0 0 14px;
+  font-size: clamp(2rem, 8vw, 3rem);
+  line-height: 1.05;
+}
+
+.authorize-card p {
+  color: #b9c7e5;
+  line-height: 1.6;
+}
+
+.authorize-eyebrow {
+  margin: 0 0 10px;
+  color: #7fb4ff;
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}

@@ -1,11 +1,11 @@
 {
   "magna_verify_meter_hook-MagnaVerifyMeterHook.json": {
     "contractName": "MagnaVerifyMeterHook",
-    "hash": "82d46ecb50ef4dc3a248174d8993febc54d3d3b7a28f4b5e4b3f00d9155f9d10"
+    "hash": "1dfa758b254af8b27e72ff19826afdeeaa47d6a4c76ef20ccfc1f731fbc36148"
   },
   "magna_verify_meter_hook_instant-MagnaVerifyMeterHookInstant.json": {
     "contractName": "MagnaVerifyMeterHookInstant",
-    "hash": "e9cdc00919788c45dcee80ce77571860a95992cf383ae3654306d99b84aebe00"
+    "hash": "3058f8e2b17f942a35593a3fa922c6d0bb4d3aedc4d2c75759b0e04c43d1b930"
   },
   "magna_issuer-MagnaIssuer.json": {
     "contractName": "MagnaIssuer",
@@ -13,22 +13,22 @@
   },
   "magna_consumer-MagnaConsumer.json": {
     "contractName": "MagnaConsumer",
-    "hash": "351fa1a125bd5a549ce5f231447a8ff58df95126e7fa1f219f38b8ee84a24509"
+    "hash": "d2580cde1d98e09cbc2ee072660957d30f209a4b5f2320c83d9fd81c31c5d6bc"
   },
   "magna_company_sponsor-MagnaCompanySponsor.json": {
     "contractName": "MagnaCompanySponsor",
-    "hash": "a41c489109824363bb92efc11f50d184042dde613b26a80d746886f66e881b62"
+    "hash": "16db6cfa246aa94941d96fb0ec2560882b84b8f2751692cc4dc0e5840d1133c8"
   },
   "magna_company_rights_registry-MagnaCompanyRightsRegistry.json": {
     "contractName": "MagnaCompanyRightsRegistry",
-    "hash": "f910901d08a6a5cf320eee3f2a34dcbbdf0b757dde2f6e7d4026a4420b07d29d"
+    "hash": "f552d7744b8f5d7f56f9af944dfd9f08136eef54e6b4bc4308c02a4d45cad25d"
   },
   "magna_rights_purchase_l2-MagnaRightsPurchaseL2.json": {
     "contractName": "MagnaRightsPurchaseL2",
-    "hash": "cab2f67e5ac0be2a5c3292e7d7903fcd26bfe1211386ff52452ec549be3d1d9b"
+    "hash": "45e5490b22b2f540d195effce5bb704ec6f72f8b5d6969762414370c58843fea"
   },
   "magna_webauthn_account-MagnaWebAuthnAccount.json": {
     "contractName": "MagnaWebAuthnAccount",
-    "hash": "d0bdf7471724893cbd0bb9c5f8e8952b19bd9039939150557e158b52ef5e541f"
+    "hash": "4bc23ccc49b14bc9b4791a3eddf5f14c273657d84ee1b084ed02b082a358ecc6"
   }
 }

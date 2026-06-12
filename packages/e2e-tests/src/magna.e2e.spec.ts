@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes, webcrypto } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +12,7 @@ import type { FeePaymentMethod } from "@aztec/aztec.js/fee";
 import { Fr } from "@aztec/aztec.js/fields";
 import { ProtocolContractAddress } from "@aztec/aztec.js/protocol";
 import { ExecutionPayload } from "@aztec/aztec.js/tx";
+import { AccountManager } from "@aztec/aztec.js/wallet";
 import { getFeeJuiceBalance } from "@aztec/aztec.js/utils";
 import { createExtendedL1Client } from "@aztec/ethereum/client";
 import { deployL1Contract } from "@aztec/ethereum/deploy-l1-contract";
@@ -38,9 +39,13 @@ import {
 } from "@magna/contracts-bindings";
 import {
   CredentialType,
+  MagnaWebAuthnAccountContract,
   computeInstagramClaimsHash,
   computeInstagramHandleHash,
+  normalizeSToLow,
   poseidon2FieldHasher,
+  type WebAuthnAsserter,
+  type WebAuthnRegistration,
 } from "@magna/wallet";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -63,6 +68,10 @@ const AZTEC_FEE_JUICE_WITNESS_WAIT_MS = Number.parseInt(
 );
 const AZTEC_FEE_JUICE_WITNESS_POLL_MS = Number.parseInt(
   process.env.AZTEC_FEE_JUICE_WITNESS_POLL_MS ?? "15000",
+  10,
+);
+const AZTEC_PXE_SYNC_AFTER_WARP_ATTEMPTS = Number.parseInt(
+  process.env.AZTEC_PXE_SYNC_AFTER_WARP_ATTEMPTS ?? "120",
   10,
 );
 const TRANSIENT_LOCAL_NETWORK_TX_RETRY_ATTEMPTS = Number.parseInt(
@@ -459,7 +468,7 @@ async function waitForNodeWithTimeout(
 }
 
 async function syncWalletPxeAfterWarp(label: string, wallet?: EmbeddedWallet): Promise<void> {
-  const debugSync = (
+  const debug = (
     wallet as EmbeddedWallet & {
       pxe?: {
         debug?: {
@@ -467,7 +476,8 @@ async function syncWalletPxeAfterWarp(label: string, wallet?: EmbeddedWallet): P
         };
       };
     }
-  )?.pxe?.debug?.sync;
+  )?.pxe?.debug;
+  const debugSync = debug?.sync;
 
   if (!debugSync) {
     await sleep(1_000);
@@ -478,14 +488,14 @@ async function syncWalletPxeAfterWarp(label: string, wallet?: EmbeddedWallet): P
   await retryUntil(
     async () => {
       try {
-        await debugSync();
+        await debugSync.call(debug);
         return true;
       } catch {
         return undefined;
       }
     },
     `${label} PXE sync after warp`,
-    30,
+    AZTEC_PXE_SYNC_AFTER_WARP_ATTEMPTS,
     1,
   );
 }
@@ -521,6 +531,77 @@ async function loadInitialAccount(
   );
   expect(account.address.equals(deployer)).toBe(true);
   return account.address;
+}
+
+
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+async function sha256Bytes(input: Uint8Array | Buffer | string): Promise<Uint8Array> {
+  const bytes = typeof input === "string" ? Buffer.from(input) : input;
+  return new Uint8Array(await webcrypto.subtle.digest("SHA-256", toArrayBuffer(new Uint8Array(bytes))));
+}
+
+async function createSimulatedWebAuthnRegistration(
+  rpId: string,
+  origin: string,
+): Promise<{ registration: WebAuthnRegistration; privateKey: CryptoKey }> {
+  const keyPair = await webcrypto.subtle.generateKey(
+    { name: "ECDSA", namedCurve: "P-256" },
+    true,
+    ["sign", "verify"],
+  );
+  if (!("privateKey" in keyPair)) {
+    throw new Error("expected WebAuthn fixture key pair");
+  }
+  const jwk = await webcrypto.subtle.exportKey("jwk", keyPair.publicKey);
+  if (!jwk.x || !jwk.y) {
+    throw new Error("generated P-256 public key is missing coordinates");
+  }
+  return {
+    privateKey: keyPair.privateKey,
+    registration: {
+      credentialId: webcrypto.getRandomValues(new Uint8Array(32)),
+      publicKey: {
+        x: new Uint8Array(Buffer.from(jwk.x, "base64url")),
+        y: new Uint8Array(Buffer.from(jwk.y, "base64url")),
+      },
+      rpId,
+      rpIdHash: await sha256Bytes(rpId),
+      origin,
+    },
+  };
+}
+
+function simulatedAsserter(privateKey: CryptoKey, rpId: string, origin: string): WebAuthnAsserter {
+  return async (challenge: Uint8Array) => {
+    const challengeB64 = Buffer.from(challenge).toString("base64url");
+    const clientDataJSON = Buffer.from(
+      `{"type":"webauthn.get","challenge":"${challengeB64}","origin":"${origin}","crossOrigin":false}`,
+    );
+    const rpIdHash = Buffer.from(createHash("sha256").update(rpId).digest());
+    const authenticatorData = Buffer.concat([rpIdHash, Buffer.from([0x05]), Buffer.from([0, 0, 0, 0])]);
+    const clientDataHash = Buffer.from(await sha256Bytes(clientDataJSON));
+    const rawSignature = new Uint8Array(
+      await webcrypto.subtle.sign(
+        { name: "ECDSA", hash: "SHA-256" },
+        privateKey,
+        toArrayBuffer(Buffer.concat([authenticatorData, clientDataHash])),
+      ),
+    );
+    if (rawSignature.length !== 64) {
+      throw new Error(`expected raw P-256 signature length 64, got ${rawSignature.length}`);
+    }
+    const signatureRS = new Uint8Array(64);
+    signatureRS.set(rawSignature.slice(0, 32), 0);
+    signatureRS.set(normalizeSToLow(rawSignature.slice(32)), 32);
+    return {
+      signatureRS,
+      authenticatorData: new Uint8Array(authenticatorData),
+      clientDataJSON: new Uint8Array(clientDataJSON),
+    };
+  };
 }
 
 async function createAndDeploySchnorrAccount(
@@ -585,6 +666,44 @@ async function createAndDeployEcdsaRAccount(
       }),
   );
   return { address: accountManager.address, deployTx };
+}
+
+
+async function createAndDeployWebAuthnAccount(
+  wallet: EmbeddedWallet,
+  feePayer: AztecAddress,
+  alias: string,
+): Promise<{ address: AztecAddress; deployTx: TxResultLike; accountManager: AccountManager }> {
+  const rpId = "localhost";
+  const origin = "http://localhost:5184";
+  const material = await runStep(
+    `simulated WebAuthn registration (${alias})`,
+    async () => await createSimulatedWebAuthnRegistration(rpId, origin),
+  );
+  const accountContract = new MagnaWebAuthnAccountContract(
+    material.registration,
+    simulatedAsserter(material.privateKey, rpId, origin),
+  );
+  const accountManager = await runStep(
+    `AccountManager.create(WebAuthn ${alias})`,
+    async () => await AccountManager.create(wallet, Fr.random(), accountContract, Fr.random()),
+  );
+  await runStep(`wallet.registerContract(WebAuthn ${alias})`, async () => {
+    await wallet.registerContract(
+      accountManager.getInstance(),
+      await accountManager.getAccountContract().getContractArtifact(),
+      accountManager.getSecretKey(),
+    );
+  });
+  const deployMethod = await runStep(
+    `getDeployMethod(WebAuthn ${alias})`,
+    async () => await accountManager.getDeployMethod(),
+  );
+  const deployTx = await runStep(
+    `account deployment (WebAuthn ${alias})`,
+    async () => await deployMethod.send({ from: feePayer }),
+  );
+  return { address: accountManager.address, deployTx, accountManager };
 }
 
 async function bridgeFeeJuiceToAddress(
@@ -763,6 +882,8 @@ type E2EContext = {
   l2Treasury: AztecAddress;
   verifyMeterHook: MagnaVerifyMeterHookContract;
   consumer: MagnaConsumerContract;
+  secondaryConsumer: MagnaConsumerContract;
+  unregisteredConsumer: MagnaConsumerContract;
   verifyMeterHookInstant: MagnaVerifyMeterHookInstantContract;
   issuerWithInstantMeterHook: MagnaIssuerContract;
   claimsHash: bigint;
@@ -1034,6 +1155,20 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
           from: orchestrator,
         }),
     );
+    const secondaryConsumerDeployReceipt = await runStep(
+      "deploy secondary MagnaConsumer",
+      async () =>
+        await MagnaConsumerContract.deploy(embeddedWallet, issuerDeployReceipt.contract.address).send({
+          from: orchestrator,
+        }),
+    );
+    const unregisteredConsumerDeployReceipt = await runStep(
+      "deploy unregistered MagnaConsumer",
+      async () =>
+        await MagnaConsumerContract.deploy(embeddedWallet, issuerDeployReceipt.contract.address).send({
+          from: orchestrator,
+        }),
+    );
     const verifyMeterHookInstantDeployReceipt = await runStep(
       "deploy MagnaVerifyMeterHookInstant",
       async () =>
@@ -1065,6 +1200,8 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
     const l2Treasury = orchestrator;
     const verifyMeterHook = verifyMeterHookDeployReceipt.contract;
     const consumer = consumerDeployReceipt.contract;
+    const secondaryConsumer = secondaryConsumerDeployReceipt.contract;
+    const unregisteredConsumer = unregisteredConsumerDeployReceipt.contract;
     const verifyMeterHookInstant = verifyMeterHookInstantDeployReceipt.contract;
     const issuerWithInstantMeterHook = issuerWithInstantMeterHookDeployReceipt.contract;
     const initPortalTxHash = await runStep(
@@ -1114,6 +1251,8 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
       verifyMeterHookDeployReceipt,
     );
     const consumerDeployTxHash = logTxReceipt("bootstrap.deploy_magna_consumer", consumerDeployReceipt);
+    const secondaryConsumerDeployTxHash = logTxReceipt("bootstrap.deploy_secondary_magna_consumer", secondaryConsumerDeployReceipt);
+    const unregisteredConsumerDeployTxHash = logTxReceipt("bootstrap.deploy_unregistered_magna_consumer", unregisteredConsumerDeployReceipt);
     const verifyMeterHookInstantDeployTxHash = logTxReceipt(
       "bootstrap.deploy_magna_verify_meter_hook_instant",
       verifyMeterHookInstantDeployReceipt,
@@ -1219,6 +1358,15 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
       "bootstrap.issuer_add_consumer_gateway",
       addConsumerGatewayReceipt,
     );
+    const addSecondaryConsumerGatewayReceipt = await runStep("issuer.add_consumer_gateway(secondary consumer)", async () => {
+      return await issuer.methods
+        .add_consumer_gateway(secondaryConsumer.address)
+        .send({ from: orchestrator });
+    });
+    const addSecondaryConsumerGatewayTxHash = logTxReceipt(
+      "bootstrap.issuer_add_secondary_consumer_gateway",
+      addSecondaryConsumerGatewayReceipt,
+    );
     await runStep("warp for issuer.add_consumer_gateway activation", async () => {
       await warpForwardSeconds(
         "issuer.add_consumer_gateway activation",
@@ -1254,6 +1402,8 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
       l2Treasury,
       verifyMeterHook,
       consumer,
+      secondaryConsumer,
+      unregisteredConsumer,
       verifyMeterHookInstant,
       issuerWithInstantMeterHook,
       claimsHash,
@@ -1272,6 +1422,8 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
           l2RightsPurchaseDeployTxHash,
           verifyMeterHookDeployTxHash,
           consumerDeployTxHash,
+          secondaryConsumerDeployTxHash,
+          unregisteredConsumerDeployTxHash,
           verifyMeterHookInstantDeployTxHash,
           issuerWithInstantMeterHookDeployTxHash,
           setVerifyMeterHookIssuerTxHash,
@@ -1283,6 +1435,7 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
           initializeL2PurchaseAdapterTxHash,
           seedSponsorRightsTxHash,
           addConsumerGatewayTxHash,
+          addSecondaryConsumerGatewayTxHash,
         ],
       },
     };
@@ -1299,6 +1452,8 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
     expect(ready.companySponsor.address).toBeDefined();
     expect(ready.verifyMeterHook.address).toBeDefined();
     expect(ready.consumer.address).toBeDefined();
+    expect(ready.secondaryConsumer.address).toBeDefined();
+    expect(ready.unregisteredConsumer.address).toBeDefined();
     expect(ready.verifyMeterHookInstant.address).toBeDefined();
     expect(ready.issuerWithInstantMeterHook.address).toBeDefined();
     logTrace("passed.bootstraps accounts and deploys contracts.tx_ids", ready.txHashesByPhase.bootstrap);
@@ -1509,7 +1664,7 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
     );
   }, 90_000);
 
-  it("consumer dApp gate accepts Magna-compatible claims", async () => {
+  it("registered consumer gateways accept Magna-compatible claims and unregistered gateway is rejected", async () => {
     const ready = requireHintedContext(ctx);
     const loginCountBefore = toBigIntValue(
       await runStep(
@@ -1518,20 +1673,38 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
           await ready.consumer.methods.get_gated_login_count().simulate({ from: ready.activeOwner }),
       ),
     );
+    const secondaryLoginCountBefore = toBigIntValue(
+      await runStep(
+        "secondaryConsumer.get_gated_login_count (before)",
+        async () =>
+          await ready.secondaryConsumer.methods.get_gated_login_count().simulate({ from: ready.activeOwner }),
+      ),
+    );
+
+    const loginArgs = [
+      { credential_type: ready.credentialType, constraints: ready.constraints },
+      ready.hintedCredential,
+      ready.hintedStatus,
+      ready.minAgeProven,
+      ready.nationalityPacked,
+      0,
+    ] as const;
+
     const consumerGateTx = await runStep(
       "consumer.login_with_magna",
-      async () =>
-        await ready.consumer.methods
-          .login_with_magna(
-            { credential_type: ready.credentialType, constraints: ready.constraints },
-            ready.hintedCredential,
-            ready.hintedStatus,
-            ready.minAgeProven,
-            ready.nationalityPacked,
-            0,
-          )
-          .send({ from: ready.activeOwner }),
+      async () => await ready.consumer.methods.login_with_magna(...loginArgs).send({ from: ready.activeOwner }),
     );
+    const secondaryConsumerGateTx = await runStep(
+      "secondaryConsumer.login_with_magna",
+      async () => await ready.secondaryConsumer.methods.login_with_magna(...loginArgs).send({ from: ready.activeOwner }),
+    );
+    await expect(
+      runStep(
+        "unregisteredConsumer.login_with_magna rejects",
+        async () => await ready.unregisteredConsumer.methods.login_with_magna(...loginArgs).send({ from: ready.activeOwner }),
+      ),
+    ).rejects.toThrow(/consumer only/);
+
     const loginCountAfter = toBigIntValue(
       await runStep(
         "consumer.get_gated_login_count (after)",
@@ -1539,14 +1712,23 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
           await ready.consumer.methods.get_gated_login_count().simulate({ from: ready.activeOwner }),
       ),
     );
+    const secondaryLoginCountAfter = toBigIntValue(
+      await runStep(
+        "secondaryConsumer.get_gated_login_count (after)",
+        async () =>
+          await ready.secondaryConsumer.methods.get_gated_login_count().simulate({ from: ready.activeOwner }),
+      ),
+    );
     expect(loginCountAfter).toEqual(loginCountBefore + 1n);
+    expect(secondaryLoginCountAfter).toEqual(secondaryLoginCountBefore + 1n);
     const consumerGateTxHash = logTxReceipt("consumer_login_with_magna", consumerGateTx);
-    ready.txHashesByPhase.consumer_gate = [consumerGateTxHash];
+    const secondaryConsumerGateTxHash = logTxReceipt("secondary_consumer_login_with_magna", secondaryConsumerGateTx);
+    ready.txHashesByPhase.consumer_gate = [consumerGateTxHash, secondaryConsumerGateTxHash];
     logTrace(
-      "passed.consumer dApp gate accepts Magna-compatible claims.tx_ids",
+      "passed.registered consumer gateways accept Magna-compatible claims.tx_ids",
       ready.txHashesByPhase.consumer_gate,
     );
-  }, 90_000);
+  }, 120_000);
 
   it("rejects recover when called by wrong caller", async () => {
     const ready = requireHintedContext(ctx);
@@ -3903,4 +4085,108 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
       ready.txHashesByPhase.passkey_orchestrator,
     );
   }, 240_000);
+
+  it("supports WebAuthn account-contract orchestrator flow", async () => {
+    const ready = requireContext(ctx);
+    const webAuthnOrchestratorDeployment = await createAndDeployWebAuthnAccount(
+      ready.wallet,
+      ready.orchestrator,
+      "orchestrator-webauthn",
+    );
+    const webAuthnOrchestrator = webAuthnOrchestratorDeployment.address;
+    const webAuthnOrchestratorDeployTxHash = logTxReceipt(
+      "bootstrap.webauthn_orchestrator_deploy",
+      webAuthnOrchestratorDeployment.deployTx,
+    );
+    await runStep(
+      "wallet.registerSender(webauthn orchestrator)",
+      async () => await ready.wallet.registerSender(webAuthnOrchestrator, "orchestrator-webauthn"),
+    );
+    const walletWithAccountOverride = ready.wallet as EmbeddedWallet & {
+      getAccountFromAddress: (address: AztecAddress) => Promise<unknown>;
+    };
+    const fallbackGetAccountFromAddress = walletWithAccountOverride.getAccountFromAddress.bind(ready.wallet);
+    walletWithAccountOverride.getAccountFromAddress = async (address: AztecAddress) => {
+      if (address.equals(webAuthnOrchestrator)) {
+        return await webAuthnOrchestratorDeployment.accountManager.getAccount();
+      }
+      return await fallbackGetAccountFromAddress(address);
+    };
+
+    const issuerWebAuthnDeployReceipt = await runStep(
+      "deploy MagnaIssuer (allowlist WebAuthn orchestrator)",
+      async () =>
+        await (MagnaIssuerContract.deploy as unknown as (
+          wallet: EmbeddedWallet,
+          orchestratorAddress: AztecAddress,
+          fpcPolicyAddress: AztecAddress,
+        ) => {
+          send: (opts: { from: AztecAddress }) => Promise<{
+            contract: MagnaIssuerContract;
+            receipt: TxReceiptLike;
+          }>;
+        })(ready.wallet, webAuthnOrchestrator, AztecAddress.ZERO).send({
+          from: ready.orchestrator,
+        }),
+    );
+    const issuerWebAuthn = issuerWebAuthnDeployReceipt.contract;
+    const issuerWebAuthnDeployTxHash = logTxReceipt(
+      "deploy_magna_issuer_webauthn_orchestrator",
+      issuerWebAuthnDeployReceipt,
+    );
+
+    const webAuthnMinAge = 31;
+    const webAuthnNationality = packAlpha3("NZL");
+    const webAuthnExpiryTs = 2_293_456_000n;
+    const webAuthnClaimsHash = computeClaimsHash(
+      1n,
+      ready.credentialType,
+      webAuthnNationality,
+      webAuthnMinAge,
+      webAuthnExpiryTs,
+    );
+
+    const webAuthnFundingClaim = await bridgeFeeJuiceToAddress(ready.node, webAuthnOrchestrator);
+    await runStep("mine L2 blocks for WebAuthn orchestrator Fee Juice bridge ingestion", async () => {
+      await mineTwoL2BlocksForBridgeIngestion(
+        ready.l2PaymentToken,
+        ready.orchestrator,
+        "WebAuthn orchestrator Fee Juice bridge ingestion",
+      );
+    });
+    const webAuthnFunding = await claimBridgedFeeJuice(
+      ready.node,
+      ready.wallet,
+      ready.orchestrator,
+      webAuthnOrchestrator,
+      webAuthnFundingClaim,
+    );
+    expect(webAuthnFunding.balanceAfterClaim).toBeGreaterThan(0n);
+
+    const registerWebAuthnTx = await runStep(
+      "register_credential (WebAuthn orchestrator issuer)",
+      async () =>
+        await issuerWebAuthn.methods
+          .register_credential(
+            ready.activeOwner,
+            ready.ghostOwner,
+            webAuthnClaimsHash,
+            ready.credentialType,
+            webAuthnExpiryTs,
+          )
+          .send({ from: webAuthnOrchestrator }),
+    );
+    const registerWebAuthnTxHash = logTxReceipt("register_credential_webauthn_orchestrator", registerWebAuthnTx);
+
+    ready.txHashesByPhase.webauthn_orchestrator = [
+      webAuthnOrchestratorDeployTxHash,
+      issuerWebAuthnDeployTxHash,
+      registerWebAuthnTxHash,
+    ];
+    logTrace(
+      "passed.supports WebAuthn account-contract orchestrator flow.tx_ids",
+      ready.txHashesByPhase.webauthn_orchestrator,
+    );
+  }, 300_000);
+
 });
