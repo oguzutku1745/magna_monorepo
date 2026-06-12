@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
-import { ClaimId, ConstraintOp, CredentialType } from "./types.js";
+import { ClaimId, ConstraintOp, CredentialType } from "@magna/core";
 import { MAX_CONSTRAINTS, instagramHandleEqConstraint, normalizePolicy } from "./policy.js";
 
 describe("policy normalization", () => {

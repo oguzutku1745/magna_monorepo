@@ -1,10 +1,6 @@
 import { poseidon2HashWithSeparator } from "@aztec/foundation/crypto/sync";
-import {
-  CredentialType,
-  type Hasher,
-  type InstagramCanonicalClaims,
-  type PassportCanonicalClaims,
-} from "./types.js";
+import { CredentialType } from "@magna/core";
+import type { Hasher, InstagramCanonicalClaims, PassportCanonicalClaims } from "./types.js";
 
 export const MAGNA_CLAIMS_DS = 0x4d414743n; // "MAGC"
 export const MAGNA_REVOCATION_DS = 0x4d415247n; // "MARG"

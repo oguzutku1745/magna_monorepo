@@ -5,7 +5,7 @@ import {
   type QueryResultErrors,
   ZKPassport,
 } from "@zkpassport/sdk";
-import type { GhostDerivationVersion } from "../../../../packages/magna-client/src/types.js";
+import type { GhostDerivationVersion } from "@magna/wallet";
 
 export type ZkPassportRequestMetadata = {
   name: string;

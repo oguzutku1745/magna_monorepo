@@ -12,22 +12,23 @@ import {
   MagnaRightsPurchaseL2Contract,
 } from "@magna/contracts-bindings";
 import { TokenContract } from "@aztec/noir-contracts.js/Token";
-import { buildCompanySponsorFeeConfig } from "../../../../packages/magna-client/src/sponsorship.js";
+import { buildCompanySponsorFeeConfig } from "@magna/wallet";
 import {
   deriveGhostKeyMaterial,
   LEGACY_GHOST_DERIVATION_VERSION,
   SCOPED_GHOST_DERIVATION_VERSION,
-} from "../../../../packages/magna-client/src/ghost.js";
-import { deriveRootCommitment } from "../../../../packages/magna-client/src/root.js";
-import type { PassportCanonicalClaims, Policy } from "../../../../packages/magna-client/src/types.js";
+  type GhostDerivationVersion,
+  type GhostKeyMaterial,
+  type PassportCanonicalClaims,
+} from "@magna/wallet";
+import { deriveRootCommitment } from "@magna/wallet";
+import type { Policy } from "@magna/core";
 import {
   ClaimId,
   ConstraintOp,
   CredentialType,
-  type GhostDerivationVersion,
-  type GhostKeyMaterial,
-} from "../../../../packages/magna-client/src/types.js";
-import { normalizePolicy } from "../../../../packages/magna-client/src/policy.js";
+} from "@magna/core";
+import { normalizePolicy } from "@magna/core";
 import {
   bindCompanySponsorContract,
   bindIssuerContract,

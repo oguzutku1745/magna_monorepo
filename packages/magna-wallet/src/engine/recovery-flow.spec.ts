@@ -1,11 +1,9 @@
 import { createHash } from "node:crypto";
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
-import { MagnaClient } from "./client.js";
-import {
-  CredentialType,
-  type PassportCanonicalClaims,
-} from "./types.js";
+import { MagnaVerificationEngine } from "./verification-engine.js";
+import { CredentialType } from "@magna/core";
+import type { PassportCanonicalClaims } from "./types.js";
 import {
   MAGNA_GHOST_DS,
   computeRevocationNullifier,
@@ -42,7 +40,7 @@ describe("ghost recovery flow", () => {
     const uniqueIdentifier = 0x0123456789abcdefn;
 
     // Device A derives ghost wallet material from zkPassport uniqueIdentifier.
-    const bootstrapClient = new MagnaClient({
+    const bootstrapClient = new MagnaVerificationEngine({
       orchestratorAddress,
       issuerContract: { methods: {} } as never,
       hasher: poseidon2FieldHasher,
@@ -125,7 +123,7 @@ describe("ghost recovery flow", () => {
       },
     };
 
-    const clientA = new MagnaClient({
+    const clientA = new MagnaVerificationEngine({
       orchestratorAddress,
       issuerContract: mockIssuer as never,
       hasher: poseidon2FieldHasher,
@@ -141,7 +139,7 @@ describe("ghost recovery flow", () => {
     assert.ok(issuedRecovery, "recovery note should be delivered to ghost owner");
 
     // Device B re-derives same ghost wallet from the same uniqueIdentifier.
-    const clientB = new MagnaClient({
+    const clientB = new MagnaVerificationEngine({
       orchestratorAddress,
       issuerContract: mockIssuer as never,
       hasher: poseidon2FieldHasher,

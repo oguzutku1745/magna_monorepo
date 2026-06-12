@@ -20,7 +20,7 @@ import {
   packAlpha3,
   type GhostDerivationVersion,
   type PassportCanonicalClaims,
-} from "@magna/client";
+} from "@magna/wallet";
 import { MagnaIssuerContract } from "@magna/contracts-bindings";
 import type { ProofResult, Query, QueryResult } from "@zkpassport/sdk";
 

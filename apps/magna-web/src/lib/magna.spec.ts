@@ -14,7 +14,7 @@ import {
   readSponsorSlot,
 } from "./magna";
 import { getAppEnv } from "./env";
-import { ClaimId, ConstraintOp } from "../../../../packages/magna-client/src/types.js";
+import { ClaimId, ConstraintOp } from "@magna/core";
 
 const sponsorContracts = new Map<string, any>();
 let issuerContractMock: any;

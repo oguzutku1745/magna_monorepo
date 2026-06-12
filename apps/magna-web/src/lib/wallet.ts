@@ -19,8 +19,9 @@ import { Buffer } from "buffer";
 import {
   SCOPED_GHOST_DERIVATION_VERSION,
   deriveGhostKeyMaterial,
-} from "../../../../packages/magna-client/src/ghost.js";
-import { type CredentialType, type GhostDerivationVersion } from "../../../../packages/magna-client/src/types.js";
+  type GhostDerivationVersion,
+} from "@magna/wallet";
+import type { CredentialType } from "@magna/core";
 import { getChainInfo, stringifyAddress } from "./aztec";
 import { derivePasskeyDeterministicBytes } from "./passkey";
 

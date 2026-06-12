@@ -18,7 +18,8 @@
     "@magna/contracts-bindings": "0.1.0",
     "@zkpassport/sdk": "0.15.1",
     "cors": "latest",
-    "express": "latest"
+    "express": "latest",
+    "@magna/wallet": "0.1.0"
   },
   "devDependencies": {
     "@types/cors": "latest",

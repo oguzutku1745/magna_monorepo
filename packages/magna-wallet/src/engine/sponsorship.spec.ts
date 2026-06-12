@@ -1,16 +1,16 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
 import { AztecAddress } from "@aztec/aztec.js/addresses";
-import { MagnaClient } from "./client.js";
+import { MagnaVerificationEngine } from "./verification-engine.js";
 import { buildSponsoredFeeConfig } from "./sponsorship.js";
-import { CredentialType } from "./types.js";
+import { CredentialType } from "@magna/core";
 
 describe("company sponsor fee config", () => {
   it("attaches an external fee payer when logging in via the company sponsor gateway", async () => {
     const sponsorAddress = { kind: "company-sponsor-address" };
     let capturedSendOptions: { from: string; fee?: unknown } | undefined;
 
-    const client = new MagnaClient({
+    const client = new MagnaVerificationEngine({
       orchestratorAddress: "0x1111111111111111111111111111111111111111",
       issuerContract: { methods: {} } as never,
       companySponsorContract: {

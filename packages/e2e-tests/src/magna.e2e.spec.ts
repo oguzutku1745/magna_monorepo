@@ -41,7 +41,7 @@ import {
   computeInstagramClaimsHash,
   computeInstagramHandleHash,
   poseidon2FieldHasher,
-} from "@magna/client";
+} from "@magna/wallet";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const runE2E = process.env.AZTEC_E2E === "1";

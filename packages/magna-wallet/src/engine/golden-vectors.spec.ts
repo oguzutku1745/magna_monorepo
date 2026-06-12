@@ -13,7 +13,8 @@ import {
   poseidon2FieldHasher,
 } from "./encoding.js";
 import { GOLDEN_DS, GOLDEN_INPUTS, GOLDEN_OUTPUTS } from "./generated-golden-vectors.js";
-import { CredentialType, type PassportCanonicalClaims } from "./types.js";
+import { CredentialType } from "@magna/core";
+import type { PassportCanonicalClaims } from "./types.js";
 
 describe("Noir↔TS golden vectors", () => {
   it("ghost DS is separated from revocation DS", () => {

@@ -1,16 +1,16 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
-import { MagnaClient } from "./client.js";
+import { MagnaVerificationEngine } from "./verification-engine.js";
 import { computeInstagramClaimsHash, computePassportClaimsHash, poseidon2FieldHasher } from "./encoding.js";
-import { ClaimId, ConstraintOp, CredentialType } from "./types.js";
-import { normalizePolicy } from "./policy.js";
+import { ClaimId, ConstraintOp, CredentialType } from "@magna/core";
+import { normalizePolicy } from "@magna/core";
 
-describe("MagnaClient login flows", () => {
+describe("MagnaVerificationEngine login flows", () => {
   it("registerRoot forwards the root registration call shape", async () => {
     let capturedArgs: unknown[] | undefined;
     let capturedSendOptions: { from: string; fee?: unknown } | undefined;
 
-    const client = new MagnaClient({
+    const client = new MagnaVerificationEngine({
       orchestratorAddress: "0x1111111111111111111111111111111111111111",
       issuerContract: {
         methods: {
@@ -60,7 +60,7 @@ describe("MagnaClient login flows", () => {
     let capturedArgs: unknown[] | undefined;
     let capturedSendOptions: { from: string; fee?: unknown } | undefined;
 
-    const client = new MagnaClient({
+    const client = new MagnaVerificationEngine({
       orchestratorAddress: "0x1111111111111111111111111111111111111111",
       issuerContract: {
         methods: {
@@ -122,7 +122,7 @@ describe("MagnaClient login flows", () => {
     let capturedArgs: unknown[] | undefined;
     let capturedSendOptions: { from: string; fee?: unknown } | undefined;
 
-    const client = new MagnaClient({
+    const client = new MagnaVerificationEngine({
       orchestratorAddress: "0x1111111111111111111111111111111111111111",
       issuerContract: {
         methods: {
@@ -170,7 +170,7 @@ describe("MagnaClient login flows", () => {
   });
 
   it("loginWithCompanySponsor rejects when companySponsorContract is missing", async () => {
-    const client = new MagnaClient({
+    const client = new MagnaVerificationEngine({
       orchestratorAddress: "0x1111111111111111111111111111111111111111",
       issuerContract: { methods: {} } as never,
     });
@@ -196,7 +196,7 @@ describe("MagnaClient login flows", () => {
   });
 
   it("loginWithCompanySponsor rejects when companySponsorContract.address is missing", async () => {
-    const client = new MagnaClient({
+    const client = new MagnaVerificationEngine({
       orchestratorAddress: "0x1111111111111111111111111111111111111111",
       issuerContract: { methods: {} } as never,
       companySponsorContract: {
@@ -241,7 +241,7 @@ describe("MagnaClient login flows", () => {
         }),
       },
     };
-    const client = new MagnaClient({
+    const client = new MagnaVerificationEngine({
       orchestratorAddress: "0x1111111111111111111111111111111111111111",
       issuerContract: { methods: {} } as never,
       companySponsorContracts: [sponsorA as never],
@@ -290,7 +290,7 @@ describe("MagnaClient login flows", () => {
         }),
       },
     };
-    const client = new MagnaClient({
+    const client = new MagnaVerificationEngine({
       orchestratorAddress: "0x1111111111111111111111111111111111111111",
       issuerContract: { methods: {} } as never,
       companySponsorContract: sponsorA as never,
@@ -321,7 +321,7 @@ describe("MagnaClient login flows", () => {
     let capturedRevokeArgs: unknown[] | undefined;
     let capturedRevokeSend: { from: string; fee?: unknown } | undefined;
 
-    const client = new MagnaClient({
+    const client = new MagnaVerificationEngine({
       orchestratorAddress: "0x1111111111111111111111111111111111111111",
       issuerContract: {
         methods: {
@@ -390,7 +390,7 @@ describe("MagnaClient login flows", () => {
       expiryTs: 1_893_456_000n,
     };
 
-    const client = new MagnaClient({
+    const client = new MagnaVerificationEngine({
       orchestratorAddress: "0x1111111111111111111111111111111111111111",
       issuerContract: {
         methods: {
@@ -475,7 +475,7 @@ describe("MagnaClient login flows", () => {
       expiryTs: 1_893_456_000n,
     };
 
-    const client = new MagnaClient({
+    const client = new MagnaVerificationEngine({
       orchestratorAddress: "0x1111111111111111111111111111111111111111",
       issuerContract: {
         methods: {

@@ -5,7 +5,7 @@ import {
 } from "./encoding.js";
 import { deriveGhostKeyMaterial } from "./ghost.js";
 import { deriveRootCommitment } from "./root.js";
-import { normalizePolicy } from "./policy.js";
+import { normalizePolicy } from "@magna/core";
 import { buildCompanySponsorFeeConfig } from "./sponsorship.js";
 import type { ContractLike } from "@magna/contracts-bindings";
 import type {
@@ -39,7 +39,7 @@ type AztecContract = {
 type BoundContract = ContractLike;
 type SendableContract = AztecContract | BoundContract;
 
-export type MagnaClientConfig = {
+export type MagnaVerificationEngineConfig = {
   orchestratorAddress: string;
   issuerContract: SendableContract;
   companySponsorContract?: SendableContract;
@@ -51,7 +51,7 @@ export type MagnaClientConfig = {
  * High-level SDK wrapper for Magna register/login/recover lifecycle.
  * This class assumes the caller already owns wallet/session wiring.
  */
-export class MagnaClient {
+export class MagnaVerificationEngine {
   private readonly orchestratorAddress: string;
   private readonly issuerContract: AztecContract;
   private readonly companySponsorContract?: AztecContract;
@@ -59,7 +59,7 @@ export class MagnaClient {
   private readonly companySponsorContractsByAddress: Map<string, AztecContract>;
   private readonly hasher: Hasher;
 
-  constructor(config: MagnaClientConfig) {
+  constructor(config: MagnaVerificationEngineConfig) {
     this.orchestratorAddress = config.orchestratorAddress;
     this.issuerContract = config.issuerContract;
     this.companySponsorContract = config.companySponsorContract;

@@ -2,13 +2,13 @@ import {
   ClaimId,
   ConstraintOp,
   CredentialType,
-  MagnaClient,
   packAlpha3,
+  type MagnaVerificationEngine,
   type Policy,
-} from "@magna/client";
+} from "@magna/wallet";
 
 type Dependencies = {
-  magnaClient: MagnaClient;
+  magnaClient: MagnaVerificationEngine;
   userAddress: string;
   hintedCredentialNote: unknown;
   hintedStatusNote: unknown;

@@ -1,9 +1,5 @@
-import {
-  CredentialType,
-  type GhostDerivationInput,
-  type GhostDerivationVersion,
-  type GhostKeyMaterial,
-} from "./types.js";
+import { CredentialType } from "@magna/core";
+import type { GhostDerivationInput, GhostDerivationVersion, GhostKeyMaterial } from "./types.js";
 import { MAGNA_GHOST_DS, poseidon2FieldHasher } from "./encoding.js";
 
 export function recoveryScope(credentialType: CredentialType): string {

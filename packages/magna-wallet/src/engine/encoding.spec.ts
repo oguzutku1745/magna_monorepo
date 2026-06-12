@@ -6,7 +6,7 @@ import {
   packAlpha3,
   poseidon2FieldHasher,
 } from "./encoding.js";
-import { CredentialType } from "./types.js";
+import { CredentialType } from "@magna/core";
 
 describe("packAlpha3", () => {
   it("packs USA deterministically", () => {

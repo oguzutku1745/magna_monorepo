@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@magna/client": "0.1.0"
+    "@magna/client": "0.1.0",
+    "@magna/wallet": "0.1.0"
   },
   "scripts": {
     "build": "echo \"Static reference app\"",

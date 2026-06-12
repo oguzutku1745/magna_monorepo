@@ -4,7 +4,7 @@ These vectors are deterministic lock points used by both:
 
 - Source of truth: `vectors/golden-vectors.json`
 - Generated Noir constants: `contracts/magna-issuer/src/test/generated_golden_vectors.nr`
-- Generated TS constants: `packages/magna-client/src/generated-golden-vectors.ts`
+- Generated TS constants: `packages/magna-wallet/src/engine/generated-golden-vectors.ts`
 - Sync command: `npm run vectors:sync`
 
 ## Claims hash

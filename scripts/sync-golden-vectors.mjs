@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(SCRIPT_DIR, "..");
 const SOURCE_PATH = resolve(ROOT, "vectors/golden-vectors.json");
-const TS_OUT_PATH = resolve(ROOT, "packages/magna-client/src/generated-golden-vectors.ts");
+const TS_OUT_PATH = resolve(ROOT, "packages/magna-wallet/src/engine/generated-golden-vectors.ts");
 const NOIR_OUT_PATH = resolve(ROOT, "contracts/magna-issuer/src/test/generated_golden_vectors.nr");
 
 function parseVectorJson() {
