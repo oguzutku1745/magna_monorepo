@@ -1,11 +1,14 @@
 import {
+  ClaimId,
   CredentialType,
+  ConstraintOp,
   MagnaClient,
   ageGteConstraint,
-  countryNeqConstraint,
   type MagnaLoginResult,
   type Policy,
 } from "@magna/client";
+
+export type { MagnaLoginResult };
 
 type ReferenceDappEnv = {
   VITE_MAGNA_WALLET_ORIGIN?: string;
@@ -24,10 +27,18 @@ export function packAlpha3(alpha3: string): bigint {
   return (BigInt(a) << 16n) | (BigInt(b) << 8n) | BigInt(c);
 }
 
-export function passportAdultNonUsPolicy(): Policy {
+export function countryEqConstraint(alpha3Packed: bigint) {
+  return {
+    claimId: ClaimId.NationalityAlpha3,
+    op: ConstraintOp.Eq,
+    value: alpha3Packed,
+  };
+}
+
+export function passportAdultUsPolicy(): Policy {
   return {
     credentialType: CredentialType.Passport,
-    constraints: [ageGteConstraint(18), countryNeqConstraint(packAlpha3("USA"))],
+    constraints: [ageGteConstraint(18), countryEqConstraint(packAlpha3("USA"))],
   };
 }
 
@@ -46,7 +57,7 @@ export function createReferenceMagnaClient(env: ReferenceDappEnv = referenceEnv(
 export async function loginWithMagnaExample(
   magna: MagnaClient = createReferenceMagnaClient(),
 ): Promise<MagnaLoginResult> {
-  return magna.login(passportAdultNonUsPolicy());
+  return magna.login(passportAdultUsPolicy());
 }
 
 export function unlockAppIfVerified(result: MagnaLoginResult, unlockApp: () => void): boolean {

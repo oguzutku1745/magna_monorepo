@@ -4,10 +4,21 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@magna/client": "0.2.0"
+    "@magna/client": "0.2.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^4.7.0",
+    "typescript": "^5.9.3",
+    "vite": "6.4.1"
   },
   "scripts": {
-    "build": "tsc --noEmit --skipLibCheck --module NodeNext --moduleResolution NodeNext --target ES2022 src/login-with-magna.ts",
+    "dev": "vite --port 5175",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 4175",
     "test": "echo \\\"No tests configured\\\"",
     "lint": "npm run build"
   }

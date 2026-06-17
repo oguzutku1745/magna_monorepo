@@ -116,6 +116,7 @@ export class MagnaClient {
     const timeoutMs = this.config.timeoutMs ?? 120_000;
     return new Promise<MagnaLoginResult>((resolve, reject) => {
       let settled = false;
+      let requestPosted = false;
       const cleanup: (() => void)[] = [];
       const finish = (fn: () => void) => {
         if (settled) return;
@@ -137,6 +138,8 @@ export class MagnaClient {
         if (!isObject(event.data)) return;
         const data = event.data;
         if (data.kind === "magna:ready") {
+          if (requestPosted) return;
+          requestPosted = true;
           popup.postMessage(request, this.config.walletOrigin);
           return;
         }

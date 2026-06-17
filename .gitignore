@@ -1,5 +1,112 @@
-node_modules
-dist
+# Dependencies
+node_modules/
+**/node_modules/
+.venv/
+**/.venv/
+venv/
+**/venv/
+
+# Build outputs
+dist/
+**/dist/
+build/
+**/build/
+coverage/
+**/coverage/
+.vite/
+**/.vite/
+.vitest/
+**/.vitest/
+*.tsbuildinfo
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+**/.pytest_cache/
+.mypy_cache/
+**/.mypy_cache/
+
+# Aztec / Noir generated artifacts
+target/
+**/target/
+artifacts/
+**/artifacts/
+src/artifacts/
+**/src/artifacts/
+codegenCache.json
+
+# Aztec local node / PXE / sandbox state
+.aztec/
+aztec-node/
+**/aztec-node/
+store/
+**/store/
+.store/
+**/.store/
+data/
+**/data/
+
+# Local deployments and generated run reports
+deployments/local*.json
+deployments/*.local.json
+reports/
+**/reports/
+
+# Environment files
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+!.env.template
+!**/.env.template
+
+# Logs and runtime output
+logs/
+**/logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Test and browser artifacts
+test-results/
+**/test-results/
+playwright-report/
+**/playwright-report/
+blob-report/
+**/blob-report/
+
+# Foundry / Solidity outputs
+out/
+**/out/
+cache/
+**/cache/
+broadcast/
+**/broadcast/
+
+# Local agent, scratch, and generated working files
+docs/
+.codex/
+.claude/
+.cursor/
+.worktrees/
+**/.worktrees/
+.tmp/
+**/.tmp/
+tmp/
+**/tmp/
+temp/
+**/temp/
+
+# OS and editor files
 .DS_Store
-target
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Product/design scratch assets
 Diagrams/

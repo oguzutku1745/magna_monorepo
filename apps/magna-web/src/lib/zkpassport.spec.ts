@@ -17,8 +17,11 @@ describe("verifyRootRecoveryPreflightThroughBackend", () => {
       json: async () => ({
         expectedGhostOwner: "0xghost",
         derivedGhostOwner: "0xghost",
+        expectedRootCommitment: "12345",
+        derivedRootCommitment: "12345",
         ghostDerivationVersion: "v2_scoped",
         matchesExpectedGhostOwner: true,
+        matchesExpectedRootCommitment: true,
         verificationSummary: {
           verified: true,
           uniqueIdentifierPresent: true,
@@ -38,6 +41,7 @@ describe("verifyRootRecoveryPreflightThroughBackend", () => {
       originalQuery: { id: "query-1" } as never,
       queryResult: { id: "result-1" } as never,
       expectedGhostOwner: "0xghost",
+      expectedRootCommitment: "12345",
       ghostDerivationVersion: "v2_scoped",
       ageThreshold: 21,
     });
@@ -69,6 +73,7 @@ describe("verifyRootRecoveryPreflightThroughBackend", () => {
         originalQuery: { id: "query-1" } as never,
         queryResult: { id: "result-1" } as never,
         expectedGhostOwner: "0xghost",
+        expectedRootCommitment: "12345",
         ghostDerivationVersion: "v2_scoped",
         ageThreshold: 21,
       }),

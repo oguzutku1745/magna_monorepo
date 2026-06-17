@@ -1,10 +1,16 @@
 import { AccountManager } from "@aztec/aztec.js/wallet";
 import { Fr } from "@aztec/aztec.js/fields";
+import { clearEmbeddedPxeCacheForNode, isAztecWorldStateAnchorError } from "../browser/pxe-cache.js";
 import { bytesToHex, hexToBytes } from "@magna/core";
 import { MagnaWebAuthnAccountContract } from "../webauthn/account-contract.js";
 import {
+  computeWebAuthnRpIdHash,
+  discoverWebAuthnAccountPrf,
+  evaluateWebAuthnAccountPrf,
   makeBrowserAsserter,
   registerWebAuthnCredential,
+  type WebAuthnDiscoveredPrfOutputs,
+  type WebAuthnPrfOutputs,
   type WebAuthnRegistration,
 } from "../webauthn/ceremony.js";
 import {
@@ -22,9 +28,18 @@ export type StoredWebAuthnAccount = {
   rpIdHash: string;
   rpId: string;
   origin: string;
-  secretKey: string;
-  salt: string;
   address: string;
+  walletMaterialSource: "webauthn-prf";
+};
+
+export type WebAuthnPublicKeyRecoveryBundle = {
+  kind: "magna-webauthn-public-key";
+  version: 1;
+  publicKeyX: string;
+  publicKeyY: string;
+  rpId?: string;
+  origin?: string;
+  address?: string;
 };
 
 export type WebAuthnWalletSessionOptions = {
@@ -32,6 +47,7 @@ export type WebAuthnWalletSessionOptions = {
   userName: string;
   rpId: string;
   alias: string;
+  publicKeyRecoveryBundle?: string;
   storage?: Storage;
   localTestAccountIndex?: number;
   deployWithLocalTestAccount?: boolean;
@@ -69,17 +85,131 @@ export function saveStoredWebAuthnAccount(storage: Storage, account: StoredWebAu
   storage.setItem(STORAGE_KEY, JSON.stringify(all));
 }
 
+export function serializeWebAuthnPublicKeyRecoveryBundle(account: StoredWebAuthnAccount): string {
+  return `04${account.publicKeyX}${account.publicKeyY}`;
+}
+
+export function parseWebAuthnPublicKeyRecoveryBundle(input: string): WebAuthnPublicKeyRecoveryBundle {
+  const trimmed = input.trim();
+  const publicKey = parseUncompressedPublicKeyHex(trimmed);
+  if (publicKey) {
+    return {
+      kind: "magna-webauthn-public-key",
+      version: 1,
+      publicKeyX: publicKey.publicKeyX,
+      publicKeyY: publicKey.publicKeyY,
+    };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    throw new Error("Public key must be uncompressed P-256 hex (04 + x + y) or a valid Magna public key JSON object");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Public key JSON must be an object");
+  }
+  const value = parsed as Partial<WebAuthnPublicKeyRecoveryBundle> & {
+    x?: unknown;
+    y?: unknown;
+    publicKey?: unknown;
+  };
+  if (value.kind !== undefined && value.kind !== "magna-webauthn-public-key") {
+    throw new Error("Public key JSON has an unsupported kind");
+  }
+  if (value.version !== undefined && value.version !== 1) {
+    throw new Error("Public key JSON has an unsupported version");
+  }
+
+  if (typeof value.publicKey === "string") {
+    const parsedPublicKey = parseUncompressedPublicKeyHex(value.publicKey);
+    if (!parsedPublicKey) {
+      throw new Error("publicKey must be uncompressed P-256 hex (04 + x + y)");
+    }
+    return {
+      kind: "magna-webauthn-public-key",
+      version: 1,
+      ...parsedPublicKey,
+      rpId: typeof value.rpId === "string" ? value.rpId : undefined,
+      origin: typeof value.origin === "string" ? value.origin : undefined,
+      address: typeof value.address === "string" ? value.address : undefined,
+    };
+  }
+
+  const publicKeyX = normalizeHex32(value.publicKeyX ?? value.x, "publicKeyX");
+  const publicKeyY = normalizeHex32(value.publicKeyY ?? value.y, "publicKeyY");
+  if (value.rpId !== undefined && typeof value.rpId !== "string") {
+    throw new Error("Public key JSON rpId must be a string when present");
+  }
+  if (value.origin !== undefined && typeof value.origin !== "string") {
+    throw new Error("Public key JSON origin must be a string when present");
+  }
+  if (value.address !== undefined && typeof value.address !== "string") {
+    throw new Error("Public key JSON address must be a string when present");
+  }
+  return {
+    kind: "magna-webauthn-public-key",
+    version: 1,
+    publicKeyX,
+    publicKeyY,
+    rpId: value.rpId,
+    origin: value.origin,
+    address: value.address,
+  };
+}
+
 /**
  * Registers a fresh passkey for a new MagnaWebAuthnAccount. The protocol
- * secret and salt are RANDOM (never derived from the credential ID) and
- * persist only under the wallet origin.
+ * secret and salt come from WebAuthn PRF so synced passkeys can recreate the
+ * same Aztec account material without persisting raw material locally.
  */
 export async function createWebAuthnAccountMaterial(
   userName: string,
   rpId: string,
 ): Promise<{ registration: WebAuthnRegistration; secret: Fr; salt: Fr }> {
   const registration = await registerWebAuthnCredential(userName, rpId);
-  return { registration, secret: Fr.random(), salt: Fr.random() };
+  const material = await deriveWebAuthnAccountMaterial(registration);
+  return { registration, ...material };
+}
+
+export async function deriveWebAuthnAccountMaterial(registration: WebAuthnRegistration): Promise<{
+  secret: Fr;
+  salt: Fr;
+}> {
+  return webAuthnPrfOutputsToAccountMaterial(await evaluateWebAuthnAccountPrf(registration));
+}
+
+export function webAuthnPrfOutputsToAccountMaterial(outputs: WebAuthnPrfOutputs): {
+  secret: Fr;
+  salt: Fr;
+} {
+  return {
+    secret: Fr.fromBufferReduce(Buffer.from(outputs.secret)),
+    salt: Fr.fromBufferReduce(Buffer.from(outputs.salt)),
+  };
+}
+
+function normalizeHex32(value: unknown, label: string): string {
+  if (typeof value !== "string") {
+    throw new Error(`${label} must be a hex string`);
+  }
+  const normalized = value.startsWith("0x") ? value.slice(2) : value;
+  if (!/^[0-9a-fA-F]{64}$/.test(normalized)) {
+    throw new Error(`${label} must be exactly 32 bytes of hex`);
+  }
+  return normalized.toLowerCase();
+}
+
+function parseUncompressedPublicKeyHex(value: string): { publicKeyX: string; publicKeyY: string } | null {
+  const normalized = value.startsWith("0x") ? value.slice(2) : value;
+  if (!/^[0-9a-fA-F]{130}$/.test(normalized) || normalized.slice(0, 2) !== "04") {
+    return null;
+  }
+  return {
+    publicKeyX: normalized.slice(2, 66).toLowerCase(),
+    publicKeyY: normalized.slice(66, 130).toLowerCase(),
+  };
 }
 
 /** Account contract adapter for registration or session restore. */
@@ -95,14 +225,6 @@ function storageForOptions(storage?: Storage): Storage {
   return resolved;
 }
 
-function frToHex(value: Fr): string {
-  return bytesToHex(new Uint8Array(value.toBuffer()));
-}
-
-function frFromHex(value: string): Fr {
-  return Fr.fromHexString(`0x${value}`);
-}
-
 function registrationFromStored(account: StoredWebAuthnAccount): WebAuthnRegistration {
   return {
     credentialId: base64urlDecode(account.credentialId),
@@ -116,10 +238,27 @@ function registrationFromStored(account: StoredWebAuthnAccount): WebAuthnRegistr
   };
 }
 
-function storedFromRegistration(
+function registrationFromPublicKeyRecovery(
+  bundle: WebAuthnPublicKeyRecoveryBundle,
+  discovered: WebAuthnDiscoveredPrfOutputs,
+  rpIdHash: Uint8Array,
+  rpId: string,
+  origin: string,
+): WebAuthnRegistration {
+  return {
+    credentialId: discovered.credentialId,
+    publicKey: {
+      x: hexToBytes(bundle.publicKeyX),
+      y: hexToBytes(bundle.publicKeyY),
+    },
+    rpId,
+    rpIdHash,
+    origin,
+  };
+}
+
+export function storedWebAuthnAccountFromRegistration(
   registration: WebAuthnRegistration,
-  secret: Fr,
-  salt: Fr,
   address: string,
 ): StoredWebAuthnAccount {
   return {
@@ -129,60 +268,119 @@ function storedFromRegistration(
     rpIdHash: bytesToHex(registration.rpIdHash),
     rpId: registration.rpId,
     origin: registration.origin,
-    secretKey: frToHex(secret),
-    salt: frToHex(salt),
     address,
+    walletMaterialSource: "webauthn-prf",
   };
 }
 
 export async function createWebAuthnWalletSession(options: WebAuthnWalletSessionOptions): Promise<WalletSession> {
+  try {
+    return await createWebAuthnWalletSessionOnce(options);
+  } catch (error) {
+    if (!isAztecWorldStateAnchorError(error)) {
+      throw error;
+    }
+    await clearEmbeddedPxeCacheForNode(options.nodeUrl);
+    return await createWebAuthnWalletSessionOnce(options);
+  }
+}
+
+async function createWebAuthnWalletSessionOnce(options: WebAuthnWalletSessionOptions): Promise<WalletSession> {
   const storage = storageForOptions(options.storage);
   const wallet = await createEmbeddedWallet(options.nodeUrl, false);
-  const stored = loadStoredWebAuthnAccounts(storage).find(
-    account => account.rpId === options.rpId && account.origin === globalThis.location?.origin,
-  );
-  let registration: WebAuthnRegistration;
-  let secret: Fr;
-  let salt: Fr;
-  if (stored) {
-    registration = registrationFromStored(stored);
-    secret = frFromHex(stored.secretKey);
-    salt = frFromHex(stored.salt);
-  } else {
-    const material = await createWebAuthnAccountMaterial(options.userName, options.rpId);
-    registration = material.registration;
-    secret = material.secret;
-    salt = material.salt;
-  }
+  try {
+    const stored = loadStoredWebAuthnAccounts(storage).find(
+      account => account.rpId === options.rpId && account.origin === globalThis.location?.origin,
+    );
+    const recoveryBundle = options.publicKeyRecoveryBundle
+      ? parseWebAuthnPublicKeyRecoveryBundle(options.publicKeyRecoveryBundle)
+      : null;
+    let registration: WebAuthnRegistration;
+    let secret: Fr;
+    let salt: Fr;
+    let sessionOrigin: "new" | "reused" | "recovered";
+    if (stored) {
+      if (stored.walletMaterialSource !== "webauthn-prf") {
+        throw new Error("Stored WebAuthn account uses legacy local wallet material. Clear it and create a PRF-backed passkey wallet.");
+      }
+      registration = registrationFromStored(stored);
+      const material = await deriveWebAuthnAccountMaterial(registration);
+      secret = material.secret;
+      salt = material.salt;
+      sessionOrigin = "reused";
+    } else if (recoveryBundle) {
+      const currentOrigin = globalThis.location?.origin;
+      if (recoveryBundle.rpId && recoveryBundle.rpId !== options.rpId) {
+        throw new Error(`Public key recovery bundle is for rpId ${recoveryBundle.rpId}, not ${options.rpId}`);
+      }
+      if (currentOrigin && recoveryBundle.origin && recoveryBundle.origin !== currentOrigin) {
+        throw new Error(`Public key recovery bundle is for origin ${recoveryBundle.origin}, not ${currentOrigin}`);
+      }
+      const origin = recoveryBundle.origin ?? currentOrigin;
+      if (!origin) {
+        throw new Error("Cannot recover WebAuthn account without a wallet origin");
+      }
+      const discovered = await discoverWebAuthnAccountPrf(options.rpId);
+      const material = webAuthnPrfOutputsToAccountMaterial(discovered);
+      registration = registrationFromPublicKeyRecovery(
+        recoveryBundle,
+        discovered,
+        await computeWebAuthnRpIdHash(options.rpId),
+        options.rpId,
+        origin,
+      );
+      secret = material.secret;
+      salt = material.salt;
+      sessionOrigin = "recovered";
+    } else {
+      const material = await createWebAuthnAccountMaterial(options.userName, options.rpId);
+      registration = material.registration;
+      secret = material.secret;
+      salt = material.salt;
+      sessionOrigin = "new";
+    }
 
-  const accountManager = await AccountManager.create(wallet, secret, webAuthnAccountContract(registration), salt);
-  await ensureAccountManagerRegistered(wallet, accountManager);
-  const deployment = await ensureAccountManagerDeployed(
-    wallet,
-    accountManager,
-    options.deployWithLocalTestAccount ? { localTestAccountIndex: options.localTestAccountIndex ?? 0 } : undefined,
-  );
-  const address = accountManager.address.toString();
-  if (!stored) {
-    saveStoredWebAuthnAccount(storage, storedFromRegistration(registration, secret, salt, address));
-  }
+    const accountManager = await AccountManager.create(wallet, secret, webAuthnAccountContract(registration), salt);
+    const address = accountManager.address.toString();
+    if (recoveryBundle?.address && recoveryBundle.address !== address) {
+      throw new Error(`Recovered WebAuthn account address mismatch. expected=${recoveryBundle.address} derived=${address}`);
+    }
+    const storedAccount = stored ?? storedWebAuthnAccountFromRegistration(registration, address);
+    if (!stored) {
+      saveStoredWebAuthnAccount(storage, storedAccount);
+    }
+    await ensureAccountManagerRegistered(wallet, accountManager);
+    const deployment = await ensureAccountManagerDeployed(
+      wallet,
+      accountManager,
+      options.deployWithLocalTestAccount ? { localTestAccountIndex: options.localTestAccountIndex ?? 0 } : undefined,
+    );
 
-  return buildWalletSession(
-    "passkey",
-    `WebAuthn ${options.alias}`,
-    wallet,
-    async () => {
+    return buildWalletSession(
+      "passkey",
+      `WebAuthn ${options.alias}`,
+      wallet,
+      async () => {
+        await wallet.stop();
+      },
+      address,
+      {
+        accountFlavor: "secp256r1",
+        deploymentStatus: deployment.isReady ? "deployed" : "counterfactual",
+        sessionOrigin,
+        storageMode: "persistent",
+        walletAuth: "webauthn",
+        credentialId: base64urlEncode(registration.credentialId),
+        publicKeyRecoveryBundle: serializeWebAuthnPublicKeyRecoveryBundle(storedAccount),
+        feePayer: deployment.feePayerAddress ?? "not-configured",
+      },
+    );
+  } catch (error) {
+    try {
       await wallet.stop();
-    },
-    address,
-    {
-      accountFlavor: "secp256r1",
-      deploymentStatus: deployment.isReady ? "deployed" : "counterfactual",
-      sessionOrigin: stored ? "reused" : "new",
-      storageMode: "persistent",
-      walletAuth: "webauthn",
-      credentialId: base64urlEncode(registration.credentialId),
-      feePayer: deployment.feePayerAddress ?? "not-configured",
-    },
-  );
+    } catch {
+      // Preserve the original wallet-creation failure.
+    }
+    throw error;
+  }
 }

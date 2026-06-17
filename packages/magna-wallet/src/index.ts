@@ -11,6 +11,42 @@ export * from "./engine/ghost.js";
 export * from "./engine/root.js";
 export * from "./engine/sponsorship.js";
 export * from "./engine/types.js";
+export * from "./browser/aztec.js";
+export * from "./browser/pxe-cache.js";
+export type { MagnaConsumerLoginCredential, MagnaConsumerLoginOutcome } from "./browser/consumer-login.js";
+export { runMagnaConsumerLogin } from "./browser/consumer-login.js";
+export type {
+  ContractCompatibilityMatrix,
+  GhostAccountPreview,
+  GhostDerivationInputForm,
+  IssuePassportDevOrchestratorOptions,
+  IssuePassportRequest,
+  L1TopUpOutcome,
+  L1TopUpRequest,
+  L2TopUpOutcome,
+  L2TopUpRequest,
+  PassportClaimsForm,
+  PassportHints,
+  PolicyForm,
+  RootedPassportHints,
+  SponsorRightsSnapshot,
+  SponsorRuntimeStatus,
+  TxOutcome,
+} from "./browser/client.js";
+export {
+  buildPassportClaimsWitness,
+  buildPassportPolicy,
+  CONTRACT_COMPATIBILITY_REQUIREMENTS,
+  createDefaultPassportClaimsForm,
+  createDefaultPolicyForm,
+  deriveGhostAccountPreview,
+  issuePassportWithDevOrchestrator,
+  isRootedPassportHints,
+  MagnaBrowserClient,
+  passportClaimsFromForm,
+  readSponsorSlot,
+} from "./browser/client.js";
+export type { MagnaBrowserEnv } from "./browser/env.js";
 
 export {
   bindExternalProviderDisconnect,

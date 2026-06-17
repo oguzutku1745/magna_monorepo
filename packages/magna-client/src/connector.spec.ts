@@ -105,3 +105,40 @@ test("MagnaClient.login ignores messages from the wrong origin", async () => {
   listener?.({ origin: "http://evil.example", data: { kind: "magna:login-error", error: "x" } });
   await assert.rejects(() => login, /timed out/);
 });
+
+test("MagnaClient.login sends the request once for duplicate ready messages", async () => {
+  const { publicKeyJwk } = await makeFixture();
+  let listener: ((e: { origin: string; data: unknown }) => void) | undefined;
+  let requestCount = 0;
+  const popup = {
+    closed: false,
+    postMessage: () => {
+      requestCount += 1;
+    },
+    close: () => {},
+  };
+  const client = new MagnaClient({
+    clientId: "dapp_abc",
+    walletOrigin: "http://localhost:5999",
+    magnaPublicKeyJwk: publicKeyJwk,
+    timeoutMs: 50,
+    windowImpl: {
+      open: () => popup,
+      addMessageListener: fn => {
+        listener = fn;
+        return () => {};
+      },
+      origin: "http://localhost:5173",
+    },
+  });
+
+  const login = client.login(policy);
+  while (!listener) {
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+  listener?.({ origin: "http://localhost:5999", data: { kind: "magna:ready" } });
+  listener?.({ origin: "http://localhost:5999", data: { kind: "magna:ready" } });
+
+  assert.equal(requestCount, 1);
+  await assert.rejects(() => login, /timed out/);
+});

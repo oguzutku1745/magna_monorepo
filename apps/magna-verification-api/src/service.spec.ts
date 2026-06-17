@@ -7,6 +7,7 @@ import {
   resolveVerificationMode,
   loadVerificationApiConfigFromEnv,
   normalizePassportClaimsFromQueryResult,
+  verifyAndIssueInstagram,
 } from "./service.js";
 import { clearSessionCodesForTest, createSessionCode, exchangeSessionCode } from "./session-code-store.js";
 
@@ -229,6 +230,7 @@ describe("verifyRootRecoveryPreflight", () => {
         originalQuery: {} as never,
         queryResult: {} as never,
         expectedGhostOwner: "0xghost",
+        expectedRootCommitment: "12345",
         ageThreshold: 21,
       },
       {
@@ -237,12 +239,15 @@ describe("verifyRootRecoveryPreflight", () => {
           normalized,
         }),
         deriveGhostOwner: async () => "0xghost",
+        deriveRoot: () => 12345n,
       },
     );
 
     expect(result.matchesExpectedGhostOwner).toBe(true);
+    expect(result.matchesExpectedRootCommitment).toBe(true);
     expect(result.ghostDerivationVersion).toBe("v2_scoped");
     expect(result.derivedGhostOwner).toBe("0xghost");
+    expect(result.derivedRootCommitment).toBe("12345");
   });
 
   it("fails preflight when proof-derived ghost owner mismatches expected owner", async () => {
@@ -254,6 +259,7 @@ describe("verifyRootRecoveryPreflight", () => {
           originalQuery: {} as never,
           queryResult: {} as never,
           expectedGhostOwner: "0xexpected",
+          expectedRootCommitment: "12345",
           ghostDerivationVersion: "v2_scoped",
           ageThreshold: 21,
         },
@@ -263,9 +269,109 @@ describe("verifyRootRecoveryPreflight", () => {
             normalized,
           }),
           deriveGhostOwner: async () => "0xderived",
+          deriveRoot: () => 12345n,
         },
       ),
     ).rejects.toThrow("proof does not match the configured ghost owner");
+  });
+
+  it("fails preflight when proof-derived root commitment mismatches hinted lineage", async () => {
+    await expect(
+      verifyRootRecoveryPreflight(
+        config,
+        {
+          proofs: [{}] as never[],
+          originalQuery: {} as never,
+          queryResult: {} as never,
+          expectedGhostOwner: "0xghost",
+          expectedRootCommitment: "12345",
+          ghostDerivationVersion: "v2_scoped",
+          ageThreshold: 21,
+        },
+        {
+          verifyPassportClaims: async () => ({
+            verification: { verified: true, uniqueIdentifier: "uid-456" },
+            normalized,
+          }),
+          deriveGhostOwner: async () => "0xghost",
+          deriveRoot: () => 67890n,
+        },
+      ),
+    ).rejects.toThrow("proof does not match the rooted passport lineage");
+  });
+});
+
+describe("verifyAndIssueInstagram", () => {
+  const config = {
+    port: 4310,
+    allowedOrigin: "*",
+    zkPassportDomain: "localhost",
+    zkPassportScope: "magna-passport-onboarding",
+    zkPassportDevMode: true,
+    aztecNodeUrl: "http://localhost:8080",
+    issuerAddress: "0xissuer",
+    localTestAccountIndex: 0,
+  };
+
+  it("registers an Instagram credential from a verified email proof", async () => {
+    const send = vi.fn(async () => ({ receipt: { txHash: "0xtx" } }));
+    const registerCredential = vi.fn(() => ({ send }));
+    const contextLoader = async () =>
+      ({
+        issuer: {
+          methods: {
+            register_credential: registerCredential,
+          },
+        },
+        orchestratorAddress: {
+          toString: () => "0x1111111111111111111111111111111111111111111111111111111111111111",
+        },
+      }) as never;
+
+    const result = await verifyAndIssueInstagram(
+      config,
+      {
+        emlBase64: Buffer.from("raw email").toString("base64"),
+        claimedHandle: "akinspur",
+        activeOwner: "0x0000000000000000000000000000000000000000000000000000000000000002",
+        expiryTs: "1893456000",
+      },
+      contextLoader,
+      {
+        proveEmail: async () =>
+          ({
+            proof: {} as never,
+            publicInputs: [],
+            outputs: {
+              dkimPubkeyHash: "0x01",
+              emailNullifier: "0x03",
+              handleLen: 8,
+              handlePacked: "0x616b696e73707572",
+            },
+            metadata: {
+              normalizedHandle: "akinspur",
+              template: "english",
+              prefixIndex: 44,
+              handleLen: 8,
+              handlePacked: 0x616b696e73707572n,
+            },
+          }) as never,
+        deriveGhostOwner: async () =>
+          "0x0000000000000000000000000000000000000000000000000000000000000003",
+      },
+    );
+
+    expect(registerCredential).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledWith({
+      from: expect.objectContaining({
+        toString: expect.any(Function),
+      }),
+    });
+    expect(result.issuanceTxHash).toBe("0xtx");
+    expect(result.normalizedClaims.instagramHandle).toBe("akinspur");
+    expect(result.normalizedClaims.handlePacked).toBe("0x616b696e73707572");
+    expect(result.normalizedClaims.expiryTs).toBe("1893456000");
+    expect(result.verificationSummary.emailNullifier).toBe("0x03");
   });
 });
 

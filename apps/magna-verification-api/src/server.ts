@@ -4,12 +4,14 @@ import {
   createIssuanceContextLoader,
   hydrateVerificationApiEnvFromFiles,
   loadVerificationApiConfigFromEnv,
+  verifyAndIssueInstagram,
   verifyAndIssuePassport,
   verifyRootRecoveryPreflight,
   verifyAndRefreshRootAuthority,
   type VerifyRootRecoveryPreflightRequest,
   type VerifyAndRefreshRootAuthorityRequest,
   type VerifyAndIssueRequest,
+  type VerifyAndIssueInstagramRequest,
 } from "./service.js";
 import { createSessionCode, exchangeSessionCode } from "./session-code-store.js";
 
@@ -85,6 +87,19 @@ app.post("/zkpassport/verify-and-issue", async (req, res) => {
   try {
     const payload = req.body as VerifyAndIssueRequest;
     const result = await verifyAndIssuePassport(config, payload, loadIssuanceContext);
+    res.status(200).json(result);
+  } catch (error) {
+    const message = errorMessage(error);
+    res.status(400).json({
+      error: message,
+    });
+  }
+});
+
+app.post("/instagram/verify", async (req, res) => {
+  try {
+    const payload = req.body as VerifyAndIssueInstagramRequest;
+    const result = await verifyAndIssueInstagram(config, payload, loadIssuanceContext);
     res.status(200).json(result);
   } catch (error) {
     const message = errorMessage(error);

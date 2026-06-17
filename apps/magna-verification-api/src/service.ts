@@ -12,6 +12,8 @@ import type { Wallet } from "@aztec/aztec.js/wallet";
 import { contractInstanceWithAddressFromPlainObject } from "@aztec/stdlib/contract";
 import { EmbeddedWallet } from "@aztec/wallets/embedded";
 import {
+  computeInstagramClaimsHash,
+  computeInstagramHandleHash,
   computePassportClaimsHash,
   CredentialType,
   deriveGhostKeyMaterial,
@@ -19,10 +21,12 @@ import {
   poseidon2FieldHasher,
   packAlpha3,
   type GhostDerivationVersion,
+  type InstagramCanonicalClaims,
   type PassportCanonicalClaims,
 } from "@magna/wallet";
 import { MagnaIssuerContract } from "@magna/contracts-bindings";
 import type { ProofResult, Query, QueryResult } from "@zkpassport/sdk";
+import { proveInstagramEmail, type InstagramProofArtifact } from "@magna/instagram-proof";
 
 export type VerificationMode = "passport" | "rooted";
 
@@ -48,6 +52,14 @@ export type VerifyAndIssueRequest = {
   ghostDerivationVersion?: GhostDerivationVersion;
 };
 
+export type VerifyAndIssueInstagramRequest = {
+  emlBase64: string;
+  claimedHandle: string;
+  activeOwner: string;
+  expiryTs?: string | number | bigint;
+  ghostDerivationVersion?: GhostDerivationVersion;
+};
+
 export type VerifyAndRefreshRootAuthorityRequest = {
   proofs: ProofResult[];
   originalQuery: Query;
@@ -63,6 +75,7 @@ export type VerifyRootRecoveryPreflightRequest = {
   originalQuery: Query;
   queryResult: QueryResult;
   expectedGhostOwner: string;
+  expectedRootCommitment: string;
   ghostDerivationVersion?: GhostDerivationVersion;
   ageThreshold?: number;
 };
@@ -83,6 +96,26 @@ export type VerifyAndIssueResponse = {
     nationalityAlpha3: string;
     minAgeProven: number;
     passportExpiryDate: string;
+    expiryTs: string;
+  };
+};
+
+export type VerifyAndIssueInstagramResponse = {
+  issuanceTxHash?: string;
+  ghostOwner: string;
+  claimsHash: string;
+  ghostDerivationVersion: GhostDerivationVersion;
+  orchestratorAddress: string;
+  verificationSummary: {
+    verified: true;
+    dkimPubkeyHash: string;
+    emailNullifier: string;
+  };
+  normalizedClaims: {
+    instagramHandle: string;
+    handleHash: string;
+    handleLen: number;
+    handlePacked: string;
     expiryTs: string;
   };
 };
@@ -108,8 +141,11 @@ export type VerifyAndRefreshRootAuthorityResponse = {
 export type VerifyRootRecoveryPreflightResponse = {
   expectedGhostOwner: string;
   derivedGhostOwner: string;
+  expectedRootCommitment: string;
+  derivedRootCommitment: string;
   ghostDerivationVersion: GhostDerivationVersion;
   matchesExpectedGhostOwner: true;
+  matchesExpectedRootCommitment: true;
   verificationSummary: {
     verified: true;
     uniqueIdentifierPresent: true;
@@ -413,9 +449,17 @@ export async function deriveGhostOwnerAddress(
   uniqueIdentifier: string,
   derivationVersion: GhostDerivationVersion,
 ): Promise<string> {
+  return deriveCredentialGhostOwnerAddress(uniqueIdentifier, CredentialType.Passport, derivationVersion);
+}
+
+export async function deriveCredentialGhostOwnerAddress(
+  uniqueIdentifier: string,
+  credentialType: CredentialType,
+  derivationVersion: GhostDerivationVersion,
+): Promise<string> {
   const material = deriveGhostKeyMaterial({
     uniqueIdentifier,
-    credentialType: CredentialType.Passport,
+    credentialType,
     derivationVersion,
   });
   const address = await getSchnorrAccountContractAddress(
@@ -615,6 +659,52 @@ function requireFieldLikeString(value: unknown, fieldName: string): string {
   throw new Error(`${fieldName} must be field-like.`);
 }
 
+function defaultInstagramExpiryTs(): bigint {
+  return BigInt(Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60);
+}
+
+function parseOptionalExpiryTs(value: VerifyAndIssueInstagramRequest["expiryTs"]): bigint {
+  if (value === undefined || value === null || value === "") {
+    return defaultInstagramExpiryTs();
+  }
+  if (typeof value === "bigint") {
+    return value;
+  }
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new Error("expiryTs must be a positive safe integer.");
+    }
+    return BigInt(value);
+  }
+  const trimmed = value.trim();
+  if (!/^[0-9]+$/.test(trimmed)) {
+    throw new Error("expiryTs must be a unix timestamp string.");
+  }
+  return BigInt(trimmed);
+}
+
+function decodeBase64Email(value: unknown): Buffer {
+  const emlBase64 = requireString(value, "emlBase64");
+  try {
+    const decoded = Buffer.from(emlBase64, "base64");
+    if (decoded.length === 0) {
+      throw new Error("empty");
+    }
+    return decoded;
+  } catch {
+    throw new Error("emlBase64 must be a valid base64-encoded .eml file.");
+  }
+}
+
+function assertInstagramProofMatchesMetadata(proof: InstagramProofArtifact): void {
+  if (proof.outputs.handleLen !== proof.metadata.handleLen) {
+    throw new Error("Instagram proof handle length output did not match generated metadata.");
+  }
+  if (BigInt(proof.outputs.handlePacked) !== proof.metadata.handlePacked) {
+    throw new Error("Instagram proof handle output did not match generated metadata.");
+  }
+}
+
 export async function verifyAndIssuePassport(
   config: VerificationApiConfig,
   input: VerifyAndIssueRequest,
@@ -665,6 +755,69 @@ export async function verifyAndIssuePassport(
       minAgeProven: normalized.claims.minAgeProven,
       passportExpiryDate: normalized.passportExpiryDate,
       expiryTs: normalized.claims.expiryTs.toString(),
+    },
+  };
+}
+
+export async function verifyAndIssueInstagram(
+  config: VerificationApiConfig,
+  input: VerifyAndIssueInstagramRequest,
+  contextLoader: () => Promise<IssuanceContext>,
+  dependencies?: {
+    proveEmail?: typeof proveInstagramEmail;
+    deriveGhostOwner?: typeof deriveCredentialGhostOwnerAddress;
+  },
+): Promise<VerifyAndIssueInstagramResponse> {
+  const activeOwner = requireString(input.activeOwner, "activeOwner");
+  const rawEmail = decodeBase64Email(input.emlBase64);
+  const proveEmail = dependencies?.proveEmail ?? proveInstagramEmail;
+  const deriveGhostOwner = dependencies?.deriveGhostOwner ?? deriveCredentialGhostOwnerAddress;
+  const proof = await proveEmail(rawEmail, input.claimedHandle);
+  assertInstagramProofMatchesMetadata(proof);
+
+  const ghostDerivationVersion = input.ghostDerivationVersion ?? "v2_scoped";
+  const ghostOwner = await deriveGhostOwner(
+    proof.outputs.emailNullifier,
+    CredentialType.Instagram,
+    ghostDerivationVersion,
+  );
+  const expiryTs = parseOptionalExpiryTs(input.expiryTs);
+  const handleHash = computeInstagramHandleHash(proof.metadata.normalizedHandle);
+  const claims: InstagramCanonicalClaims = {
+    schemaVersion: 1,
+    credentialType: CredentialType.Instagram,
+    handleHash,
+    expiryTs,
+  };
+  const claimsHash = computeInstagramClaimsHash(claims, poseidon2FieldHasher);
+  const context = await contextLoader();
+  const receipt = await context.issuer.methods
+    .register_credential(
+      AztecAddress.fromString(activeOwner),
+      AztecAddress.fromString(ghostOwner),
+      new Fr(claimsHash),
+      claims.credentialType,
+      claims.expiryTs,
+    )
+    .send({ from: context.orchestratorAddress });
+
+  return {
+    issuanceTxHash: readTxHash(receipt),
+    ghostOwner,
+    claimsHash: claimsHash.toString(),
+    ghostDerivationVersion,
+    orchestratorAddress: context.orchestratorAddress.toString(),
+    verificationSummary: {
+      verified: true,
+      dkimPubkeyHash: proof.outputs.dkimPubkeyHash,
+      emailNullifier: proof.outputs.emailNullifier,
+    },
+    normalizedClaims: {
+      instagramHandle: proof.metadata.normalizedHandle,
+      handleHash: handleHash.toString(),
+      handleLen: proof.outputs.handleLen,
+      handlePacked: proof.outputs.handlePacked,
+      expiryTs: expiryTs.toString(),
     },
   };
 }
@@ -724,25 +877,37 @@ export async function verifyRootRecoveryPreflight(
   dependencies?: {
     verifyPassportClaims?: typeof verifyZkPassportPassportClaims;
     deriveGhostOwner?: typeof deriveGhostOwnerAddress;
+    deriveRoot?: typeof deriveRootCommitment;
   },
 ): Promise<VerifyRootRecoveryPreflightResponse> {
   const expectedGhostOwner = requireString(input.expectedGhostOwner, "expectedGhostOwner");
+  const expectedRootCommitment = requireString(input.expectedRootCommitment, "expectedRootCommitment");
   const ghostDerivationVersion = resolveRootRecoveryGhostDerivationVersion(input.ghostDerivationVersion);
   const verifyPassportClaims = dependencies?.verifyPassportClaims ?? verifyZkPassportPassportClaims;
   const deriveGhostOwner = dependencies?.deriveGhostOwner ?? deriveGhostOwnerAddress;
+  const deriveRoot = dependencies?.deriveRoot ?? deriveRootCommitment;
   const { verification, normalized } = await verifyPassportClaims(config, input);
   const derivedGhostOwner = await deriveGhostOwner(verification.uniqueIdentifier, ghostDerivationVersion);
+  const derivedRootCommitment = deriveRoot({ uniqueIdentifier: verification.uniqueIdentifier }).toString();
   if (derivedGhostOwner !== expectedGhostOwner) {
     throw new Error(
       `Fresh zkPassport proof does not match the configured ghost owner. expected=${expectedGhostOwner} derived=${derivedGhostOwner}`,
+    );
+  }
+  if (derivedRootCommitment !== expectedRootCommitment) {
+    throw new Error(
+      `Fresh zkPassport proof does not match the rooted passport lineage. expectedRootCommitment=${expectedRootCommitment} derivedRootCommitment=${derivedRootCommitment}`,
     );
   }
 
   return {
     expectedGhostOwner,
     derivedGhostOwner,
+    expectedRootCommitment,
+    derivedRootCommitment,
     ghostDerivationVersion,
     matchesExpectedGhostOwner: true,
+    matchesExpectedRootCommitment: true,
     verificationSummary: {
       verified: true,
       uniqueIdentifierPresent: true,

@@ -17,6 +17,20 @@ export type WebAuthnAssertionResult = {
 };
 
 export type WebAuthnAsserter = (challenge: Uint8Array) => Promise<WebAuthnAssertionResult>;
+export type WebAuthnPrfOutputs = {
+  secret: Uint8Array;
+  salt: Uint8Array;
+};
+export type WebAuthnDiscoveredPrfOutputs = WebAuthnPrfOutputs & {
+  credentialId: Uint8Array;
+};
+
+export const AZTEC_ACCOUNT_SECRET_PRF_LABEL = "magna:aztec-account-secret:v1";
+export const AZTEC_ACCOUNT_SALT_PRF_LABEL = "magna:aztec-account-salt:v1";
+
+export async function computeWebAuthnRpIdHash(rpId: string): Promise<Uint8Array> {
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rpId)));
+}
 
 /** Registration ceremony. Must run on the wallet origin, top-level context. */
 export async function registerWebAuthnCredential(userName: string, rpId: string): Promise<WebAuthnRegistration> {
@@ -34,6 +48,7 @@ export async function registerWebAuthnCredential(userName: string, rpId: string)
       authenticatorSelection: { residentKey: "preferred", userVerification: "required" },
       timeout: 60_000,
       attestation: "none",
+      extensions: { prf: {} } as unknown as AuthenticationExtensionsClientInputs,
     },
   });
   if (!(credential instanceof PublicKeyCredential)) {
@@ -42,7 +57,7 @@ export async function registerWebAuthnCredential(userName: string, rpId: string)
   const response = credential.response as AuthenticatorAttestationResponse;
   assertRegistrationClientData(response.clientDataJSON);
   const publicKey = await extractP256PublicKey(response);
-  const rpIdHash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rpId)));
+  const rpIdHash = await computeWebAuthnRpIdHash(rpId);
   return {
     credentialId: new Uint8Array(credential.rawId),
     publicKey,
@@ -82,9 +97,100 @@ export function makeBrowserAsserter(registration: WebAuthnRegistration): WebAuth
   };
 }
 
+export async function evaluateWebAuthnAccountPrf(registration: WebAuthnRegistration): Promise<WebAuthnPrfOutputs> {
+  const credentialId = base64urlEncode(registration.credentialId);
+  const credential = await navigator.credentials.get({
+    publicKey: {
+      challenge: toArrayBuffer(crypto.getRandomValues(new Uint8Array(32))),
+      rpId: registration.rpId,
+      userVerification: "required",
+      allowCredentials: [{ type: "public-key", id: toArrayBuffer(registration.credentialId) }],
+      extensions: {
+        prf: {
+          evalByCredential: {
+            [credentialId]: {
+              first: new TextEncoder().encode(AZTEC_ACCOUNT_SECRET_PRF_LABEL),
+              second: new TextEncoder().encode(AZTEC_ACCOUNT_SALT_PRF_LABEL),
+            },
+          },
+        },
+      },
+      timeout: 60_000,
+    } as unknown as PublicKeyCredentialRequestOptions,
+  });
+  if (!(credential instanceof PublicKeyCredential)) {
+    throw new Error("PRF assertion did not return a PublicKeyCredential");
+  }
+
+  const prfResults = (credential.getClientExtensionResults() as WebAuthnPrfClientExtensionResults).prf?.results;
+  if (!prfResults?.first || !prfResults.second) {
+    throw new Error("This passkey does not support WebAuthn PRF; Magna cannot restore the same wallet from this passkey.");
+  }
+  return {
+    secret: bufferSourceToBytes(prfResults.first),
+    salt: bufferSourceToBytes(prfResults.second),
+  };
+}
+
+export async function discoverWebAuthnAccountPrf(rpId: string): Promise<WebAuthnDiscoveredPrfOutputs> {
+  const credential = await navigator.credentials.get({
+    publicKey: {
+      challenge: toArrayBuffer(crypto.getRandomValues(new Uint8Array(32))),
+      rpId,
+      userVerification: "required",
+      extensions: {
+        prf: {
+          eval: {
+            first: new TextEncoder().encode(AZTEC_ACCOUNT_SECRET_PRF_LABEL),
+            second: new TextEncoder().encode(AZTEC_ACCOUNT_SALT_PRF_LABEL),
+          },
+        },
+      },
+      timeout: 60_000,
+    } as unknown as PublicKeyCredentialRequestOptions,
+  });
+  if (!(credential instanceof PublicKeyCredential)) {
+    throw new Error("PRF discovery did not return a PublicKeyCredential");
+  }
+
+  const prfResults = (credential.getClientExtensionResults() as WebAuthnPrfClientExtensionResults).prf?.results;
+  if (!prfResults?.first || !prfResults.second) {
+    throw new Error("This passkey does not support WebAuthn PRF; Magna cannot restore the same wallet from this passkey.");
+  }
+  return {
+    credentialId: new Uint8Array(credential.rawId),
+    secret: bufferSourceToBytes(prfResults.first),
+    salt: bufferSourceToBytes(prfResults.second),
+  };
+}
+
+type WebAuthnPrfClientExtensionResults = {
+  prf?: {
+    results?: {
+      first?: BufferSource;
+      second?: BufferSource;
+    };
+  };
+};
+
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const copy = new Uint8Array(bytes);
   return copy.buffer;
+}
+
+function bufferSourceToBytes(source: BufferSource): Uint8Array {
+  if (source instanceof ArrayBuffer) {
+    return new Uint8Array(source).slice();
+  }
+  return new Uint8Array(source.buffer, source.byteOffset, source.byteLength).slice();
+}
+
+function base64urlEncode(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
 function assertTopLevelContext(): void {

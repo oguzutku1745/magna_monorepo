@@ -19,8 +19,6 @@ import {
   isRootedPassportHints,
 } from "./lib/magna";
 import {
-  assertPasskeyCredential,
-  createPasskeyCredential,
   getPasskeyCapability,
   type PasskeyCapability,
   type PasskeyCredentialRecord,
@@ -142,6 +140,7 @@ function resolveGhostDerivationVersion(
 
 const CHAIN_FINGERPRINT_STORAGE_KEY = "magna-web:chain-fingerprint:v1";
 const PASSKEY_RECORD_STORAGE_KEY = "magna-web:passkey-record:v1";
+const WEB_AUTHN_ACCOUNT_STORAGE_KEY = "magna-webauthn-accounts-v1";
 const LAST_ISSUED_PASSPORT_STORAGE_KEY = "magna-web:last-issued-passport:v1";
 const TRANSIENT_LOCAL_NETWORK_TX_ERROR_MARKERS = [
   "Invalid tx: Invalid expiration timestamp",
@@ -804,30 +803,33 @@ export function App() {
     });
   };
 
-  const handleCreateOrUsePasskeyWallet = async () => {
+  const handleCreateOrUsePasskeyWallet = async (publicKeyRecoveryBundle?: string) => {
     if (!passkeyCapability?.isSupported) {
       setError("Passkeys are not supported in this browser.");
       return;
     }
     const result = await runAction("Create/use Magna passkey wallet", async () => {
-      const existingRecord = passkeyRecord;
-      const record =
-        existingRecord ??
-        (await createPasskeyCredential(
-          (managedAlias.trim() || "magna-user")
-            .toLowerCase()
-            .replace(/[^a-z0-9._-]/g, "-")
-            .slice(0, 48),
-        ));
-      await assertPasskeyCredential(record.credentialId);
+      const userName = (managedAlias.trim() || passkeyRecord?.userName || "magna-user")
+        .toLowerCase()
+        .replace(/[^a-z0-9._-]/g, "-")
+        .slice(0, 48);
+      const rpId = window.location.hostname || "localhost";
       const session = await createWebAuthnWalletSession({
         nodeUrl: env.aztecNodeUrl,
         alias: managedAlias.trim() || "magna-user",
-        userName: record.userName,
-        rpId: record.rpId,
+        userName,
+        rpId,
+        publicKeyRecoveryBundle,
         localTestAccountIndex: env.localTestAccountIndex,
         deployWithLocalTestAccount: env.enableLocalTestBootstrap,
       });
+      const record: PasskeyCredentialRecord = {
+        credentialId: session.metadata?.credentialId ?? passkeyRecord?.credentialId ?? "webauthn-account",
+        rpId,
+        userName,
+        transports: [],
+        createdAt: passkeyRecord?.createdAt ?? new Date().toISOString(),
+      };
       return { record, session };
     });
     if (result) {
@@ -840,12 +842,47 @@ export function App() {
       setSession(result.session);
       setHints(null);
       setGhostLifecycle(null);
+      const recoveryBundle = result.session.metadata?.publicKeyRecoveryBundle;
+      if (
+        recoveryBundle &&
+        result.session.metadata?.sessionOrigin !== "reused" &&
+        typeof window !== "undefined"
+      ) {
+        window.prompt(
+          "Copy and keep this Magna passkey public key. It is not secret; paste it later to use this wallet if local browser storage is empty.",
+          recoveryBundle,
+        );
+        appendLog("Displayed WebAuthn public key");
+      }
     }
+  };
+
+  const handleUseStoredPasskeyWallet = async () => {
+    if (!passkeyCapability?.isSupported) {
+      setError("Passkeys are not supported in this browser.");
+      return;
+    }
+    if (typeof window === "undefined") {
+      setError("Stored passkey recovery is only available in the browser.");
+      return;
+    }
+    const pasted = window.prompt("Paste your Magna passkey public key to use your stored passkey wallet.");
+    if (pasted === null) {
+      appendLog("Use stored passkey wallet cancelled before WebAuthn ceremony");
+      return;
+    }
+    const publicKey = pasted.trim();
+    if (!publicKey) {
+      setError("Paste your Magna passkey public key to use a stored passkey wallet.");
+      return;
+    }
+    await handleCreateOrUsePasskeyWallet(publicKey);
   };
 
   const handleForgetPasskeyWallet = () => {
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(PASSKEY_RECORD_STORAGE_KEY);
+      window.localStorage.removeItem(WEB_AUTHN_ACCOUNT_STORAGE_KEY);
     }
     setPasskeyRecord(null);
     appendLog("Cleared stored passkey wallet binding");
@@ -1484,6 +1521,7 @@ export function App() {
               originalQuery: completion.originalQuery,
               queryResult: completion.queryResult,
               expectedGhostOwner: ghostOwnerAddress,
+              expectedRootCommitment: hints.rootCommitment,
               ghostDerivationVersion: recoveryDerivationVersion,
               ageThreshold,
             }),
@@ -2062,6 +2100,14 @@ export function App() {
               onClick={() => void handleCreateOrUsePasskeyWallet()}
             >
               {passkeyRecord ? "Use saved passkey wallet" : "Create Magna passkey wallet"}
+            </button>
+            <button
+              data-testid="use-stored-passkey-wallet"
+              className="secondary-button"
+              disabled={busyAction !== null || !passkeyCapability?.isSupported}
+              onClick={() => void handleUseStoredPasskeyWallet()}
+            >
+              Use stored passkey wallet
             </button>
             <button
               className="secondary-button"

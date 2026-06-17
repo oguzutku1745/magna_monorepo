@@ -7,13 +7,6 @@ import {
 } from "@zkpassport/sdk";
 import type { GhostDerivationVersion } from "@magna/wallet";
 
-export type ZkPassportRequestMetadata = {
-  name: string;
-  logo: string;
-  purpose: string;
-  scope?: string;
-};
-
 export type ZkPassportLifecycleEvent =
   | { type: "request_created"; requestId: string; url: string }
   | { type: "bridge_connected" }
@@ -31,25 +24,13 @@ export type ZkPassportCompletion =
       originalQuery: Query;
       queryResultErrors?: Partial<QueryResultErrors>;
     }
-  | {
-      status: "rejected";
-    };
+  | { status: "rejected" };
 
 export type ActiveZkPassportRequest = {
   requestId: string;
   url: string;
   cancel: () => void;
   completion: Promise<ZkPassportCompletion>;
-};
-
-export type VerifyAndIssuePayload = {
-  proofs: ProofResult[];
-  originalQuery: Query;
-  queryResult: QueryResult;
-  activeOwner: string;
-  ageThreshold: number;
-  mode?: "passport" | "rooted";
-  ghostDerivationVersion?: GhostDerivationVersion;
 };
 
 export type VerifyAndIssueResponse = {
@@ -60,10 +41,6 @@ export type VerifyAndIssueResponse = {
   mode: "passport" | "rooted";
   ghostDerivationVersion: GhostDerivationVersion;
   orchestratorAddress: string;
-  verificationSummary: {
-    verified: true;
-    uniqueIdentifierPresent: true;
-  };
   normalizedClaims: {
     nationalityAlpha3: string;
     minAgeProven: number;
@@ -130,106 +107,93 @@ export type VerifyRootRecoveryPreflightResponse = {
   };
 };
 
-let zkPassportSingleton: ZKPassport | null = null;
+export type VerifyAndIssueInstagramPayload = {
+  emlBase64: string;
+  claimedHandle: string;
+  activeOwner: string;
+};
 
-function getZkPassport(): ZKPassport {
-  if (!zkPassportSingleton) {
-    zkPassportSingleton = new ZKPassport();
-  }
-  return zkPassportSingleton;
+export type VerifyAndIssueInstagramResponse = {
+  issuanceTxHash?: string;
+  ghostOwner: string;
+  claimsHash: string;
+  ghostDerivationVersion: GhostDerivationVersion;
+  orchestratorAddress: string;
+  verificationSummary: {
+    verified: true;
+    dkimPubkeyHash: string;
+    emailNullifier: string;
+  };
+  normalizedClaims: {
+    instagramHandle: string;
+    handleHash: string;
+    handleLen: number;
+    handlePacked: string;
+    expiryTs: string;
+  };
+};
+
+type VerifyAndIssuePayload = {
+  proofs: ProofResult[];
+  originalQuery: Query;
+  queryResult: QueryResult;
+  activeOwner: string;
+  ageThreshold: number;
+  mode?: "passport" | "rooted";
+  ghostDerivationVersion?: GhostDerivationVersion;
+};
+
+let singleton: ZKPassport | null = null;
+
+function zkPassport(): ZKPassport {
+  singleton ??= new ZKPassport();
+  return singleton;
 }
 
-function parseErrorMessage(value: unknown): string {
-  if (value instanceof Error) {
-    return value.message;
-  }
-  return String(value);
-}
-
-function summarizeQueryResultErrors(errors?: Partial<QueryResultErrors>): string | undefined {
-  if (!errors) {
-    return undefined;
-  }
-  const messages: string[] = [];
-  for (const [section, operations] of Object.entries(errors)) {
-    if (!operations || typeof operations !== "object") {
-      continue;
-    }
-    for (const [operation, detail] of Object.entries(operations)) {
-      if (!detail || typeof detail !== "object") {
-        continue;
-      }
-      const message = Reflect.get(detail, "message");
-      if (typeof message === "string" && message.trim()) {
-        messages.push(`${section}.${operation}: ${message.trim()}`);
-      }
-    }
-  }
-  return messages.length > 0 ? messages.join(" | ") : undefined;
+function errorMessage(value: unknown): string {
+  return value instanceof Error ? value.message : String(value);
 }
 
 function sanitizeForJson(value: unknown): unknown {
-  if (typeof value === "bigint") {
-    return value.toString();
-  }
-  if (value instanceof Date) {
-    return value.toISOString();
-  }
-  if (Array.isArray(value)) {
-    return value.map(entry => sanitizeForJson(entry));
-  }
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-
-  const prototype = Object.getPrototypeOf(value);
-  const isPlainObject = prototype === Object.prototype || prototype === null;
+  if (typeof value === "bigint") return value.toString();
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map(entry => sanitizeForJson(entry));
+  if (!value || typeof value !== "object") return value;
   const record = value as Record<string, unknown>;
-  const toStringCandidate = (value as { toString?: () => string }).toString;
-  if (!isPlainObject && typeof toStringCandidate === "function") {
-    const asString = toStringCandidate.call(value);
-    if (asString && asString !== "[object Object]") {
-      return asString;
-    }
-  }
-
-  const keys = Object.keys(record);
-  return Object.fromEntries(keys.map(key => [key, sanitizeForJson(record[key])]));
+  return Object.fromEntries(Object.keys(record).map(key => [key, sanitizeForJson(record[key])]));
 }
 
-async function postVerificationApi<TResponse>(verificationApiUrl: string, path: string, payload: unknown): Promise<TResponse> {
+async function postVerificationApi<TResponse>(
+  verificationApiUrl: string,
+  path: string,
+  payload: unknown,
+): Promise<TResponse> {
   const response = await fetch(`${verificationApiUrl.replace(/\/$/, "")}${path}`, {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-    },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify(sanitizeForJson(payload)),
   });
 
   if (!response.ok) {
     let serverMessage = `status ${response.status}`;
     try {
-      const errorBody = (await response.json()) as { error?: string };
-      if (errorBody.error) {
-        serverMessage = errorBody.error;
-      }
+      const body = (await response.json()) as { error?: string };
+      if (body.error) serverMessage = body.error;
     } catch {
-      // Ignore parse failure and keep generic status.
+      // Preserve the HTTP status message.
     }
     throw new Error(`Verification API request failed: ${serverMessage}`);
   }
-
   return (await response.json()) as TResponse;
 }
 
 export async function startPassportZkRequest(options: {
   ageThreshold: number;
-  metadata: ZkPassportRequestMetadata;
+  metadata: { name: string; logo: string; purpose: string; scope?: string };
   devMode?: boolean;
   onEvent?: (event: ZkPassportLifecycleEvent) => void;
 }): Promise<ActiveZkPassportRequest> {
-  const sdk = getZkPassport();
-  const queryBuilder = await sdk.request({
+  const queryBuilder = await zkPassport().request({
     name: options.metadata.name,
     logo: options.metadata.logo,
     purpose: options.metadata.purpose,
@@ -243,50 +207,29 @@ export async function startPassportZkRequest(options: {
     .disclose("expiry_date")
     .done();
 
-  options.onEvent?.({
-    type: "request_created",
-    requestId: built.requestId,
-    url: built.url,
-  });
+  options.onEvent?.({ type: "request_created", requestId: built.requestId, url: built.url });
 
   const proofs: ProofResult[] = [];
   const completion = new Promise<ZkPassportCompletion>((resolve, reject) => {
-    built.onBridgeConnect(() => {
-      options.onEvent?.({ type: "bridge_connected" });
-    });
-    built.onRequestReceived(() => {
-      options.onEvent?.({ type: "request_received" });
-    });
-    built.onGeneratingProof(() => {
-      options.onEvent?.({ type: "generating_proof" });
-    });
-    built.onProofGenerated((proof) => {
+    built.onBridgeConnect(() => options.onEvent?.({ type: "bridge_connected" }));
+    built.onRequestReceived(() => options.onEvent?.({ type: "request_received" }));
+    built.onGeneratingProof(() => options.onEvent?.({ type: "generating_proof" }));
+    built.onProofGenerated(proof => {
       proofs.push(proof);
-      options.onEvent?.({
-        type: "proof_generated",
-        proofCount: proofs.length,
-      });
+      options.onEvent?.({ type: "proof_generated", proofCount: proofs.length });
     });
-    built.onReject(() => {
-      resolve({ status: "rejected" });
-    });
-    built.onError((error) => {
-      reject(new Error(typeof error === "string" ? error : parseErrorMessage(error)));
-    });
-    built.onResult((response) => {
-      options.onEvent?.({
-        type: "result_received",
-        verified: response.verified,
-      });
+    built.onReject(() => resolve({ status: "rejected" }));
+    built.onError(error => reject(new Error(errorMessage(error))));
+    built.onResult(response => {
+      options.onEvent?.({ type: "result_received", verified: response.verified });
       if (!response.verified) {
-        const detail = summarizeQueryResultErrors(response.queryResultErrors);
-        reject(new Error(detail ? `zkPassport returned verified=false. ${detail}` : "zkPassport returned verified=false."));
+        reject(new Error("zkPassport returned verified=false."));
         return;
       }
       resolve({
         status: "verified",
         uniqueIdentifier: response.uniqueIdentifier,
-        proofs: [...proofs],
+        proofs: proofs.length > 0 ? [...proofs] : response.proofs,
         queryResult: response.result,
         originalQuery: built.query,
         queryResultErrors: response.queryResultErrors,
@@ -297,9 +240,7 @@ export async function startPassportZkRequest(options: {
   return {
     requestId: built.requestId,
     url: built.url,
-    cancel: () => {
-      sdk.cancelRequest(built.requestId);
-    },
+    cancel: () => zkPassport().cancelRequest(built.requestId),
     completion,
   };
 }
@@ -333,6 +274,17 @@ export async function verifyRootRecoveryPreflightThroughBackend(
   return await postVerificationApi<VerifyRootRecoveryPreflightResponse>(
     verificationApiUrl,
     "/zkpassport/verify-for-root-recovery",
+    payload,
+  );
+}
+
+export async function verifyAndIssueInstagramThroughBackend(
+  verificationApiUrl: string,
+  payload: VerifyAndIssueInstagramPayload,
+): Promise<VerifyAndIssueInstagramResponse> {
+  return await postVerificationApi<VerifyAndIssueInstagramResponse>(
+    verificationApiUrl,
+    "/instagram/verify",
     payload,
   );
 }
