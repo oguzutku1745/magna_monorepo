@@ -44,6 +44,12 @@ store/
 **/.store/
 data/
 **/data/
+.tmp-home/nargo/
+**/.tmp-home/nargo/
+pxe_data*/
+**/pxe_data*/
+wallet_data*/
+**/wallet_data*/
 
 # Local deployments and generated run reports
 deployments/local*.json
