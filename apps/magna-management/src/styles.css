@@ -798,30 +798,6 @@ textarea:focus {
   margin: 8px 0 0;
 }
 
-.wallet-mini {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 4px;
-  margin-top: 16px;
-  padding: 14px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: rgba(244, 241, 231, 0.035);
-}
-
-.wallet-mini.ready {
-  border-color: rgba(132, 226, 154, 0.34);
-}
-
-.wallet-mini.blocked {
-  border-color: rgba(239, 101, 82, 0.48);
-}
-
-.wallet-mini strong {
-  margin: 0 0 6px;
-  color: var(--ink);
-}
-
 .wallet-block-banner {
   margin: 0 0 18px;
   padding: 14px 16px;
@@ -932,63 +908,42 @@ textarea:focus {
 
 .landing {
   position: relative;
-  width: min(1180px, calc(100% - 36px));
-  margin: 0 auto;
-  min-height: calc(100vh - 66px);
+  width: 100%;
+  margin: 0;
+  /* exactly fill the space under the 66px topbar — no page scroll */
+  height: calc(100vh - 66px);
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 44px;
-  padding: 72px 0 64px;
+  /* full-bleed background, but content stays aligned to the 1180px column */
+  padding: 48px max(36px, calc((100% - 1180px) / 2));
   overflow: hidden;
 }
 
-.aurora {
+/* WebGL "Threads" weave — the animated identity-lines background.
+   The canvas has its own alpha, so the body's ember/mint radial glow
+   reads through it for depth. */
+.threads-bg {
   position: absolute;
-  inset: -25% -12% auto -12%;
-  height: 130%;
+  inset: 0;
   z-index: 0;
-  pointer-events: none;
-  filter: blur(72px) saturate(1.3);
-  opacity: 0.62;
+  opacity: 0.9;
+  -webkit-mask-image: radial-gradient(120% 100% at 50% 50%, #000 58%, transparent 100%);
+  mask-image: radial-gradient(120% 100% at 50% 50%, #000 58%, transparent 100%);
+  animation: threads-fade 1.2s ease both;
 }
-.aurora.soft { opacity: 0.42; }
-
-.aurora-band {
-  position: absolute;
-  border-radius: 50%;
-  mix-blend-mode: screen;
+.threads-bg.soft {
+  opacity: 0.55;
 }
-.aurora .band-a {
-  width: 46vw; height: 46vw;
-  top: -6%; left: -4%;
-  background: radial-gradient(circle, rgba(240, 107, 63, 0.55), transparent 62%);
-  animation: drift-a 17s ease-in-out infinite;
-}
-.aurora .band-b {
-  width: 40vw; height: 40vw;
-  top: 6%; right: -8%;
-  background: radial-gradient(circle, rgba(122, 223, 209, 0.5), transparent 62%);
-  animation: drift-b 21s ease-in-out infinite;
-}
-.aurora .band-c {
-  width: 34vw; height: 34vw;
-  bottom: -14%; left: 30%;
-  background: radial-gradient(circle, rgba(255, 202, 95, 0.4), transparent 62%);
-  animation: drift-c 24s ease-in-out infinite;
+.threads-bg canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
 }
 
-@keyframes drift-a {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
-  50% { transform: translate3d(6%, 8%, 0) scale(1.12); }
-}
-@keyframes drift-b {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(1.05); }
-  50% { transform: translate3d(-7%, 5%, 0) scale(0.92); }
-}
-@keyframes drift-c {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(0.95); }
-  50% { transform: translate3d(4%, -6%, 0) scale(1.1); }
+@keyframes threads-fade {
+  from { opacity: 0; }
 }
 
 .landing-hero { position: relative; z-index: 1; max-width: 900px; }

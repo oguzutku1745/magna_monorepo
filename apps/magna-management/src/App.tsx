@@ -15,6 +15,7 @@ import {
   type WalletSession,
 } from "@magna/wallet";
 import { AuthorizePage } from "./AuthorizePage";
+import { Threads } from "./components/Threads";
 import { getManagementEnv } from "./lib/env";
 import { navigate, useRoute } from "./lib/router";
 import {
@@ -882,23 +883,6 @@ export function App() {
   );
 }
 
-function compact(value: string): string {
-  if (value.length <= 18) return value;
-  return `${value.slice(0, 10)}...${value.slice(-6)}`;
-}
-
-function WalletStatusMini(props: { session: WalletSession | null; profile: WalletProfile | null }) {
-  const status = deploymentStatusFor(props.session, props.profile);
-  return (
-    <div className={`wallet-mini ${status === "deployed" ? "ready" : "blocked"}`}>
-      <span>Deployment</span>
-      <strong>{status}</strong>
-      <span>Origin</span>
-      <strong>{sessionOriginFor(props.session, props.profile)}</strong>
-    </div>
-  );
-}
-
 function WalletStatusPanel(props: {
   session: WalletSession | null;
   profile: WalletProfile | null;
@@ -962,11 +946,13 @@ function Landing(props: { go: (path: string) => void }) {
   const headline = "Prove who you are, reveal nothing else.";
   return (
     <main className="landing">
-      <div className="aurora" aria-hidden="true">
-        <span className="aurora-band band-a" />
-        <span className="aurora-band band-b" />
-        <span className="aurora-band band-c" />
-      </div>
+      <Threads
+        className="threads-bg"
+        color={[0.95, 0.5, 0.32]}
+        amplitude={1.7}
+        distance={0.35}
+        enableMouseInteraction
+      />
       <section className="landing-hero">
         <p className="eyebrow reveal-up" style={{ animationDelay: "0.05s" }}>Private identity layer</p>
         <h1 className="landing-title">
@@ -987,29 +973,7 @@ function Landing(props: { go: (path: string) => void }) {
           </button>
         </div>
       </section>
-      <section className="proof-strip reveal-up" style={{ animationDelay: "1.05s" }} aria-label="What Magna proves">
-        <article className="proof-chip ok">
-          <span className="proof-dot" />
-          <div>
-            <strong>US citizen</strong>
-            <span className="label">Proven</span>
-          </div>
-        </article>
-        <article className="proof-chip ok">
-          <span className="proof-dot" />
-          <div>
-            <strong>Over 18</strong>
-            <span className="label">Proven</span>
-          </div>
-        </article>
-        <article className="proof-chip hidden">
-          <span className="proof-dot" />
-          <div>
-            <strong>Passport details</strong>
-            <span className="label">Never shared</span>
-          </div>
-        </article>
-      </section>
+
     </main>
   );
 }
@@ -1058,10 +1022,7 @@ function UserLogin(props: {
   const busy = Boolean(props.busy);
   return (
     <main className="auth-screen">
-      <div className="aurora soft" aria-hidden="true">
-        <span className="aurora-band band-a" />
-        <span className="aurora-band band-b" />
-      </div>
+      <Threads className="threads-bg soft" color={[0.48, 0.85, 0.8]} amplitude={1.1} distance={0.25} />
       <section className="auth-card">
         <p className="eyebrow">Magna wallet</p>
         <h1>Sign in to Magna</h1>
