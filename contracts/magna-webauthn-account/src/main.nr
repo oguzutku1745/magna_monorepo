@@ -12,8 +12,8 @@ pub contract MagnaWebAuthnAccount {
             functions::{allow_phase_change, external, initializer, noinitcheck, view},
             storage::storage,
         },
-        messages::message_delivery::MessageDelivery,
-        oracle::{auth_witness::get_auth_witness, notes::{get_sender_for_tags, set_sender_for_tags}},
+        messages::delivery::MessageDelivery,
+        oracle::auth_witness::get_auth_witness,
         state_vars::SinglePrivateImmutable,
     };
     use crate::public_key_note::WebAuthnPublicKeyNote;
@@ -25,7 +25,7 @@ pub contract MagnaWebAuthnAccount {
     global WEBAUTHN_WITNESS_LEN: u32 = 387;
 
     #[storage]
-    struct Storage<Context> {
+    struct Storage {
         signing_public_key: SinglePrivateImmutable<WebAuthnPublicKeyNote, Context>,
     }
 
@@ -45,29 +45,15 @@ pub contract MagnaWebAuthnAccount {
             origin,
             origin_len,
         };
-        // Safety: The sender for tags is only used to compute unconstrained shared secrets for emitting logs.
-        // Since this value is only used for unconstrained tagging and not for any constrained logic,
-        // it is safe to load from an unconstrained context.
-        let original_sender = unsafe { get_sender_for_tags().unwrap_or(self.address) };
-        // Mirror ecdsa_r_account_contract's sender-for-tags dance so the user's
-        // PXE finds the note without registering the deployer as a sender.
-        // Safety: Comment from above applies here as well.
-        unsafe { set_sender_for_tags(self.address) };
         self.storage.signing_public_key.initialize(note).deliver(
-            MessageDelivery.ONCHAIN_CONSTRAINED,
+            MessageDelivery::onchain_constrained().with_sender(self.address),
         );
-        // Safety: Comment from above applies here as well.
-        unsafe { set_sender_for_tags(original_sender) };
     }
 
     #[external("private")]
     #[noinitcheck]
     #[allow_phase_change]
     fn entrypoint(app_payload: AppPayload, fee_payment_method: u8, cancellable: bool) {
-        // Safety: The sender for tags is only used to compute unconstrained shared secrets for emitting logs.
-        // Since this value is only used for unconstrained tagging and not for any constrained logic,
-        // it is safe to set from a constrained context.
-        unsafe { set_sender_for_tags(self.address) };
         let actions = AccountActions::init(self.context, is_valid_impl);
         actions.entrypoint(app_payload, fee_payment_method, cancellable);
     }

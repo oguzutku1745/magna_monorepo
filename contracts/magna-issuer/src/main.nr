@@ -9,7 +9,7 @@ pub contract MagnaIssuer {
     use aztec::{
         history::nullifier::assert_nullifier_did_not_exist_by,
         macros::{functions::{external, initializer, internal, only_self, view}, storage::storage},
-        messages::message_delivery::MessageDelivery,
+        messages::delivery::MessageDelivery,
         note::{
             ConfirmedNote,
             HintedNote,
@@ -73,7 +73,7 @@ pub contract MagnaIssuer {
 
     // v1 uses immutable orchestrator allowlist (single address).
     #[storage]
-    struct Storage<Context> {
+    struct Storage {
         orchestrator: PublicImmutable<AztecAddress, Context>,
         verify_meter_hook: PublicImmutable<AztecAddress, Context>,
         company_sponsor_gateways: Map<
@@ -201,7 +201,7 @@ pub contract MagnaIssuer {
             expiry_ts,
         };
         self.storage.credential_notes.at(active_owner).insert(credential_note).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
         );
 
         let status_note = StatusNote {
@@ -210,7 +210,7 @@ pub contract MagnaIssuer {
             credential_type,
         };
         self.storage.status_notes.at(active_owner).insert(status_note).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
         );
 
         let recovery_note = RecoveryNote {
@@ -220,7 +220,7 @@ pub contract MagnaIssuer {
             expiry_ts,
         };
         self.storage.recovery_notes.at(ghost_owner).insert(recovery_note).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
         );
     }
 
@@ -1289,12 +1289,12 @@ pub contract MagnaIssuer {
     ) {
         let root_status = RootStatusNote { root_commitment, revocation_secret };
         self.storage.root_status_notes.at(active_owner).insert(root_status).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
         );
 
         let root_recovery = RootRecoveryNote { root_commitment, revocation_secret };
         self.storage.root_recovery_notes.at(ghost_owner).insert(root_recovery).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
         );
     }
 
@@ -1313,7 +1313,7 @@ pub contract MagnaIssuer {
             revocation_secret,
         };
         self.storage.root_authority_notes.at(active_owner).insert(root_authority).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
         );
     }
 
@@ -1334,7 +1334,7 @@ pub contract MagnaIssuer {
             expiry_ts,
         };
         self.storage.linked_credential_notes.at(active_owner).insert(linked_credential).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
         );
 
         let linked_status = LinkedStatusNote {
@@ -1344,7 +1344,7 @@ pub contract MagnaIssuer {
             credential_type,
         };
         self.storage.linked_status_notes.at(active_owner).insert(linked_status).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
         );
 
         let linked_recovery = LinkedRecoveryNote {
@@ -1355,7 +1355,7 @@ pub contract MagnaIssuer {
             expiry_ts,
         };
         self.storage.linked_recovery_notes.at(ghost_owner).insert(linked_recovery).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
         );
     }
 
@@ -1471,7 +1471,7 @@ pub contract MagnaIssuer {
             credential_type: hinted_recovery.note.credential_type,
         };
         self.storage.status_notes.at(new_active_owner).insert(fresh_status).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
         );
 
         let fresh_recovery = RecoveryNote {
@@ -1481,7 +1481,7 @@ pub contract MagnaIssuer {
             expiry_ts: hinted_recovery.note.expiry_ts,
         };
         self.storage.recovery_notes.at(caller).insert(fresh_recovery).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
         );
 
         if remint_credential {
@@ -1491,7 +1491,7 @@ pub contract MagnaIssuer {
                 expiry_ts: hinted_recovery.note.expiry_ts,
             };
             self.storage.credential_notes.at(new_active_owner).insert(fresh_credential).deliver(
-                MessageDelivery.ONCHAIN_UNCONSTRAINED,
+                MessageDelivery::onchain_unconstrained(),
             );
         }
     }
@@ -1535,7 +1535,7 @@ pub contract MagnaIssuer {
             revocation_secret: fresh_rs,
         };
         self.storage.root_status_notes.at(new_active_owner).insert(fresh_root_status).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
         );
 
         let fresh_root_recovery = RootRecoveryNote {
@@ -1543,7 +1543,7 @@ pub contract MagnaIssuer {
             revocation_secret: fresh_rs,
         };
         self.storage.root_recovery_notes.at(caller).insert(fresh_root_recovery).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
         );
     }
 

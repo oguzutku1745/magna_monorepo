@@ -28,7 +28,7 @@ pub contract MagnaCompanySponsor {
     use magna_lib::Policy;
 
     #[storage]
-    struct Storage<Context> {
+    struct Storage {
         admin: PublicImmutable<AztecAddress, Context>,
         issuer: PublicImmutable<AztecAddress, Context>,
         rights_registry: PublicImmutable<AztecAddress, Context>,

@@ -16,7 +16,7 @@ pub contract MagnaRightsPurchaseL2 {
     use token_contract::Token;
 
     #[storage]
-    struct Storage<Context> {
+    struct Storage {
         admin: PublicImmutable<AztecAddress, Context>,
         treasury: PublicImmutable<AztecAddress, Context>,
         payment_token: PublicImmutable<AztecAddress, Context>,

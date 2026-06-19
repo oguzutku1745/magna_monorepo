@@ -25,7 +25,7 @@ pub contract MagnaConsumer {
     use magna_lib::Policy;
 
     #[storage]
-    struct Storage<Context> {
+    struct Storage {
         issuer: PublicImmutable<AztecAddress, Context>,
         gated_login_count: PublicMutable<u64, Context>,
     }
