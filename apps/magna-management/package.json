@@ -11,7 +11,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@aztec/aztec.js": "4.2.0-aztecnr-rc.2",
+    "@aztec/aztec.js": "5.0.0-rc.1",
     "@magna/client": "0.2.0",
     "@magna/core": "0.1.0",
     "@magna/wallet": "0.1.0",

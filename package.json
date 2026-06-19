@@ -17,7 +17,7 @@
     "fund:fee-juice": "node ./scripts/fund-fee-juice.mjs",
     "vectors:sync": "node ./scripts/sync-golden-vectors.mjs",
     "vectors:webauthn": "node ./scripts/gen-webauthn-fixtures.mjs",
-    "aztec:version": "VERSION=4.2.0-aztecnr-rc.2 aztec --version",
+    "aztec:version": "VERSION=5.0.0-rc.1 aztec --version",
     "compile:issuer": "node ./scripts/aztec-tooling.mjs compile ./contracts/magna-issuer",
     "compile:company-rights-registry": "node ./scripts/aztec-tooling.mjs compile ./contracts/magna-company-rights-registry",
     "compile:company-sponsor": "node ./scripts/aztec-tooling.mjs compile ./contracts/magna-company-sponsor",
@@ -49,7 +49,7 @@
     "test:core": "npm run -w @magna/core test"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=24.12.0"
   },
   "dependencies": {
     "@zkpassport/sdk": "0.15.1",
