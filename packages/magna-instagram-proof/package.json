@@ -12,7 +12,7 @@
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@aztec/bb.js": "0.66.0",
+    "@aztec/bb.js": "0.84.0",
     "@noir-lang/noir_js": "1.0.0-beta.3",
     "@noir-lang/types": "1.0.0-beta.3",
     "@zk-email/zkemail-nr": "2.0.0"

@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { createReferenceMagnaClient, loginWithMagnaExample, type MagnaLoginResult } from "./login-with-magna";
+import { createReferenceMagnaClient, loginWithMagnaSocial, type MagnaLoginResult } from "./login-with-magna";
 import { useRoute } from "./router";
 
 type LoginState =
   | { status: "idle" }
   | { status: "pending" }
-  | { status: "verified"; result: MagnaLoginResult }
+  | { status: "verified"; result: MagnaLoginResult; instagramHandle: string }
   | { status: "blocked"; message: string };
 
 function cleanHandle(value: string): string {
@@ -16,31 +16,25 @@ export function App() {
   const route = useRoute();
   const [login, setLogin] = useState<LoginState>({ status: "idle" });
   const [handle, setHandle] = useState("");
-  const [capturedHandle, setCapturedHandle] = useState<string | null>(null);
 
   async function runLogin() {
+    const instagramHandle = cleanHandle(handle);
+    if (!/^[a-z0-9._]{1,30}$/.test(instagramHandle)) {
+      setLogin({ status: "blocked", message: "Enter a valid Instagram handle without @." });
+      return;
+    }
     setLogin({ status: "pending" });
     try {
-      const result = await loginWithMagnaExample(createReferenceMagnaClient());
+      const result = await loginWithMagnaSocial(instagramHandle, createReferenceMagnaClient());
       if (!result.verified) {
         setLogin({ status: "blocked", message: "Magna could not verify the requested requirements." });
         return;
       }
-      setLogin({ status: "verified", result });
+      setLogin({ status: "verified", result, instagramHandle });
       route.go("/app/result");
     } catch (error) {
       setLogin({ status: "blocked", message: error instanceof Error ? error.message : String(error) });
     }
-  }
-
-  function submitHandle() {
-    const nextHandle = cleanHandle(handle);
-    if (!/^[a-z0-9._]{1,30}$/.test(nextHandle)) {
-      setLogin({ status: "blocked", message: "Enter a valid Instagram handle without @." });
-      return;
-    }
-    setCapturedHandle(nextHandle);
-    setHandle("");
   }
 
   return (
@@ -50,9 +44,9 @@ export function App() {
         <button type="button" onClick={() => route.go("/app")}>Launch App</button>
       </header>
       {route.path === "/app" ? (
-        <AppGate login={login} onLogin={() => void runLogin()} />
+        <AppGate login={login} handle={handle} setHandle={setHandle} onLogin={() => void runLogin()} />
       ) : route.path === "/app/result" ? (
-        <Result login={login} handle={handle} setHandle={setHandle} capturedHandle={capturedHandle} submitHandle={submitHandle} />
+        <Result login={login} />
       ) : (
         <Landing onLaunch={() => route.go("/app")} />
       )}
@@ -88,17 +82,27 @@ function Landing(props: { onLaunch: () => void }) {
   );
 }
 
-function AppGate(props: { login: LoginState; onLogin: () => void }) {
+function AppGate(props: {
+  login: LoginState;
+  handle: string;
+  setHandle: (value: string) => void;
+  onLogin: () => void;
+}) {
   return (
     <main className="gate">
       <section className="gate-copy">
         <p className="eyebrow">Entry requirement</p>
         <h1>Prove eligibility without handing over identity.</h1>
-        <p>Magna Social asks Magna for two facts only: US citizen and older than 18.</p>
+        <p>Magna Social asks Magna for three facts only: US citizen, older than 18, and owner of the requested Instagram handle.</p>
       </section>
       <section className="requirement-panel">
         <div><span>Requirement 01</span><strong>Citizen of US</strong></div>
         <div><span>Requirement 02</span><strong>Age greater than 18</strong></div>
+        <div><span>Requirement 03</span><strong>Instagram handle ownership</strong></div>
+        <label>
+          Instagram handle
+          <input value={props.handle} onChange={event => props.setHandle(event.target.value)} placeholder="akinspur" />
+        </label>
         <button type="button" disabled={props.login.status === "pending"} onClick={props.onLogin}>
           {props.login.status === "pending" ? "Opening Magna..." : "Login with Magna"}
         </button>
@@ -108,13 +112,7 @@ function AppGate(props: { login: LoginState; onLogin: () => void }) {
   );
 }
 
-function Result(props: {
-  login: LoginState;
-  handle: string;
-  setHandle: (value: string) => void;
-  capturedHandle: string | null;
-  submitHandle: () => void;
-}) {
+function Result(props: { login: LoginState }) {
   if (props.login.status !== "verified") {
     return (
       <main className="gate">
@@ -129,19 +127,16 @@ function Result(props: {
     <main className="gate">
       <section className="gate-copy">
         <p className="eyebrow">Magna verified</p>
-        <h1>Now claim the social handle.</h1>
-        <p>The next product step is Instagram attestation. For now, the dApp captures the handle and stops there.</p>
+        <h1>Your Magna Social session is ready.</h1>
+        <p>Magna verified passport eligibility and Instagram ownership without uploading documents to this app.</p>
       </section>
       <section className="requirement-panel">
-        <label>
-          Instagram handle
-          <input value={props.handle} onChange={event => props.setHandle(event.target.value)} placeholder="magnasocial" />
-        </label>
-        <button type="button" onClick={props.submitHandle}>Continue</button>
-        {props.capturedHandle ? (
-          <p className="success">Captured @{props.capturedHandle}. Instagram verification is not implemented yet.</p>
-        ) : null}
-        <p className="receipt">Receipt: {props.login.result.receipt ?? "not returned"}</p>
+        <p className="success">Verified @{props.login.instagramHandle}.</p>
+        {(props.login.result.receipts ?? [{ id: "passport", kind: "policy", receipt: props.login.result.receipt }]).map(receipt => (
+          <p className="receipt" key={receipt.id}>
+            {receipt.id} receipt: {receipt.receipt ?? "not returned"}
+          </p>
+        ))}
       </section>
     </main>
   );

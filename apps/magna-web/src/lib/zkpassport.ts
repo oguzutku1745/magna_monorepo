@@ -19,7 +19,7 @@ export type ZkPassportLifecycleEvent =
   | { type: "bridge_connected" }
   | { type: "request_received" }
   | { type: "generating_proof" }
-  | { type: "proof_generated"; proofCount: number }
+  | { type: "proof_generated"; proofCount: number; proofTotal?: number }
   | { type: "result_received"; verified: boolean };
 
 export type ZkPassportCompletion =
@@ -265,6 +265,7 @@ export async function startPassportZkRequest(options: {
       options.onEvent?.({
         type: "proof_generated",
         proofCount: proofs.length,
+        proofTotal: proof.total,
       });
     });
     built.onReject(() => {

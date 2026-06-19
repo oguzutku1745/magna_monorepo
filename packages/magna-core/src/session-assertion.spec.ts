@@ -40,6 +40,38 @@ test("any field mutation breaks the signature", async () => {
   }
 });
 
+test("multi-verification receipts are covered by the signature", async () => {
+  const { privateKey, publicKeyJwk } = await generateSessionSigningKeyPair();
+  const signed = await signSessionAssertion(
+    {
+      ...fixtureAssertion(),
+      receipt: "0xpassport",
+      receipts: [
+        { id: "passport", kind: "policy", receipt: "0xpassport" },
+        { id: "instagram", kind: "instagram-handle", receipt: "0xinstagram" },
+      ],
+    },
+    privateKey,
+  );
+  assert.equal(await verifySessionAssertion(signed, publicKeyJwk), true);
+  assert.equal(
+    await verifySessionAssertion(
+      {
+        ...signed,
+        assertion: {
+          ...signed.assertion,
+          receipts: [
+            { id: "passport", kind: "policy", receipt: "0xpassport" },
+            { id: "instagram", kind: "instagram-handle", receipt: "0xtampered" },
+          ],
+        },
+      },
+      publicKeyJwk,
+    ),
+    false,
+  );
+});
+
 test("verification fails with the wrong key", async () => {
   const { privateKey } = await generateSessionSigningKeyPair();
   const other = await generateSessionSigningKeyPair();

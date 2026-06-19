@@ -1,5 +1,6 @@
-import { UltraHonkBackend, type ProofData } from "@aztec/bb.js";
+import type { ProofData } from "@aztec/bb.js";
 import type { CompiledCircuit } from "@noir-lang/noir_js";
+import { createUltraHonkBackend } from "./bb.js";
 import { loadInstagramCircuitArtifact } from "./prove.js";
 
 export async function verifyInstagramProof(
@@ -9,7 +10,7 @@ export async function verifyInstagramProof(
   } = {},
 ): Promise<boolean> {
   const circuit = options.circuit ?? loadInstagramCircuitArtifact();
-  const backend = new UltraHonkBackend(circuit.bytecode);
+  const backend = createUltraHonkBackend(circuit.bytecode);
   try {
     await backend.instantiate();
     return await backend.verifyProof(proof);

@@ -17,6 +17,7 @@ export type { MagnaConsumerLoginCredential, MagnaConsumerLoginOutcome } from "./
 export { runMagnaConsumerLogin } from "./browser/consumer-login.js";
 export type {
   ContractCompatibilityMatrix,
+  DiscoveredMagnaCredentialRef,
   GhostAccountPreview,
   GhostDerivationInputForm,
   IssuePassportDevOrchestratorOptions,

@@ -5,6 +5,7 @@ import {
   MagnaClient,
   ageGteConstraint,
   type MagnaLoginResult,
+  type MagnaLoginRequirement,
   type Policy,
 } from "@magna/client";
 
@@ -38,8 +39,23 @@ export function countryEqConstraint(alpha3Packed: bigint) {
 export function passportAdultUsPolicy(): Policy {
   return {
     credentialType: CredentialType.Passport,
-    constraints: [ageGteConstraint(18), countryEqConstraint(packAlpha3("USA"))],
+    constraints: [ageGteConstraint(18), countryEqConstraint(packAlpha3("ZKR"))],
   };
+}
+
+export function magnaSocialRequirements(instagramHandle: string): MagnaLoginRequirement[] {
+  return [
+    {
+      id: "passport",
+      kind: "policy",
+      policy: passportAdultUsPolicy(),
+    },
+    {
+      id: "instagram",
+      kind: "instagram-handle",
+      handle: instagramHandle,
+    },
+  ];
 }
 
 export function createReferenceMagnaClient(env: ReferenceDappEnv = referenceEnv()): MagnaClient {
@@ -58,6 +74,13 @@ export async function loginWithMagnaExample(
   magna: MagnaClient = createReferenceMagnaClient(),
 ): Promise<MagnaLoginResult> {
   return magna.login(passportAdultUsPolicy());
+}
+
+export async function loginWithMagnaSocial(
+  instagramHandle: string,
+  magna: MagnaClient = createReferenceMagnaClient(),
+): Promise<MagnaLoginResult> {
+  return magna.loginWithRequirements(magnaSocialRequirements(instagramHandle));
 }
 
 export function unlockAppIfVerified(result: MagnaLoginResult, unlockApp: () => void): boolean {

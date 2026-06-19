@@ -47,6 +47,7 @@ export type WebAuthnWalletSessionOptions = {
   userName: string;
   rpId: string;
   alias: string;
+  forceCreate?: boolean;
   publicKeyRecoveryBundle?: string;
   storage?: Storage;
   localTestAccountIndex?: number;
@@ -80,7 +81,9 @@ export function loadStoredWebAuthnAccounts(storage: Storage): StoredWebAuthnAcco
 }
 
 export function saveStoredWebAuthnAccount(storage: Storage, account: StoredWebAuthnAccount): void {
-  const all = loadStoredWebAuthnAccounts(storage).filter(a => a.credentialId !== account.credentialId);
+  const all = loadStoredWebAuthnAccounts(storage).filter(
+    a => a.credentialId !== account.credentialId && (a.rpId !== account.rpId || a.origin !== account.origin),
+  );
   all.push(account);
   storage.setItem(STORAGE_KEY, JSON.stringify(all));
 }
@@ -289,12 +292,14 @@ async function createWebAuthnWalletSessionOnce(options: WebAuthnWalletSessionOpt
   const storage = storageForOptions(options.storage);
   const wallet = await createEmbeddedWallet(options.nodeUrl, false);
   try {
-    const stored = loadStoredWebAuthnAccounts(storage).find(
-      account => account.rpId === options.rpId && account.origin === globalThis.location?.origin,
-    );
     const recoveryBundle = options.publicKeyRecoveryBundle
       ? parseWebAuthnPublicKeyRecoveryBundle(options.publicKeyRecoveryBundle)
       : null;
+    const stored = options.forceCreate || recoveryBundle
+      ? undefined
+      : loadStoredWebAuthnAccounts(storage).find(
+          account => account.rpId === options.rpId && account.origin === globalThis.location?.origin,
+        );
     let registration: WebAuthnRegistration;
     let secret: Fr;
     let salt: Fr;

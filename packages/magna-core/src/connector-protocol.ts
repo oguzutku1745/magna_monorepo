@@ -1,5 +1,5 @@
 import { bytesToHex } from "./bytes.js";
-import { MAX_CONSTRAINTS } from "./policy.js";
+import { MAX_CONSTRAINTS, normalizePolicy } from "./policy.js";
 import { ClaimId, ConstraintOp, CredentialType, type Policy } from "./types.js";
 import type { SignedSessionAssertion } from "./session-assertion.js";
 
@@ -7,6 +7,34 @@ export type WirePolicy = {
   credentialType: Policy["credentialType"];
   constraints: { claimId: number; op: number; value: string }[];
 };
+
+export type WirePolicyLoginRequirement = {
+  id: string;
+  kind: "policy";
+  policy: WirePolicy;
+};
+
+export type WireInstagramHandleLoginRequirement = {
+  id: string;
+  kind: "instagram-handle";
+  handle: string;
+};
+
+export type WireLoginRequirement =
+  | WirePolicyLoginRequirement
+  | WireInstagramHandleLoginRequirement;
+
+export type LoginRequirement =
+  | {
+      id: string;
+      kind: "policy";
+      policy: Policy;
+    }
+  | {
+      id: string;
+      kind: "instagram-handle";
+      handle: string;
+    };
 
 export type LoginRequest = {
   v: 1;
@@ -17,6 +45,7 @@ export type LoginRequest = {
   sessionChallenge: string;
   policy: WirePolicy;
   policyHash: string;
+  requirements?: WireLoginRequirement[];
   responseMode: "postMessage" | "redirectCode";
   redirectUri?: string;
 };
@@ -83,6 +112,48 @@ function assertWirePolicy(policy: unknown): asserts policy is WirePolicy {
   }
 }
 
+const REQUIREMENT_ID_PATTERN = /^[a-z0-9_-]{1,40}$/;
+const INSTAGRAM_HANDLE_PATTERN = /^[a-z0-9._]{1,30}$/;
+
+function assertRequirementId(value: unknown): asserts value is string {
+  if (typeof value !== "string" || !REQUIREMENT_ID_PATTERN.test(value)) {
+    throw new Error("login requirement id is invalid");
+  }
+}
+
+function assertInstagramHandle(value: unknown): asserts value is string {
+  if (typeof value !== "string" || !INSTAGRAM_HANDLE_PATTERN.test(value)) {
+    throw new Error("instagram handle requirement is invalid");
+  }
+}
+
+function assertWireLoginRequirements(value: unknown): asserts value is WireLoginRequirement[] {
+  if (value === undefined) return;
+  if (!Array.isArray(value) || value.length < 1 || value.length > 4) {
+    throw new Error("login requirements must contain 1 to 4 entries");
+  }
+  const ids = new Set<string>();
+  for (const requirement of value) {
+    if (!isObject(requirement)) {
+      throw new Error("login requirement must be an object");
+    }
+    assertRequirementId(requirement.id);
+    if (ids.has(requirement.id)) {
+      throw new Error("login requirement ids must be unique");
+    }
+    ids.add(requirement.id);
+    if (requirement.kind === "policy") {
+      assertWirePolicy(requirement.policy);
+      continue;
+    }
+    if (requirement.kind === "instagram-handle") {
+      assertInstagramHandle(requirement.handle);
+      continue;
+    }
+    throw new Error("login requirement kind is invalid");
+  }
+}
+
 function assertHex(value: unknown, byteLength: number, label: string, prefixed = false): asserts value is string {
   if (typeof value !== "string") {
     throw new Error(`${label} must be a string`);
@@ -112,6 +183,7 @@ export function assertLoginRequest(value: unknown): asserts value is LoginReques
   assertHex(value.sessionChallenge, 32, "sessionChallenge");
   assertHex(value.policyHash, 32, "policyHash", true);
   assertWirePolicy(value.policy);
+  assertWireLoginRequirements(value.requirements);
   if (value.responseMode !== "postMessage" && value.responseMode !== "redirectCode") {
     throw new Error("login request responseMode is invalid");
   }
@@ -150,4 +222,21 @@ export function policyFromWire(wire: WirePolicy): Policy {
       value: BigInt(c.value),
     })),
   } as Policy;
+}
+
+export function loginRequirementsToWire(requirements: LoginRequirement[]): WireLoginRequirement[] {
+  return requirements.map(requirement => {
+    if (requirement.kind === "policy") {
+      return {
+        id: requirement.id,
+        kind: "policy",
+        policy: policyToWire(normalizePolicy(requirement.policy)),
+      };
+    }
+    return {
+      id: requirement.id,
+      kind: "instagram-handle",
+      handle: requirement.handle,
+    };
+  });
 }

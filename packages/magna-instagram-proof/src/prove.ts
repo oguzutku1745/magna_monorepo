@@ -1,8 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { UltraHonkBackend, type ProofData } from "@aztec/bb.js";
+import type { ProofData } from "@aztec/bb.js";
 import { Noir, type CompiledCircuit } from "@noir-lang/noir_js";
+import { createUltraHonkBackend } from "./bb.js";
 import { generateInstagramCircuitInputs } from "./inputs.js";
 import type { InstagramProofInputMetadata, InstagramProofPublicOutputs } from "./types.js";
 
@@ -23,7 +24,10 @@ export function defaultCircuitArtifactPath(): string {
 
 export function loadInstagramCircuitArtifact(path = defaultCircuitArtifactPath()): CompiledCircuit {
   if (!existsSync(path)) {
-    throw new Error(`Instagram circuit artifact not found at ${path}. Run npm run compile:circuit -w @magna/instagram-proof.`);
+    throw new Error(
+      `Instagram circuit artifact not found at ${path}. ` +
+        "Run npm run instagram-proof:prepare from the repository root, then restart the verification API.",
+    );
   }
   return JSON.parse(readFileSync(path, "utf8")) as CompiledCircuit;
 }
@@ -50,7 +54,7 @@ export async function proveInstagramEmail(
   const circuit = options.circuit ?? loadInstagramCircuitArtifact();
   const { inputs, metadata } = await generateInstagramCircuitInputs(rawEmail, claimedHandle);
   const noir = new Noir(circuit);
-  const backend = new UltraHonkBackend(circuit.bytecode);
+  const backend = createUltraHonkBackend(circuit.bytecode);
   const { witness } = await noir.execute(inputs);
   try {
     await backend.instantiate();

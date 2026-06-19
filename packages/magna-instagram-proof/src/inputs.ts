@@ -11,15 +11,17 @@ const textEncoder = new TextEncoder();
 
 const CIRCUIT_PARAMS = {
   maxHeadersLength: 1024,
-  maxBodyLength: 8192,
+  maxBodyLength: 7168,
   extractFrom: true,
-  removeSoftLineBreaks: true,
 } as const;
 
 const TEMPLATE_PREFIX: Record<InstagramTemplateName, string> = {
   english: "Hi ",
   turkish: "Merhaba ",
 };
+
+const ZKEMAIL_DKIM_RESOLVER_MISMATCH =
+  "DKIM record mismatch between Google and Cloudflare! Using Google result.";
 
 export function normalizeInstagramHandle(value: string): string {
   const normalized = value.trim().replace(/^@/, "").toLowerCase();
@@ -108,13 +110,28 @@ function chooseTemplate(rawEmail: Buffer | string, handle: string): {
   throw new Error("Could not find a supported Instagram greeting in the email body.");
 }
 
-function findPrefixIndex(decodedBody: string, template: InstagramTemplateName, handle: string): number {
+function findPrefixIndex(signedBody: string, template: InstagramTemplateName, handle: string): number {
   const expectedGreeting = `${TEMPLATE_PREFIX[template]}${handle},`;
-  const index = decodedBody.indexOf(expectedGreeting);
+  const index = signedBody.indexOf(expectedGreeting);
   if (index < 0) {
-    throw new Error(`Decoded email body does not contain expected Instagram greeting: ${expectedGreeting}`);
+    throw new Error(`Signed email body does not contain expected Instagram greeting: ${expectedGreeting}`);
   }
   return index;
+}
+
+async function withoutKnownZkEmailResolverNoise<T>(callback: () => Promise<T>): Promise<T> {
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    if (args.length === 1 && args[0] === ZKEMAIL_DKIM_RESOLVER_MISMATCH) {
+      return;
+    }
+    originalConsoleError(...args);
+  };
+  try {
+    return await callback();
+  } finally {
+    console.error = originalConsoleError;
+  }
 }
 
 export async function generateInstagramCircuitInputs(
@@ -123,24 +140,21 @@ export async function generateInstagramCircuitInputs(
 ): Promise<GenerateInstagramInputsResult> {
   const normalizedHandle = normalizeInstagramHandle(claimedHandle);
   const { template, selector } = chooseTemplate(rawEmail, normalizedHandle);
-  const inputs = await generateEmailVerifierInputs(rawEmail, {
-    ...CIRCUIT_PARAMS,
-    shaPrecomputeSelector: selector,
-  });
+  const inputs = await withoutKnownZkEmailResolverNoise(() =>
+    generateEmailVerifierInputs(rawEmail, {
+      ...CIRCUIT_PARAMS,
+      shaPrecomputeSelector: selector,
+    }),
+  );
 
-  const decodedBody = boundedVecToUtf8(inputs.decoded_body, "decoded_body");
-  const prefixIndex = findPrefixIndex(decodedBody, template, normalizedHandle);
+  const signedBody = boundedVecToUtf8(inputs.body, "body");
+  const prefixIndex = findPrefixIndex(signedBody, template, normalizedHandle);
   const handlePacked = packInstagramHandle(normalizedHandle);
 
   return {
     inputs: {
       ...inputs,
       body: padBoundedVecStorage(inputs.body, CIRCUIT_PARAMS.maxBodyLength, "body"),
-      decoded_body: padBoundedVecStorage(
-        inputs.decoded_body,
-        CIRCUIT_PARAMS.maxBodyLength,
-        "decoded_body",
-      ),
       prefix_index: String(prefixIndex),
       template_kind: String(INSTAGRAM_TEMPLATE[template]),
       claimed_handle: handleBytesForCircuit(normalizedHandle).map(String),

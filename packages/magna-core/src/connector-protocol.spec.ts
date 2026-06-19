@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { ageGteConstraint, countryNeqConstraint } from "./policy.js";
 import {
   assertLoginRequest,
+  loginRequirementsToWire,
   policyFromWire,
   policyToWire,
   randomHex,
@@ -55,6 +56,22 @@ test("assertLoginRequest validates request envelope shape", () => {
   assert.doesNotThrow(() => assertLoginRequest(request()));
   assert.throws(() => assertLoginRequest(request({ requestId: "zz".repeat(16) })), /requestId/);
   assert.throws(() => assertLoginRequest(request({ responseMode: "redirectCode" })), /redirectUri/);
+});
+
+test("assertLoginRequest accepts mixed login requirements", () => {
+  const requirements = loginRequirementsToWire([
+    { id: "passport", kind: "policy", policy },
+    { id: "instagram", kind: "instagram-handle", handle: "akinspur" },
+  ]);
+  assert.doesNotThrow(() => assertLoginRequest(request({ requirements })));
+  assert.throws(
+    () => assertLoginRequest(request({ requirements: [{ id: "Instagram!", kind: "instagram-handle", handle: "akinspur" }] })),
+    /requirement id/,
+  );
+  assert.throws(
+    () => assertLoginRequest(request({ requirements: [{ id: "instagram", kind: "instagram-handle", handle: "@akinspur" }] })),
+    /instagram handle/,
+  );
 });
 
 test("randomHex returns lowercase hex of requested byte length", () => {

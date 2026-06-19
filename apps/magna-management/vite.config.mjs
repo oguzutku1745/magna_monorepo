@@ -8,6 +8,49 @@ import { nodePolyfills } from "vite-plugin-node-polyfills";
 const appRoot = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(appRoot, "../..");
 
+const aztecBrowserDependencies = [
+  "@aztec/bb.js",
+  "@aztec/accounts/testing",
+  "@aztec/aztec.js/abi",
+  "@aztec/aztec.js/account",
+  "@aztec/aztec.js/authorization",
+  "@aztec/aztec.js/contracts",
+  "@aztec/aztec.js/keys",
+  "@aztec/aztec.js/node",
+  "@aztec/aztec.js/addresses",
+  "@aztec/aztec.js/fields",
+  "@aztec/aztec.js/fee",
+  "@aztec/aztec.js/wallet",
+  "@aztec/entrypoints/account",
+  "@aztec/entrypoints/default",
+  "@aztec/entrypoints/interfaces",
+  "@aztec/entrypoints",
+  "@aztec/foundation/collection",
+  "@aztec/foundation/curves/bn254",
+  "@aztec/foundation/crypto/poseidon",
+  "@aztec/foundation/crypto/ecdsa",
+  "@aztec/foundation/log",
+  "@aztec/foundation/serialize",
+  "@aztec/foundation/types",
+  "@aztec/noir-acvm_js",
+  "@aztec/noir-noirc_abi",
+  "@aztec/noir-contracts.js/Token",
+  "@aztec/pxe/client/lazy",
+  "@aztec/pxe/server",
+  "@aztec/stdlib/abi",
+  "@aztec/stdlib/errors",
+  "@aztec/stdlib/gas",
+  "@aztec/stdlib/interfaces/client",
+  "@aztec/stdlib/auth-witness",
+  "@aztec/stdlib/aztec-address",
+  "@aztec/stdlib/contract",
+  "@aztec/stdlib/hash",
+  "@aztec/stdlib/tx",
+  "@aztec/wallet-sdk/base-wallet",
+  "@magna/contracts-bindings",
+  "@aztec/wallets/embedded",
+];
+
 function aztecNoirWasmDevAssets() {
   const wasmByName = new Map([
     [
@@ -44,6 +87,38 @@ export default defineConfig({
   root: appRoot,
   publicDir: false,
   cacheDir: resolve(appRoot, "node_modules/.vite"),
+  resolve: {
+    alias: [
+      {
+        find: /^pino$/,
+        replacement: resolve(repoRoot, "apps/magna-web/src/lib/vendor/pino-browser-shim.ts"),
+      },
+      {
+        find: /^sha3$/,
+        replacement: resolve(repoRoot, "apps/magna-web/src/lib/vendor/sha3-browser-shim.ts"),
+      },
+      {
+        find: /^hash\.js$/,
+        replacement: resolve(repoRoot, "apps/magna-web/src/lib/vendor/hashjs-browser-shim.ts"),
+      },
+      {
+        find: /^lodash\.chunk$/,
+        replacement: resolve(repoRoot, "apps/magna-web/src/lib/vendor/lodash-chunk-browser-shim.ts"),
+      },
+      {
+        find: /^lodash\.isequal$/,
+        replacement: resolve(repoRoot, "apps/magna-web/src/lib/vendor/lodash-isequal-browser-shim.ts"),
+      },
+      {
+        find: /^lodash\.times$/,
+        replacement: resolve(repoRoot, "apps/magna-web/src/lib/vendor/lodash-times-browser-shim.ts"),
+      },
+      {
+        find: /^json-stringify-deterministic$/,
+        replacement: resolve(repoRoot, "apps/magna-web/src/lib/vendor/json-stringify-deterministic-browser-shim.ts"),
+      },
+    ],
+  },
   plugins: [
     react(),
     aztecNoirWasmDevAssets(),
@@ -68,7 +143,11 @@ export default defineConfig({
       "top-level-await": true,
     },
   },
+  assetsInclude: ["**/*.wasm", "**/*.wasm.gz"],
   optimizeDeps: {
+    // Aztec/Noir browser packages rely on package-authored worker and WASM URLs.
+    // Pre-bundling rewrites those to broken `.vite/deps/main.worker.js` URLs in dev.
+    exclude: aztecBrowserDependencies,
     esbuildOptions: {
       target: "esnext",
       supported: {

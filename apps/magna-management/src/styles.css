@@ -56,7 +56,9 @@
 body {
   margin: 0;
   min-width: 320px;
-  min-height: 100vh;
+  height: 100vh;
+  /* The whole app is viewport-locked (like the landing page); no window scroll. */
+  overflow: hidden;
   position: relative;
   background:
     radial-gradient(circle at 18% -8%, rgba(240, 107, 63, 0.16), transparent 42%),
@@ -204,12 +206,29 @@ a {
 .app-shell {
   position: relative;
   z-index: 1;
-  min-height: 100vh;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* The active page fills everything below the topbar (and notice, when shown).
+   overflow is clipped here so individual pages never scroll the window. */
+.app-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-page > * {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .topbar {
-  position: sticky;
-  top: 0;
+  flex: none;
   z-index: 5;
   display: flex;
   align-items: center;
@@ -231,6 +250,7 @@ a {
 }
 
 .notice {
+  flex: none;
   margin: 20px auto 0;
   width: min(1180px, calc(100% - 36px));
   border: 1px solid var(--line);
@@ -484,16 +504,17 @@ h3 {
 
 .workspace {
   width: min(1280px, calc(100% - 36px));
-  margin: 34px auto;
+  margin: 24px auto;
   display: grid;
   grid-template-columns: 250px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: 20px;
 }
 
 .sidebar {
-  position: sticky;
-  top: 88px;
-  height: calc(100vh - 112px);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 22px;
@@ -560,6 +581,30 @@ h3 {
 
 .workbench {
   min-width: 0;
+  overflow: hidden;
+}
+
+.sidebar-logout {
+  margin-top: auto;
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 42px;
+  background: transparent;
+  color: var(--ink-dim);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  text-align: left;
+  font-weight: 600;
+  box-shadow: none;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.sidebar-logout:hover:not(:disabled) {
+  background: rgba(239, 101, 82, 0.08);
+  border-color: var(--danger);
+  color: var(--danger);
+  transform: none;
+  filter: none;
 }
 
 .section-heading,
@@ -584,7 +629,12 @@ h3 {
 
 .company-grid {
   width: min(1180px, calc(100% - 36px));
-  margin: 40px auto;
+  margin: 0 auto;
+  padding: 28px 0;
+  /* This dashboard holds more than one viewport of operator data, so its own
+     content scrolls within the locked shell — the window itself never scrolls. */
+  align-content: start;
+  overflow-y: auto;
 }
 
 .wide-heading {
@@ -763,6 +813,244 @@ textarea:focus {
   font-weight: 600;
 }
 
+.zk-status-card {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background:
+    linear-gradient(135deg, rgba(122, 223, 209, 0.08), transparent 52%),
+    rgba(244, 241, 231, 0.025);
+}
+
+.zk-status-card.success {
+  border-color: rgba(132, 226, 154, 0.44);
+  background:
+    linear-gradient(135deg, rgba(132, 226, 154, 0.1), transparent 52%),
+    rgba(244, 241, 231, 0.025);
+}
+
+.zk-status-card.danger {
+  border-color: rgba(239, 101, 82, 0.52);
+  background:
+    linear-gradient(135deg, rgba(239, 101, 82, 0.1), transparent 52%),
+    rgba(244, 241, 231, 0.025);
+}
+
+.zk-status-card p {
+  margin: 0;
+  color: var(--ink-dim);
+  line-height: 1.55;
+}
+
+.issuance-surface {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.settings-surface {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.recovery-surface {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 6px;
+  padding-bottom: 28px;
+}
+
+.settings-surface .settings-grid {
+  padding-bottom: 28px;
+}
+
+.issue-rail-list {
+  display: grid;
+  gap: 14px;
+  padding-bottom: 28px;
+}
+
+.issue-rail {
+  position: relative;
+  overflow: hidden;
+  padding: 0;
+}
+
+.issue-rail::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: linear-gradient(180deg, var(--mint), rgba(122, 223, 209, 0));
+  opacity: 0.28;
+}
+
+.issue-rail.open {
+  border-color: var(--line-strong);
+  background:
+    linear-gradient(90deg, rgba(122, 223, 209, 0.055), transparent 46%),
+    var(--panel);
+}
+
+.issue-rail-trigger {
+  width: 100%;
+  min-height: auto;
+  margin: 0;
+  padding: 22px 24px;
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) max-content max-content;
+  gap: 18px;
+  align-items: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  box-shadow: none;
+  text-align: left;
+}
+
+.issue-rail-trigger:hover:not(:disabled) {
+  background: rgba(244, 241, 231, 0.035);
+  box-shadow: none;
+  transform: none;
+}
+
+.issue-rail-trigger:focus-visible {
+  outline: 2px solid var(--mint);
+  outline-offset: -4px;
+}
+
+.issue-rail-kicker,
+.issue-rail-proof,
+.issue-rail-status,
+.issue-rail-toggle {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.issue-rail-kicker {
+  color: var(--mint);
+}
+
+.issue-rail-main {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.issue-rail-main strong {
+  display: block;
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 1.15;
+}
+
+.issue-rail-main small {
+  display: block;
+  max-width: 620px;
+  color: var(--ink-dim);
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.issue-rail-proof {
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+.issue-rail-status {
+  padding: 5px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: rgba(244, 241, 231, 0.04);
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+
+.issue-rail-status.live {
+  border-color: rgba(132, 226, 154, 0.45);
+  color: var(--ok);
+  background: rgba(132, 226, 154, 0.08);
+}
+
+.issue-rail-status.planned {
+  border-color: rgba(255, 202, 95, 0.45);
+  color: var(--amber);
+  background: rgba(255, 202, 95, 0.08);
+}
+
+.issue-rail-status.partner {
+  border-color: rgba(240, 107, 63, 0.46);
+  color: var(--ember-soft);
+  background: rgba(240, 107, 63, 0.08);
+}
+
+.issue-rail-toggle {
+  justify-self: end;
+  color: var(--ink);
+}
+
+.issue-rail-body {
+  margin: 0 24px 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+  animation: issue-panel-in 0.22s ease both;
+}
+
+.issue-rail-body label:first-child {
+  margin-top: 0;
+}
+
+.coming-soon-panel {
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-sm);
+  background:
+    linear-gradient(135deg, rgba(255, 202, 95, 0.065), transparent 42%),
+    rgba(244, 241, 231, 0.025);
+}
+
+.coming-soon-panel span {
+  width: fit-content;
+  padding: 5px 10px;
+  border: 1px solid rgba(255, 202, 95, 0.45);
+  border-radius: 999px;
+  color: var(--amber);
+  background: rgba(255, 202, 95, 0.08);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.coming-soon-panel p {
+  max-width: 620px;
+  margin: 0;
+  color: var(--ink-dim);
+  line-height: 1.55;
+}
+
+.coming-soon-panel button {
+  justify-self: start;
+}
+
+@keyframes issue-panel-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 .muted-card {
   background: rgba(244, 241, 231, 0.04);
 }
@@ -794,11 +1082,86 @@ textarea:focus {
   border-top: 1px solid var(--line);
 }
 
+.recovery-bundle textarea {
+  min-height: 92px;
+}
+
 .stored-passkey-input {
-  margin: 8px 0 0;
+  position: relative;
+  display: grid;
+  gap: 12px;
+  margin: 10px 0 2px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background:
+    linear-gradient(135deg, rgba(122, 223, 209, 0.07), transparent 48%),
+    rgba(244, 241, 231, 0.025);
+}
+
+.stored-passkey-input::before {
+  content: "";
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--mint);
+  box-shadow: 0 0 0 4px rgba(122, 223, 209, 0.12);
+}
+
+.stored-passkey-head {
+  display: grid;
+  gap: 6px;
+  padding-right: 28px;
+}
+
+.stored-passkey-head span,
+.stored-passkey-input label {
+  color: var(--mint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.stored-passkey-head strong {
+  color: var(--ink);
+  font-size: 17px;
+  line-height: 1.15;
+}
+
+.stored-passkey-head small,
+.stored-passkey-input p {
+  color: var(--ink-faint);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.stored-passkey-input label {
+  margin: 4px 0 -4px;
+}
+
+.stored-passkey-input textarea {
+  min-height: 78px;
+  resize: vertical;
+  letter-spacing: 0.02em;
+}
+
+.stored-passkey-input textarea::placeholder {
+  color: rgba(188, 182, 165, 0.45);
+}
+
+.stored-passkey-input p {
+  margin: -2px 0 0;
 }
 
 .wallet-block-banner {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
   margin: 0 0 18px;
   padding: 14px 16px;
   border: 1px solid rgba(239, 101, 82, 0.5);
@@ -809,9 +1172,15 @@ textarea:focus {
   font-weight: 700;
 }
 
+.wallet-block-banner button {
+  flex: none;
+  min-height: 36px;
+  padding: 0 14px;
+}
+
 /* ----- Authorize popup (previously unstyled) ----- */
 .authorize-shell {
-  min-height: 100vh;
+  min-height: 0;
   display: grid;
   place-items: center;
   padding: 28px;
@@ -877,9 +1246,32 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 
+  .workspace {
+    grid-template-rows: auto minmax(0, 1fr);
+    align-content: start;
+    overflow-y: auto;
+  }
+
   .sidebar {
     position: static;
     height: auto;
+    padding: 16px;
+  }
+
+  .sidebar nav {
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    margin-top: 16px;
+    padding-top: 14px;
+  }
+
+  .sidebar nav button,
+  .sidebar nav button:hover:not(:disabled),
+  .sidebar nav button.active:hover:not(:disabled) {
+    justify-content: center;
+    min-height: 38px;
+    padding-left: 12px;
+    padding-right: 12px;
+    text-align: center;
   }
 
   .signal-board div:nth-child(odd) { border-right: 0; }
@@ -888,6 +1280,16 @@ textarea:focus {
   .hero-block {
     min-height: 420px;
     padding: 32px;
+  }
+
+  .issue-rail-trigger {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .issue-rail-proof,
+  .issue-rail-toggle {
+    justify-self: start;
   }
 
   .topbar { padding: 0 18px; }
@@ -910,8 +1312,6 @@ textarea:focus {
   position: relative;
   width: 100%;
   margin: 0;
-  /* exactly fill the space under the 66px topbar — no page scroll */
-  height: calc(100vh - 66px);
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -1038,7 +1438,6 @@ textarea:focus {
 /* ----- auth (sign-in) screen ----- */
 .auth-screen {
   position: relative;
-  min-height: calc(100vh - 66px);
   display: grid;
   place-items: center;
   padding: 40px 18px;
@@ -1076,7 +1475,7 @@ textarea:focus {
 .auth-link:hover:not(:disabled) { color: var(--ink); transform: none; background: transparent; }
 
 /* ----- issuance: breathing room under primary action (point 8) ----- */
-.issue-card button { margin-top: 8px; }
+.issue-card button:not(.issue-rail-trigger) { margin-top: 8px; }
 .issue-card button + .kv { margin-top: 22px; }
 
 /* ----- file input: centered, button-styled control (point 9) ----- */

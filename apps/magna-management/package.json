@@ -7,7 +7,7 @@
     "dev": "vite --port 5174",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 4174",
-    "test": "echo \"No tests configured\"",
+    "test": "vitest run",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
@@ -28,6 +28,7 @@
     "@vitejs/plugin-react": "^4.7.0",
     "typescript": "^5.9.3",
     "vite": "6.4.1",
-    "vite-plugin-node-polyfills": "^0.25.0"
+    "vite-plugin-node-polyfills": "^0.25.0",
+    "vitest": "^3.2.6"
   }
 }

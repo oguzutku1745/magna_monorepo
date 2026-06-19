@@ -2,6 +2,7 @@ import { ContractInitializationStatus, type Wallet } from "@aztec/aztec.js/walle
 import { AztecAddress } from "@aztec/aztec.js/addresses";
 import { Fr } from "@aztec/aztec.js/fields";
 import { SetPublicAuthwitContractInteraction } from "@aztec/aztec.js/authorization";
+import { NoteStatus, type NoteDao } from "@aztec/stdlib/note";
 import { getSchnorrAccountContractAddress } from "@aztec/accounts/schnorr";
 import { computeSecretHash } from "@aztec/stdlib/hash";
 import { poseidon2HashWithSeparator } from "@aztec/foundation/crypto/poseidon";
@@ -81,6 +82,16 @@ export type RootedPassportHints = PassportHints & {
   hintedRootAuthorityNote: unknown;
   hintedRootRecoveryNote?: unknown;
   hintedLinkedRecoveryNote?: unknown;
+};
+
+export type DiscoveredMagnaCredentialRef = {
+  ownerAddress: string;
+  kind: "passport" | "instagram";
+  mode: "passport" | "rooted";
+  claimsHash: string;
+  rootCommitment?: string;
+  expiryTs?: string;
+  issuanceTxHash?: string;
 };
 
 export type TxOutcome = {
@@ -252,6 +263,7 @@ type WalletWithOptionalPxeDebugSync = Wallet & {
   pxe?: {
     debug?: {
       sync?: () => Promise<void>;
+      getNotes?: (...args: unknown[]) => Promise<NoteDao[]>;
     };
   };
 };
@@ -318,6 +330,28 @@ function toAztecAddressValue(value: unknown): AztecAddress {
     }
   }
   throw new Error(`Cannot convert value to AztecAddress: ${String(unwrapped)}`);
+}
+
+function noteItems(note: NoteDao): unknown[] {
+  const maybeItems = (note.note as unknown as { items?: unknown[] }).items;
+  if (Array.isArray(maybeItems)) return maybeItems;
+  return [];
+}
+
+function txHashString(value: unknown): string | undefined {
+  if (!value) return undefined;
+  if (typeof value === "string") return value;
+  if (typeof (value as { toString?: () => string }).toString === "function") {
+    const asString = (value as { toString: () => string }).toString();
+    return asString && asString !== "[object Object]" ? asString : undefined;
+  }
+  return undefined;
+}
+
+function credentialKindFromType(credentialType: bigint): "passport" | "instagram" | undefined {
+  if (credentialType === BigInt(CredentialType.Passport)) return "passport";
+  if (credentialType === BigInt(CredentialType.Instagram)) return "instagram";
+  return undefined;
 }
 
 function toHex32(value: string | bigint, label: string): Hex {
@@ -735,6 +769,91 @@ export class MagnaBrowserClient {
       `Active account ${this.userAddress} is not deployed and initialized on the current Aztec network yet. ` +
         "This wallet is still counterfactual, so private note reads and verify flows cannot run until the account contract is deployed.",
     );
+  }
+
+  private async getActiveNotesForStorageSlot(ownerAddress: string, storageSlot: Fr): Promise<NoteDao[]> {
+    const debug = (this.wallet as WalletWithOptionalPxeDebugSync).pxe?.debug;
+    if (!debug?.getNotes) {
+      throw new Error("Wallet PXE does not expose note enumeration.");
+    }
+    const issuerAddress = toAddress(this.env.issuerAddress!);
+    const owner = toAddress(ownerAddress);
+    try {
+      return await debug.getNotes(issuerAddress, owner, storageSlot, NoteStatus.ACTIVE, [owner]);
+    } catch (error) {
+      try {
+        return await debug.getNotes({
+          contractAddress: issuerAddress,
+          owner,
+          storageSlot,
+          status: NoteStatus.ACTIVE,
+          scopes: [owner],
+        });
+      } catch {
+        throw error;
+      }
+    }
+  }
+
+  private credentialRefFromNote(ownerAddress: string, note: NoteDao): DiscoveredMagnaCredentialRef | undefined {
+    const fields = noteItems(note);
+    if (fields.length < 3) return undefined;
+    const claimsHash = toBigIntValue(fields[0]);
+    const credentialType = toBigIntValue(fields[1]);
+    const kind = credentialKindFromType(credentialType);
+    if (!kind) return undefined;
+    return {
+      ownerAddress,
+      kind,
+      mode: "passport",
+      claimsHash: claimsHash.toString(),
+      expiryTs: toBigIntValue(fields[2]).toString(),
+      issuanceTxHash: txHashString(note.txHash),
+    };
+  }
+
+  private linkedCredentialRefFromNote(ownerAddress: string, note: NoteDao): DiscoveredMagnaCredentialRef | undefined {
+    const fields = noteItems(note);
+    if (fields.length < 4) return undefined;
+    const rootCommitment = toBigIntValue(fields[0]);
+    const claimsHash = toBigIntValue(fields[1]);
+    const credentialType = toBigIntValue(fields[2]);
+    const kind = credentialKindFromType(credentialType);
+    if (!kind) return undefined;
+    return {
+      ownerAddress,
+      kind,
+      mode: "rooted",
+      rootCommitment: rootCommitment.toString(),
+      claimsHash: claimsHash.toString(),
+      expiryTs: toBigIntValue(fields[3]).toString(),
+      issuanceTxHash: txHashString(note.txHash),
+    };
+  }
+
+  async discoverCredentialRefs(ownerAddress = this.userAddress): Promise<DiscoveredMagnaCredentialRef[]> {
+    await this.ensureContractsRegistered();
+    await this.ensureUserAccountIsDeployed();
+    await this.syncOrchestratorSender();
+    await this.syncWalletPxeIfAvailable();
+
+    const simpleNotes = await this.getActiveNotesForStorageSlot(
+      ownerAddress,
+      MagnaIssuerContract.storage.credential_notes.slot,
+    );
+    const linkedNotes = await this.getActiveNotesForStorageSlot(
+      ownerAddress,
+      MagnaIssuerContract.storage.linked_credential_notes.slot,
+    );
+    const discovered = [
+      ...simpleNotes.map(note => this.credentialRefFromNote(ownerAddress, note)),
+      ...linkedNotes.map(note => this.linkedCredentialRefFromNote(ownerAddress, note)),
+    ].filter((ref): ref is DiscoveredMagnaCredentialRef => Boolean(ref));
+    const byId = new Map<string, DiscoveredMagnaCredentialRef>();
+    for (const ref of discovered) {
+      byId.set(`${ref.ownerAddress}:${ref.kind}:${ref.claimsHash}:${ref.rootCommitment ?? ""}`, ref);
+    }
+    return Array.from(byId.values());
   }
 
   private isHintedNoteLookupPendingError(error: unknown): boolean {

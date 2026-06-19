@@ -29,11 +29,12 @@ describe("Instagram input generation", () => {
     assert.equal(result.metadata.handlePacked, 0x616b696e73707572n);
     assert.equal(result.inputs.claimed_handle_len, "8");
     assert.ok(Number(result.inputs.prefix_index) >= 0);
-    assert.ok(result.inputs.decoded_body);
+    assert.ok(result.inputs.body);
+    assert.equal("decoded_body" in result.inputs, false);
     assert.ok(result.inputs.partial_body_hash);
   });
 
-  it("rejects a claimed handle that is not in the decoded body", async () => {
+  it("rejects a claimed handle that is not in the signed body", async () => {
     const eml = readFileSync(fixturePath);
     await assert.rejects(
       () => generateInstagramCircuitInputs(eml, "differenthandle"),

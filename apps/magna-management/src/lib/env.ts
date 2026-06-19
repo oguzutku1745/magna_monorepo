@@ -1,3 +1,5 @@
+import localDeployment from "../../../../deployments/local.json";
+
 export type SponsorCatalogEntry = {
   address: string;
   isActiveDefault: boolean;
@@ -33,6 +35,27 @@ export type ManagementEnv = {
 };
 
 type EnvSource = Record<string, string | boolean | number | undefined>;
+
+type LocalDeployment = {
+  l1?: {
+    portalAddress?: string;
+    paymentTokenAddress?: string;
+  };
+  l2?: {
+    issuerAddress?: string;
+    companySponsorAddress?: string;
+    companySponsorAddresses?: string[];
+    activeCompanySponsorAddress?: string;
+    rightsRegistryAddress?: string;
+    purchaseAdapterAddress?: string;
+    paymentTokenAddress?: string;
+    webBootstrap?: {
+      orchestratorAddress?: string;
+    };
+  };
+};
+
+const deployment = localDeployment as LocalDeployment;
 
 function parseBoolean(value: string | boolean | number | undefined, fallback: boolean): boolean {
   if (typeof value === "boolean") return value;
@@ -72,10 +95,19 @@ function parseGhostVersion(value: string | boolean | number | undefined): "v1_le
 
 export function getManagementEnv(source: EnvSource = import.meta.env): ManagementEnv {
   const legacySponsor = parseOptionalString(source.VITE_MAGNA_COMPANY_SPONSOR_ADDRESS);
-  const sponsorSet = new Set(parseStringList(source.VITE_MAGNA_COMPANY_SPONSOR_ADDRESSES));
+  const manifestSponsors =
+    deployment.l2?.companySponsorAddresses ??
+    (deployment.l2?.companySponsorAddress ? [deployment.l2.companySponsorAddress] : []);
+  const sponsorSet = new Set([
+    ...manifestSponsors,
+    ...parseStringList(source.VITE_MAGNA_COMPANY_SPONSOR_ADDRESSES),
+  ]);
   if (legacySponsor) sponsorSet.add(legacySponsor);
   const activeSponsor =
-    parseOptionalString(source.VITE_MAGNA_ACTIVE_COMPANY_SPONSOR_ADDRESS) ?? legacySponsor ?? Array.from(sponsorSet)[0];
+    parseOptionalString(source.VITE_MAGNA_ACTIVE_COMPANY_SPONSOR_ADDRESS) ??
+    legacySponsor ??
+    deployment.l2?.activeCompanySponsorAddress ??
+    Array.from(sponsorSet)[0];
   if (activeSponsor) sponsorSet.add(activeSponsor);
   const companySponsorAddresses = Array.from(sponsorSet);
 
@@ -84,8 +116,10 @@ export function getManagementEnv(source: EnvSource = import.meta.env): Managemen
     appId: parseOptionalString(source.VITE_MAGNA_APP_ID) ?? "magna-management",
     verificationApiUrl: parseOptionalString(source.VITE_MAGNA_VERIFICATION_API_URL) ?? "http://localhost:4310",
     l1RpcUrl: parseOptionalString(source.VITE_L1_RPC_URL),
-    l1RightsPortalAddress: parseOptionalString(source.VITE_MAGNA_L1_RIGHTS_PORTAL_ADDRESS),
-    l1PaymentTokenAddress: parseOptionalString(source.VITE_MAGNA_L1_PAYMENT_TOKEN_ADDRESS),
+    l1RightsPortalAddress:
+      parseOptionalString(source.VITE_MAGNA_L1_RIGHTS_PORTAL_ADDRESS) ?? deployment.l1?.portalAddress,
+    l1PaymentTokenAddress:
+      parseOptionalString(source.VITE_MAGNA_L1_PAYMENT_TOKEN_ADDRESS) ?? deployment.l1?.paymentTokenAddress,
     l1BuyerPrivateKey: parseOptionalString(source.VITE_MAGNA_L1_BUYER_PRIVATE_KEY),
     zkPassportRequestName: parseOptionalString(source.VITE_MAGNA_ZKPASSPORT_REQUEST_NAME) ?? "Magna",
     zkPassportRequestLogo:
@@ -95,20 +129,24 @@ export function getManagementEnv(source: EnvSource = import.meta.env): Managemen
       "Issue a Magna passport credential using zkPassport verification.",
     zkPassportRequestScope:
       parseOptionalString(source.VITE_MAGNA_ZKPASSPORT_REQUEST_SCOPE) ?? "magna-passport-onboarding",
-    zkPassportDevMode: parseBoolean(source.VITE_MAGNA_ZKPASSPORT_DEV_MODE, false),
+    zkPassportDevMode: parseBoolean(source.VITE_MAGNA_ZKPASSPORT_DEV_MODE, parseBoolean(source.DEV, false)),
     zkPassportPrimaryIssuanceMode: parseIssuanceMode(source.VITE_MAGNA_ZKPASSPORT_PRIMARY_ISSUANCE_MODE),
     zkPassportGhostDerivationVersion: parseGhostVersion(source.VITE_MAGNA_ZKPASSPORT_GHOST_DERIVATION_VERSION),
-    issuerAddress: parseOptionalString(source.VITE_MAGNA_ISSUER_ADDRESS),
-    orchestratorAddress: parseOptionalString(source.VITE_MAGNA_ORCHESTRATOR_ADDRESS),
+    issuerAddress: parseOptionalString(source.VITE_MAGNA_ISSUER_ADDRESS) ?? deployment.l2?.issuerAddress,
+    orchestratorAddress:
+      parseOptionalString(source.VITE_MAGNA_ORCHESTRATOR_ADDRESS) ?? deployment.l2?.webBootstrap?.orchestratorAddress,
     companySponsorAddresses,
     companySponsors: companySponsorAddresses.map(address => ({
       address,
       isActiveDefault: Boolean(activeSponsor && activeSponsor === address),
     })),
     activeCompanySponsorAddress: activeSponsor,
-    rightsRegistryAddress: parseOptionalString(source.VITE_MAGNA_RIGHTS_REGISTRY_ADDRESS),
-    rightsPurchaseL2Address: parseOptionalString(source.VITE_MAGNA_RIGHTS_PURCHASE_L2_ADDRESS),
-    l2PaymentTokenAddress: parseOptionalString(source.VITE_MAGNA_L2_PAYMENT_TOKEN_ADDRESS),
+    rightsRegistryAddress:
+      parseOptionalString(source.VITE_MAGNA_RIGHTS_REGISTRY_ADDRESS) ?? deployment.l2?.rightsRegistryAddress,
+    rightsPurchaseL2Address:
+      parseOptionalString(source.VITE_MAGNA_RIGHTS_PURCHASE_L2_ADDRESS) ?? deployment.l2?.purchaseAdapterAddress,
+    l2PaymentTokenAddress:
+      parseOptionalString(source.VITE_MAGNA_L2_PAYMENT_TOKEN_ADDRESS) ?? deployment.l2?.paymentTokenAddress,
     requireRealSends: parseBoolean(source.VITE_MAGNA_REQUIRE_REAL_SENDS, true),
     enableDevOrchestrator: parseBoolean(source.VITE_MAGNA_ENABLE_DEV_ORCHESTRATOR, false),
     enableLocalTestBootstrap: parseBoolean(source.VITE_MAGNA_ENABLE_LOCAL_TEST_BOOTSTRAP, true),

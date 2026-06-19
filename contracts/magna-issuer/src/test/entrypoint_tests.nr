@@ -250,6 +250,63 @@ unconstrained fn test_verify_consumer_allows_configured_gateway_calls() {
     );
 }
 
+#[test]
+unconstrained fn test_verify_linked_consumer_allows_configured_gateway_calls() {
+    let (mut env, contract_address, orchestrator, active_owner, ghost_owner, consumer) = setup();
+
+    env.call_public(
+        orchestrator,
+        MagnaIssuer::at(contract_address).add_consumer_gateway(consumer),
+    );
+    env.advance_next_block_timestamp_by(MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS);
+    env.mine_block();
+
+    let root_commitment = 12345;
+    let claims_hash = base_claims_hash();
+    env.call_private(
+        orchestrator,
+        MagnaIssuer::at(contract_address).register_rooted_passport(
+            active_owner,
+            ghost_owner,
+            root_commitment,
+            claims_hash,
+            1_893_456_000,
+        ),
+    );
+
+    let hinted_root_status = env.call_private(
+        active_owner,
+        MagnaIssuer::at(contract_address).get_root_status_hinted(active_owner, root_commitment),
+    );
+    let hinted_root_authority = env.call_private(
+        active_owner,
+        MagnaIssuer::at(contract_address).get_root_authority_hinted(active_owner, root_commitment, claims_hash),
+    );
+    let hinted_credential = env.call_private(
+        active_owner,
+        MagnaIssuer::at(contract_address).get_linked_credential_hinted(active_owner, root_commitment, claims_hash),
+    );
+    let hinted_status = env.call_private(
+        active_owner,
+        MagnaIssuer::at(contract_address).get_linked_status_hinted(active_owner, root_commitment, claims_hash),
+    );
+
+    env.call_private(
+        consumer,
+        MagnaIssuer::at(contract_address).verify_linked_consumer(
+            active_owner,
+            base_policy(),
+            hinted_root_status,
+            hinted_root_authority,
+            hinted_credential,
+            hinted_status,
+            21,
+            pack_alpha3(67, 65, 78),
+            0,
+        ),
+    );
+}
+
 #[test(should_fail_with = "consumer only")]
 unconstrained fn test_verify_consumer_rejects_removed_gateway_after_delay() {
     let (mut env, contract_address, orchestrator, active_owner, ghost_owner, consumer) = setup();

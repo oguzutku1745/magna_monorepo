@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   applyHydratedEnvEntries,
+  buildStaleIssuerDeploymentMessage,
+  deploymentManifestEnvEntries,
   verifyRootRecoveryPreflight,
   resolveGhostDerivationVersion,
   resolveRootRecoveryGhostDerivationVersion,
@@ -165,6 +167,36 @@ describe("applyHydratedEnvEntries", () => {
 
     expect(target.VITE_MAGNA_ISSUER_ADDRESS).toBe("0xnew");
     expect(target.MAGNA_ISSUER_ADDRESS).toBe("0xnew-api");
+  });
+});
+
+describe("deployment manifest hydration", () => {
+  it("maps local deployment manifest addresses into API and Vite env entries", () => {
+    expect(
+      deploymentManifestEnvEntries({
+        l2: {
+          issuerAddress: "0xissuer-new",
+          companySponsorAddress: "0xsponsor-new",
+          companySponsorAddresses: ["0xsponsor-new", "0xsponsor-other"],
+          activeCompanySponsorAddress: "0xsponsor-other",
+        },
+      }),
+    ).toEqual({
+      MAGNA_ISSUER_ADDRESS: "0xissuer-new",
+      VITE_MAGNA_ISSUER_ADDRESS: "0xissuer-new",
+      VITE_MAGNA_COMPANY_SPONSOR_ADDRESS: "0xsponsor-new",
+      VITE_MAGNA_COMPANY_SPONSOR_ADDRESSES: "0xsponsor-new,0xsponsor-other",
+      VITE_MAGNA_ACTIVE_COMPANY_SPONSOR_ADDRESS: "0xsponsor-other",
+    });
+  });
+
+  it("explains stale issuer deployments with the local bootstrap recovery command", () => {
+    expect(
+      buildStaleIssuerDeploymentMessage(
+        "0xissuer-old",
+        "Artifact does not match expected class id (computed 0xnew but instance refers to 0xold)",
+      ),
+    ).toContain("npm run web:bootstrap:local -- --skip-rights-deploy");
   });
 });
 

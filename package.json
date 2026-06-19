@@ -12,6 +12,7 @@
     "test": "npm run -ws test",
     "lint": "npm run -ws lint",
     "verification-api:dev": "npm run -w @magna/verification-api dev",
+    "instagram-proof:prepare": "npm run -w @magna/instagram-proof build && npm run -w @magna/instagram-proof compile:circuit",
     "web:bootstrap:local": "node ./scripts/bootstrap-web-local.mjs",
     "fund:fee-juice": "node ./scripts/fund-fee-juice.mjs",
     "vectors:sync": "node ./scripts/sync-golden-vectors.mjs",

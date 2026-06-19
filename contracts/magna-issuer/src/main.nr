@@ -451,6 +451,37 @@ pub contract MagnaIssuer {
     }
 
     #[external("private")]
+    fn verify_linked_consumer(
+        caller: AztecAddress,
+        policy: Policy,
+        hinted_root_status: HintedNote<RootStatusNote>,
+        hinted_root_authority: HintedNote<RootAuthorityNote>,
+        hinted_credential: HintedNote<LinkedCredentialNote>,
+        hinted_status: HintedNote<LinkedStatusNote>,
+        min_age_proven: u8,
+        nationality_alpha3_packed: Field,
+        sponsor_slot: u8,
+    ) {
+        assert(caller != AztecAddress::zero(), "caller must be non-zero");
+        let sender = self.msg_sender();
+        let allowlisted = self.storage.consumer_gateways.at(sender).get_current_value();
+        let disabled = self.storage.disabled_consumer_gateways.at(sender).get_current_value();
+        assert(allowlisted & !disabled, "consumer only");
+        self.internal.verify_linked_for_caller(
+            caller,
+            policy,
+            hinted_root_status,
+            hinted_root_authority,
+            hinted_credential,
+            hinted_status,
+            min_age_proven,
+            nationality_alpha3_packed,
+            sponsor_slot,
+            false,
+        );
+    }
+
+    #[external("private")]
     fn verify_linked(
         policy: Policy,
         hinted_root_status: HintedNote<RootStatusNote>,

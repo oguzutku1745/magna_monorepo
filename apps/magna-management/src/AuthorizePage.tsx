@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { assertLoginRequest, policyFromWire, randomHex, type LoginRequest, type SessionAssertion } from "@magna/core";
+import {
+  assertLoginRequest,
+  policyFromWire,
+  randomHex,
+  type LoginRequest,
+  type LoginRequirement,
+  type SessionAssertion,
+} from "@magna/core";
 import { resolveRegisteredDapp } from "./lib/dapp-registry";
 import { signAssertion } from "./lib/session-signer";
 import { runWalletLoginForRequest } from "./lib/wallet-login";
@@ -32,6 +39,23 @@ function redirectUriForRegisteredDapp(redirectUri: string | undefined, origin: s
   return url;
 }
 
+function loginRequirementsFromRequest(request: LoginRequest): LoginRequirement[] | undefined {
+  return request.requirements?.map(requirement => {
+    if (requirement.kind === "policy") {
+      return {
+        id: requirement.id,
+        kind: "policy",
+        policy: policyFromWire(requirement.policy),
+      };
+    }
+    return {
+      id: requirement.id,
+      kind: "instagram-handle",
+      handle: requirement.handle,
+    };
+  });
+}
+
 export function AuthorizePage() {
   const [phase, setPhase] = useState<Phase>("waiting");
   const [error, setError] = useState("");
@@ -62,6 +86,7 @@ export function AuthorizePage() {
         setPhase("authenticating");
         const outcome = await runWalletLoginForRequest({
           policy: policyFromWire(data.policy),
+          requirements: loginRequirementsFromRequest(data),
           consumerGatewayAddress: dapp.consumerGatewayAddress,
           onVerifying: () => setPhase("verifying"),
         });
@@ -78,6 +103,7 @@ export function AuthorizePage() {
           issuedAt: now,
           expiresAt: now + 300,
           receipt: outcome.receipt,
+          receipts: outcome.receipts,
         };
         const signed = await signAssertion(assertion);
         if (data.responseMode === "redirectCode") {

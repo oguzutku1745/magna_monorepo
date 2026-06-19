@@ -1,12 +1,16 @@
 import {
+  computeLoginRequirementsHash,
   computePolicyHash,
+  loginRequirementsToWire,
   normalizePolicy,
   policyToWire,
   randomHex,
+  type LoginRequirement,
   verifySessionAssertion,
   type LoginRequest,
   type LoginResponse,
   type Policy,
+  type SessionVerificationReceipt,
   type SignedSessionAssertion,
 } from "@magna/core";
 
@@ -14,7 +18,10 @@ export type MagnaLoginResult = {
   verified: boolean;
   assertion: SignedSessionAssertion;
   receipt: string | null;
+  receipts?: SessionVerificationReceipt[];
 };
+
+export type MagnaLoginRequirement = LoginRequirement;
 
 export type ExpectedRequestContext = {
   clientId: string;
@@ -45,7 +52,7 @@ export async function validateLoginResponse(
   if (a.expiresAt <= nowSeconds || a.issuedAt > nowSeconds + 60) {
     throw new Error("session assertion expired or not yet valid");
   }
-  return { verified: a.verified, assertion: signed, receipt: a.receipt };
+  return { verified: a.verified, assertion: signed, receipt: a.receipt, receipts: a.receipts };
 }
 
 type PopupLike = {
@@ -88,9 +95,36 @@ export class MagnaClient {
   constructor(private readonly config: MagnaClientConfig) {}
 
   async login(policy: Policy): Promise<MagnaLoginResult> {
-    const win = this.config.windowImpl ?? browserWindowImpl();
     const normalized = normalizePolicy(policy);
     const policyHash = await computePolicyHash(normalized);
+    return this.openLoginRequest({
+      policy: normalized,
+      policyHash,
+    });
+  }
+
+  async loginWithRequirements(requirements: LoginRequirement[]): Promise<MagnaLoginResult> {
+    const policyRequirement = requirements.find(
+      (requirement): requirement is Extract<LoginRequirement, { kind: "policy" }> => requirement.kind === "policy",
+    );
+    if (!policyRequirement) {
+      throw new Error("loginWithRequirements requires at least one policy requirement");
+    }
+    const wireRequirements = loginRequirementsToWire(requirements);
+    const policyHash = await computeLoginRequirementsHash(wireRequirements);
+    return this.openLoginRequest({
+      policy: normalizePolicy(policyRequirement.policy),
+      policyHash,
+      requirements: wireRequirements,
+    });
+  }
+
+  private async openLoginRequest(input: {
+    policy: Policy;
+    policyHash: string;
+    requirements?: LoginRequest["requirements"];
+  }): Promise<MagnaLoginResult> {
+    const win = this.config.windowImpl ?? browserWindowImpl();
     const requestId = randomHex(16);
     const sessionChallenge = randomHex(32);
 
@@ -101,8 +135,9 @@ export class MagnaClient {
       origin: win.origin,
       requestId,
       sessionChallenge,
-      policy: policyToWire(normalized),
-      policyHash,
+      policy: policyToWire(input.policy),
+      policyHash: input.policyHash,
+      requirements: input.requirements,
       responseMode: "postMessage",
     };
 
@@ -154,7 +189,7 @@ export class MagnaClient {
             popup.close();
             validateLoginResponse(
               response.assertion,
-              { clientId: this.config.clientId, origin: win.origin, requestId, sessionChallenge, policyHash },
+              { clientId: this.config.clientId, origin: win.origin, requestId, sessionChallenge, policyHash: input.policyHash },
               this.config.magnaPublicKeyJwk,
             ).then(resolve, reject);
           });

@@ -1,6 +1,16 @@
 use crate::MagnaIssuer;
-use crate::internal::constants::MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS;
+use crate::internal::constants::{
+    MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS,
+    MAGNA_SPONSOR_GATEWAY_DELAY_SECONDS,
+    MAGNA_SPONSOR_POLICY_DELAY_SECONDS,
+};
 use crate::test::setup::setup;
+
+#[test]
+unconstrained fn test_gateway_private_read_delays_cover_browser_proving_latency() {
+    assert(MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS >= MAGNA_SPONSOR_POLICY_DELAY_SECONDS);
+    assert(MAGNA_SPONSOR_GATEWAY_DELAY_SECONDS >= MAGNA_SPONSOR_POLICY_DELAY_SECONDS);
+}
 
 #[test]
 unconstrained fn test_add_consumer_gateway_allows_gateway() {

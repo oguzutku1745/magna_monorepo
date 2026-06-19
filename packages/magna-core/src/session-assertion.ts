@@ -1,5 +1,11 @@
 import { bytesToHex, hexToBytes } from "./bytes.js";
 
+export type SessionVerificationReceipt = {
+  id: string;
+  kind: string;
+  receipt: string | null;
+};
+
 /** v1 session assertion: what the wallet attests to the dApp. */
 export type SessionAssertion = {
   v: 1;
@@ -12,6 +18,7 @@ export type SessionAssertion = {
   issuedAt: number;
   expiresAt: number;
   receipt: string | null;
+  receipts?: SessionVerificationReceipt[];
 };
 
 export type SignedSessionAssertion = {
@@ -21,7 +28,20 @@ export type SignedSessionAssertion = {
 
 /** Fixed key order: this exact serialization is what gets signed. */
 export function sessionAssertionSigningBytes(a: SessionAssertion): Uint8Array {
-  const canonical = JSON.stringify({
+  const canonicalAssertion: {
+    domain: string;
+    v: 1;
+    clientId: string;
+    origin: string;
+    requestId: string;
+    sessionChallenge: string;
+    policyHash: string;
+    verified: boolean;
+    issuedAt: number;
+    expiresAt: number;
+    receipt: string | null;
+    receipts?: SessionVerificationReceipt[];
+  } = {
     domain: "magna:session-assertion:v1",
     v: a.v,
     clientId: a.clientId,
@@ -33,7 +53,15 @@ export function sessionAssertionSigningBytes(a: SessionAssertion): Uint8Array {
     issuedAt: a.issuedAt,
     expiresAt: a.expiresAt,
     receipt: a.receipt,
-  });
+  };
+  if (a.receipts !== undefined) {
+    canonicalAssertion.receipts = a.receipts.map(receipt => ({
+      id: receipt.id,
+      kind: receipt.kind,
+      receipt: receipt.receipt,
+    }));
+  }
+  const canonical = JSON.stringify(canonicalAssertion);
   return new TextEncoder().encode(canonical);
 }
 

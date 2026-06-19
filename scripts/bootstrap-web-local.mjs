@@ -40,7 +40,7 @@ const DEFAULT_INITIAL_SPONSOR_RIGHTS = 1_000_000n;
 const DEFAULT_L2_PRICE_PER_VERIFY = 150_000n;
 const DEFAULT_L2_STABLE_MINT_AMOUNT = 10_000_000_000_000n;
 const DEFAULT_L1_STABLE_INITIAL_SUPPLY = 1_000_000_000_000n;
-const MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS = 300n;
+const MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS = 3_600n;
 const DEFAULT_LOCAL_TEST_ACCOUNT_INDEX = 0;
 const DEFAULT_L1_MNEMONIC =
   process.env.MNEMONIC ?? "test test test test test test test test test test test junk";
@@ -177,6 +177,10 @@ function errorDetails(error) {
   } catch {
     return String(error);
   }
+}
+
+function txHashString(receipt) {
+  return receipt?.receipt?.txHash?.toString?.() ?? receipt?.txHash?.toString?.() ?? "";
 }
 
 function unwrapStepResult(value) {
@@ -402,9 +406,7 @@ function updateManifestWithWebBootstrap(manifestPath, details) {
   manifest.l2.consumerAddress = details.consumerAddress;
   manifest.l2.referenceDappConsumerAddress = details.referenceDappConsumerAddress;
   manifest.l2.companySponsorAddress = details.companySponsorAddress;
-  manifest.l2.companySponsorAddresses = Array.from(
-    new Set([...(manifest.l2.companySponsorAddresses ?? []), details.companySponsorAddress]),
-  );
+  manifest.l2.companySponsorAddresses = [details.companySponsorAddress];
   manifest.l2.activeCompanySponsorAddress = details.companySponsorAddress;
   manifest.l2.webBootstrap = {
     orchestratorAddress: details.orchestratorAddress,
@@ -425,6 +427,52 @@ function runNodeScript(scriptPath, args, description) {
   if ((result.status ?? 1) !== 0) {
     throw new Error(`${description} failed with exit code ${result.status ?? 1}`);
   }
+}
+
+function syncWebBootstrapOutputs({
+  repoRoot,
+  networkName,
+  manifestPath,
+  envOutPath,
+  orchestratorAddress,
+  issuerAddress,
+  companySponsorAddress,
+  consumerAddress,
+  referenceDappConsumerAddress,
+  txHashes,
+  description,
+}) {
+  updateManifestWithWebBootstrap(manifestPath, {
+    orchestratorAddress,
+    issuerAddress,
+    companySponsorAddress,
+    consumerAddress,
+    referenceDappConsumerAddress,
+    txHashes,
+  });
+
+  runNodeScript(
+    resolve(repoRoot, "apps/magna-web/scripts/fill-env-from-local-deploy.mjs"),
+    [
+      "--network-name",
+      networkName,
+      "--manifest",
+      manifestPath,
+      "--out",
+      envOutPath,
+      "--issuer-address",
+      issuerAddress,
+      "--company-sponsor-address",
+      companySponsorAddress,
+      "--company-sponsor-addresses",
+      companySponsorAddress,
+      "--active-company-sponsor-address",
+      companySponsorAddress,
+      "--orchestrator-address",
+      orchestratorAddress,
+    ],
+    description,
+  );
 }
 
 async function ensureL1PaymentTokenAddress({ existingAddress, l1Client }) {
@@ -667,6 +715,28 @@ async function main() {
     await runRetriedStep("issuer.add_consumer_gateway(reference dApp)", async () => {
       return await issuer.methods.add_consumer_gateway(referenceDappConsumer.address).send({ from: orchestrator });
     });
+
+    const deploymentTxHashes = {
+      deployIssuer: txHashString(issuerDeployReceipt),
+      deployCompanySponsor: txHashString(companySponsorDeployReceipt),
+      deployConsumer: txHashString(consumerDeployReceipt),
+      deployReferenceDappConsumer: txHashString(referenceDappConsumerDeployReceipt),
+    };
+
+    syncWebBootstrapOutputs({
+      repoRoot,
+      networkName,
+      manifestPath,
+      envOutPath,
+      orchestratorAddress: orchestrator.toString(),
+      issuerAddress: issuer.address.toString(),
+      companySponsorAddress: companySponsor.address.toString(),
+      consumerAddress: consumer.address.toString(),
+      referenceDappConsumerAddress: referenceDappConsumer.address.toString(),
+      txHashes: deploymentTxHashes,
+      description: "checkpoint apps/magna-web env from deployed web stack",
+    });
+
     await warpForwardSeconds({
       l1RpcUrls,
       l1Mnemonic,
@@ -720,53 +790,24 @@ async function main() {
     }
 
     const txHashes = {
-      deployIssuer:
-        issuerDeployReceipt.receipt?.txHash?.toString?.() ?? issuerDeployReceipt.txHash?.toString?.() ?? "",
-      deployCompanySponsor:
-        companySponsorDeployReceipt.receipt?.txHash?.toString?.() ??
-        companySponsorDeployReceipt.txHash?.toString?.() ??
-        "",
-      deployConsumer:
-        consumerDeployReceipt.receipt?.txHash?.toString?.() ?? consumerDeployReceipt.txHash?.toString?.() ?? "",
-      deployReferenceDappConsumer:
-        referenceDappConsumerDeployReceipt.receipt?.txHash?.toString?.() ??
-        referenceDappConsumerDeployReceipt.txHash?.toString?.() ??
-        "",
+      ...deploymentTxHashes,
       seedSponsorRights: rightsTopUp.purchaseTxHash,
       ...(sponsorFeeJuiceClaimTxHash ? { sponsorFeeJuiceClaim: sponsorFeeJuiceClaimTxHash } : {}),
     };
 
-    updateManifestWithWebBootstrap(manifestPath, {
+    syncWebBootstrapOutputs({
+      repoRoot,
+      networkName,
+      manifestPath,
+      envOutPath,
       orchestratorAddress: orchestrator.toString(),
       issuerAddress: issuer.address.toString(),
       companySponsorAddress: companySponsor.address.toString(),
       consumerAddress: consumer.address.toString(),
       referenceDappConsumerAddress: referenceDappConsumer.address.toString(),
       txHashes,
+      description: "write apps/magna-web env from deployed web stack",
     });
-
-    runNodeScript(
-      resolve(repoRoot, "apps/magna-web/scripts/fill-env-from-local-deploy.mjs"),
-      [
-        "--network-name",
-        networkName,
-        "--manifest",
-        manifestPath,
-        "--out",
-        envOutPath,
-        "--issuer-address",
-        issuer.address.toString(),
-        "--company-sponsor-address",
-        companySponsor.address.toString(),
-        "--company-sponsor-addresses",
-        companySponsor.address.toString(),
-        "--active-company-sponsor-address",
-        companySponsor.address.toString(),
-        "--orchestrator-address",
-        orchestrator.toString(),
-      ],
-      "write apps/magna-web env from deployed web stack",
-    );
 
     console.info("[web-bootstrap] completed");
     console.info(

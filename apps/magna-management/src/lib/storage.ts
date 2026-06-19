@@ -13,6 +13,8 @@ export type StoredCredentialRef = {
   updatedAt?: string;
   issuanceTxHash?: string;
   renewalTxHash?: string;
+  issuerAddress?: string;
+  orchestratorAddress?: string;
   mode?: "passport" | "rooted";
   rootCommitment?: string;
   ghostOwner?: string;
@@ -30,6 +32,7 @@ export type StoredCredentialRef = {
 export type WalletProfile = {
   address: string;
   walletKind: string;
+  role?: "user" | "company";
   createdAt: string;
   publicKey?: string;
   rpId?: string;
@@ -42,6 +45,10 @@ export type WalletProfile = {
 
 const CREDENTIALS_KEY = "magna-management:credential-refs:v1";
 const WALLET_PROFILE_KEY = "magna-management:wallet-profile:v1";
+
+export type CredentialRefFilter = {
+  issuerAddress?: string;
+};
 
 function safeParse<T>(raw: string | null, fallback: T): T {
   if (!raw) return fallback;
@@ -60,17 +67,38 @@ export function saveCredentialRefs(refs: StoredCredentialRef[]): void {
   window.localStorage.setItem(CREDENTIALS_KEY, JSON.stringify(refs));
 }
 
+function normalizeScopeValue(value?: string): string {
+  return value?.trim().toLowerCase() ?? "";
+}
+
+function credentialStorageKey(ref: StoredCredentialRef): string {
+  return [
+    normalizeScopeValue(ref.issuerAddress),
+    normalizeScopeValue(ref.ownerAddress),
+    ref.kind,
+    ref.mode ?? "",
+    ref.claimsHash,
+    ref.rootCommitment ?? "",
+  ].join(":");
+}
+
 export function upsertCredentialRef(ref: StoredCredentialRef): StoredCredentialRef[] {
   const refs = loadCredentialRefs();
-  const index = refs.findIndex(existing => existing.id === ref.id);
-  const next = index >= 0 ? refs.map(existing => (existing.id === ref.id ? ref : existing)) : [ref, ...refs];
+  const key = credentialStorageKey(ref);
+  const index = refs.findIndex(existing => credentialStorageKey(existing) === key);
+  const next = index >= 0 ? refs.map(existing => (credentialStorageKey(existing) === key ? ref : existing)) : [ref, ...refs];
   saveCredentialRefs(next);
   return next;
 }
 
-export function refsForOwner(ownerAddress?: string): StoredCredentialRef[] {
+export function refsForOwner(ownerAddress?: string, filter: CredentialRefFilter = {}): StoredCredentialRef[] {
   if (!ownerAddress) return [];
-  return loadCredentialRefs().filter(ref => ref.ownerAddress === ownerAddress);
+  const expectedIssuer = normalizeScopeValue(filter.issuerAddress);
+  return loadCredentialRefs().filter(ref => {
+    if (ref.ownerAddress !== ownerAddress) return false;
+    if (!expectedIssuer) return true;
+    return normalizeScopeValue(ref.issuerAddress) === expectedIssuer;
+  });
 }
 
 export function saveWalletProfile(profile: WalletProfile): void {

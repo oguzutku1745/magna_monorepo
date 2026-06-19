@@ -12,7 +12,8 @@ export type ZkPassportLifecycleEvent =
   | { type: "bridge_connected" }
   | { type: "request_received" }
   | { type: "generating_proof" }
-  | { type: "proof_generated"; proofCount: number }
+  | { type: "proof_generated"; proofCount: number; proofTotal?: number }
+  | { type: "query_result_received" }
   | { type: "result_received"; verified: boolean };
 
 export type ZkPassportCompletion =
@@ -40,6 +41,7 @@ export type VerifyAndIssueResponse = {
   claimsHash: string;
   mode: "passport" | "rooted";
   ghostDerivationVersion: GhostDerivationVersion;
+  issuerAddress: string;
   orchestratorAddress: string;
   normalizedClaims: {
     nationalityAlpha3: string;
@@ -74,6 +76,7 @@ export type VerifyAndRefreshRootAuthorityResponse = {
   ghostOwner: string;
   rootCommitment: string;
   claimsHash: string;
+  issuerAddress: string;
   orchestratorAddress: string;
   verificationSummary: {
     verified: true;
@@ -118,6 +121,7 @@ export type VerifyAndIssueInstagramResponse = {
   ghostOwner: string;
   claimsHash: string;
   ghostDerivationVersion: GhostDerivationVersion;
+  issuerAddress: string;
   orchestratorAddress: string;
   verificationSummary: {
     verified: true;
@@ -143,6 +147,15 @@ type VerifyAndIssuePayload = {
   ghostDerivationVersion?: GhostDerivationVersion;
 };
 
+type ZkPassportInternalMessage = {
+  method?: string;
+  params?: unknown;
+};
+
+type ZkPassportMessageHookTarget = {
+  handleEncryptedMessage?: (topic: string, message: ZkPassportInternalMessage) => Promise<void>;
+};
+
 let singleton: ZKPassport | null = null;
 
 function zkPassport(): ZKPassport {
@@ -152,6 +165,22 @@ function zkPassport(): ZKPassport {
 
 function errorMessage(value: unknown): string {
   return value instanceof Error ? value.message : String(value);
+}
+
+function summarizeQueryResultErrors(errors?: Partial<QueryResultErrors>): string | undefined {
+  if (!errors) return undefined;
+  const messages: string[] = [];
+  for (const [section, operations] of Object.entries(errors)) {
+    if (!operations || typeof operations !== "object") continue;
+    for (const [operation, detail] of Object.entries(operations)) {
+      if (!detail || typeof detail !== "object") continue;
+      const message = Reflect.get(detail, "message");
+      if (typeof message === "string" && message.trim()) {
+        messages.push(`${section}.${operation}: ${message.trim()}`);
+      }
+    }
+  }
+  return messages.length > 0 ? messages.join(" | ") : undefined;
 }
 
 function sanitizeForJson(value: unknown): unknown {
@@ -210,22 +239,69 @@ export async function startPassportZkRequest(options: {
   options.onEvent?.({ type: "request_created", requestId: built.requestId, url: built.url });
 
   const proofs: ProofResult[] = [];
+  let settled = false;
+  const sdk = zkPassport() as unknown as ZkPassportMessageHookTarget;
+  const originalHandleEncryptedMessage = sdk.handleEncryptedMessage?.bind(sdk);
+  let hookedHandleEncryptedMessage: ZkPassportMessageHookTarget["handleEncryptedMessage"];
+
+  const cleanupMessageHook = () => {
+    if (hookedHandleEncryptedMessage && sdk.handleEncryptedMessage === hookedHandleEncryptedMessage) {
+      sdk.handleEncryptedMessage = originalHandleEncryptedMessage;
+    }
+  };
+
   const completion = new Promise<ZkPassportCompletion>((resolve, reject) => {
+    if (originalHandleEncryptedMessage) {
+      hookedHandleEncryptedMessage = async (topic, message) => {
+        if (topic === built.requestId && message.method === "done") {
+          options.onEvent?.({ type: "query_result_received" });
+        }
+        try {
+          await originalHandleEncryptedMessage(topic, message);
+        } catch (error) {
+          if (settled) {
+            console.warn("zkPassport SDK local verification failed after backend handoff.", error);
+            return;
+          }
+          settled = true;
+          cleanupMessageHook();
+          reject(new Error(errorMessage(error)));
+        }
+      };
+      sdk.handleEncryptedMessage = hookedHandleEncryptedMessage;
+    }
+
     built.onBridgeConnect(() => options.onEvent?.({ type: "bridge_connected" }));
     built.onRequestReceived(() => options.onEvent?.({ type: "request_received" }));
     built.onGeneratingProof(() => options.onEvent?.({ type: "generating_proof" }));
     built.onProofGenerated(proof => {
       proofs.push(proof);
-      options.onEvent?.({ type: "proof_generated", proofCount: proofs.length });
+      options.onEvent?.({ type: "proof_generated", proofCount: proofs.length, proofTotal: proof.total });
     });
-    built.onReject(() => resolve({ status: "rejected" }));
-    built.onError(error => reject(new Error(errorMessage(error))));
+    built.onReject(() => {
+      if (settled) return;
+      settled = true;
+      cleanupMessageHook();
+      resolve({ status: "rejected" });
+    });
+    built.onError(error => {
+      if (settled) return;
+      settled = true;
+      cleanupMessageHook();
+      reject(new Error(errorMessage(error)));
+    });
     built.onResult(response => {
+      if (settled) return;
       options.onEvent?.({ type: "result_received", verified: response.verified });
       if (!response.verified) {
-        reject(new Error("zkPassport returned verified=false."));
+        const detail = summarizeQueryResultErrors(response.queryResultErrors);
+        settled = true;
+        cleanupMessageHook();
+        reject(new Error(detail ? `zkPassport returned verified=false. ${detail}` : "zkPassport returned verified=false."));
         return;
       }
+      settled = true;
+      cleanupMessageHook();
       resolve({
         status: "verified",
         uniqueIdentifier: response.uniqueIdentifier,
@@ -240,7 +316,10 @@ export async function startPassportZkRequest(options: {
   return {
     requestId: built.requestId,
     url: built.url,
-    cancel: () => zkPassport().cancelRequest(built.requestId),
+    cancel: () => {
+      cleanupMessageHook();
+      zkPassport().cancelRequest(built.requestId);
+    },
     completion,
   };
 }

@@ -13,7 +13,14 @@ pub contract MagnaConsumer {
     };
     use magna_issuer::{
         MagnaIssuer,
-        types::{credential_note::CredentialNote, status_note::StatusNote},
+        types::{
+            credential_note::CredentialNote,
+            linked_credential_note::LinkedCredentialNote,
+            linked_status_note::LinkedStatusNote,
+            root_authority_note::RootAuthorityNote,
+            root_status_note::RootStatusNote,
+            status_note::StatusNote,
+        },
     };
     use magna_lib::Policy;
 
@@ -46,6 +53,36 @@ pub contract MagnaConsumer {
             .verify_consumer(
                 caller,
                 policy,
+                hinted_credential,
+                hinted_status,
+                min_age_proven,
+                nationality_alpha3_packed,
+                sponsor_slot,
+            )
+            .call(self.context);
+        self.enqueue_self._increment_login_count();
+    }
+
+    #[external("private")]
+    fn login_with_linked_magna(
+        policy: Policy,
+        hinted_root_status: HintedNote<RootStatusNote>,
+        hinted_root_authority: HintedNote<RootAuthorityNote>,
+        hinted_credential: HintedNote<LinkedCredentialNote>,
+        hinted_status: HintedNote<LinkedStatusNote>,
+        min_age_proven: u8,
+        nationality_alpha3_packed: Field,
+        sponsor_slot: u8,
+    ) {
+        let caller = self.msg_sender();
+        // Private contract calls change msg_sender to the calling contract, so forward
+        // the original user explicitly and let the issuer enforce note ownership.
+        MagnaIssuer::at(self.storage.issuer.read())
+            .verify_linked_consumer(
+                caller,
+                policy,
+                hinted_root_status,
+                hinted_root_authority,
                 hinted_credential,
                 hinted_status,
                 min_age_proven,

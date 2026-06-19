@@ -87,6 +87,7 @@ export type VerifyAndIssueResponse = {
   claimsHash: string;
   mode: VerificationMode;
   ghostDerivationVersion: GhostDerivationVersion;
+  issuerAddress: string;
   orchestratorAddress: string;
   verificationSummary: {
     verified: true;
@@ -105,6 +106,7 @@ export type VerifyAndIssueInstagramResponse = {
   ghostOwner: string;
   claimsHash: string;
   ghostDerivationVersion: GhostDerivationVersion;
+  issuerAddress: string;
   orchestratorAddress: string;
   verificationSummary: {
     verified: true;
@@ -125,6 +127,7 @@ export type VerifyAndRefreshRootAuthorityResponse = {
   ghostOwner: string;
   rootCommitment: string;
   claimsHash: string;
+  issuerAddress: string;
   orchestratorAddress: string;
   verificationSummary: {
     verified: true;
@@ -233,6 +236,95 @@ function parseEnvFile(path: string): Record<string, string> {
   return result;
 }
 
+function manifestString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function manifestStringList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map(manifestString).filter((entry): entry is string => Boolean(entry));
+  }
+  const asString = manifestString(value);
+  return asString
+    ? asString
+        .split(",")
+        .map(entry => entry.trim())
+        .filter(Boolean)
+    : [];
+}
+
+export function deploymentManifestEnvEntries(manifest: unknown): Record<string, string> {
+  const l2 = readPath(manifest, ["l2"]);
+  const endpoints = readPath(manifest, ["endpoints"]);
+  const entries: Record<string, string> = {};
+
+  const aztecNodeUrl = manifestString(readPath(endpoints, ["aztecNodeUrl"]));
+  if (aztecNodeUrl) {
+    entries.MAGNA_AZTEC_NODE_URL = aztecNodeUrl;
+    entries.VITE_AZTEC_NODE_URL = aztecNodeUrl;
+  }
+
+  const issuerAddress = manifestString(readPath(l2, ["issuerAddress"]));
+  if (issuerAddress) {
+    entries.MAGNA_ISSUER_ADDRESS = issuerAddress;
+    entries.VITE_MAGNA_ISSUER_ADDRESS = issuerAddress;
+  }
+
+  const companySponsorAddress = manifestString(readPath(l2, ["companySponsorAddress"]));
+  if (companySponsorAddress) {
+    entries.VITE_MAGNA_COMPANY_SPONSOR_ADDRESS = companySponsorAddress;
+  }
+
+  const companySponsorAddresses = manifestStringList(readPath(l2, ["companySponsorAddresses"]));
+  if (companySponsorAddresses.length > 0) {
+    entries.VITE_MAGNA_COMPANY_SPONSOR_ADDRESSES = companySponsorAddresses.join(",");
+  }
+
+  const activeCompanySponsorAddress = manifestString(readPath(l2, ["activeCompanySponsorAddress"]));
+  if (activeCompanySponsorAddress) {
+    entries.VITE_MAGNA_ACTIVE_COMPANY_SPONSOR_ADDRESS = activeCompanySponsorAddress;
+  }
+
+  const orchestratorAddress = manifestString(readPath(l2, ["adminAddress"]));
+  if (orchestratorAddress) {
+    entries.MAGNA_ORCHESTRATOR_ADDRESS = orchestratorAddress;
+    entries.VITE_MAGNA_ORCHESTRATOR_ADDRESS = orchestratorAddress;
+  }
+
+  return entries;
+}
+
+function resolveDeploymentManifestPath(repoRoot: string): string | undefined {
+  const explicitPath = readFirstEnv(["MAGNA_DEPLOYMENT_MANIFEST", "VITE_MAGNA_DEPLOYMENT_MANIFEST"]);
+  if (explicitPath) {
+    return resolve(repoRoot, explicitPath);
+  }
+  const useLocalManifest = parseBoolean(
+    readFirstEnv(["MAGNA_USE_LOCAL_DEPLOYMENT_MANIFEST", "VITE_MAGNA_ENABLE_LOCAL_TEST_BOOTSTRAP"]),
+    false,
+  );
+  return useLocalManifest ? resolve(repoRoot, "deployments/local.json") : undefined;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isArtifactClassMismatch(error: unknown): boolean {
+  return errorMessage(error).includes("Artifact does not match expected class id");
+}
+
+export function buildStaleIssuerDeploymentMessage(issuerAddress: string, causeMessage?: string): string {
+  return [
+    `Configured Magna issuer ${issuerAddress} was deployed with a different contract class than the current artifact.`,
+    "This usually means local Aztec chain state, deployment env, and compiled contracts drifted after a branch switch or contract rebuild.",
+    "Run `npm run web:bootstrap:local -- --skip-rights-deploy`, then restart `npm run verification-api:dev` and the frontend dev server.",
+    causeMessage ? `Aztec details: ${causeMessage}` : undefined,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 export function applyHydratedEnvEntries(
   entries: Record<string, string>,
   target: NodeJS.ProcessEnv = process.env,
@@ -254,6 +346,12 @@ export function hydrateVerificationApiEnvFromFiles(): void {
   for (const path of candidatePaths) {
     const parsed = parseEnvFile(path);
     applyHydratedEnvEntries(parsed);
+  }
+
+  const manifestPath = resolveDeploymentManifestPath(repoRoot);
+  if (manifestPath && existsSync(manifestPath)) {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    applyHydratedEnvEntries(deploymentManifestEnvEntries(manifest));
   }
 }
 
@@ -544,7 +642,14 @@ async function registerContractArtifactAtAddress(
   const address = AztecAddress.fromString(contractAddress);
   const existingMetadata = await wallet.getContractMetadata(address);
   if (existingMetadata.instance) {
-    await wallet.registerContract(existingMetadata.instance, artifact);
+    try {
+      await wallet.registerContract(existingMetadata.instance, artifact);
+    } catch (error) {
+      if (isArtifactClassMismatch(error)) {
+        throw new Error(buildStaleIssuerDeploymentMessage(contractAddress, errorMessage(error)));
+      }
+      throw error;
+    }
     return;
   }
 
@@ -555,7 +660,14 @@ async function registerContractArtifactAtAddress(
   }
 
   const instance = contractInstanceWithAddressFromPlainObject(address, rawInstance);
-  await wallet.registerContract(instance, artifact);
+  try {
+    await wallet.registerContract(instance, artifact);
+  } catch (error) {
+    if (isArtifactClassMismatch(error)) {
+      throw new Error(buildStaleIssuerDeploymentMessage(contractAddress, errorMessage(error)));
+    }
+    throw error;
+  }
 }
 
 async function createIssuanceContext(config: VerificationApiConfig): Promise<IssuanceContext> {
@@ -745,6 +857,7 @@ export async function verifyAndIssuePassport(
     claimsHash: claimsHash.toString(),
     mode,
     ghostDerivationVersion,
+    issuerAddress: config.issuerAddress,
     orchestratorAddress: context.orchestratorAddress.toString(),
     verificationSummary: {
       verified: true,
@@ -806,6 +919,7 @@ export async function verifyAndIssueInstagram(
     ghostOwner,
     claimsHash: claimsHash.toString(),
     ghostDerivationVersion,
+    issuerAddress: config.issuerAddress,
     orchestratorAddress: context.orchestratorAddress.toString(),
     verificationSummary: {
       verified: true,
@@ -857,6 +971,7 @@ export async function verifyAndRefreshRootAuthority(
     ghostOwner,
     rootCommitment,
     claimsHash: claimsHash.toString(),
+    issuerAddress: config.issuerAddress,
     orchestratorAddress: context.orchestratorAddress.toString(),
     verificationSummary: {
       verified: true,

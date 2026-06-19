@@ -135,6 +135,13 @@ app.post("/zkpassport/verify-for-root-recovery", async (req, res) => {
   }
 });
 
+try {
+  await loadIssuanceContext();
+} catch (error) {
+  console.error(`[magna-verification-api] startup preflight failed: ${errorMessage(error)}`);
+  process.exit(1);
+}
+
 app.listen(config.port, () => {
   console.log(
     `[magna-verification-api] listening on :${config.port} | issuer=${config.issuerAddress} | node=${config.aztecNodeUrl}`,

@@ -6,6 +6,18 @@ import { ClaimId, ConstraintOp, CredentialType } from "@magna/core";
 import { normalizePolicy } from "@magna/core";
 
 describe("MagnaVerificationEngine login flows", () => {
+  function contractPolicy(policy: Parameters<typeof normalizePolicy>[0]) {
+    const normalized = normalizePolicy(policy);
+    return {
+      credential_type: normalized.credentialType,
+      constraints: normalized.constraints.map(constraint => ({
+        claim_id: constraint.claimId,
+        op: constraint.op,
+        value: constraint.value,
+      })),
+    };
+  }
+
   it("registerRoot forwards the root registration call shape", async () => {
     let capturedArgs: unknown[] | undefined;
     let capturedSendOptions: { from: string; fee?: unknown } | undefined;
@@ -87,11 +99,11 @@ describe("MagnaVerificationEngine login flows", () => {
           nationalityAlpha3Packed: 0x43414en,
         },
       },
-      "0x2222222222222222222222222222222222222222",
+      "0x2222222222222222222222222222222222222222222222222222222222222222",
     );
 
     assert.deepEqual(capturedArgs, [
-      normalizePolicy(policy),
+      contractPolicy(policy),
       hintedCredentialNote,
       hintedStatusNote,
       21,
@@ -99,7 +111,7 @@ describe("MagnaVerificationEngine login flows", () => {
       0,
     ]);
     assert.deepEqual(capturedSendOptions, {
-      from: "0x2222222222222222222222222222222222222222",
+      from: "0x2222222222222222222222222222222222222222222222222222222222222222",
     });
   });
 
@@ -155,7 +167,7 @@ describe("MagnaVerificationEngine login flows", () => {
     );
 
     assert.deepEqual(capturedArgs, [
-      normalizePolicy(policy),
+      contractPolicy(policy),
       hintedRootStatusNote,
       hintedRootAuthorityNote,
       hintedCredentialNote,
@@ -167,6 +179,289 @@ describe("MagnaVerificationEngine login flows", () => {
     assert.deepEqual(capturedSendOptions, {
       from: "0x2222222222222222222222222222222222222222",
     });
+  });
+
+  it("loginWithLinkedMagnaThroughConsumer forwards rooted hints to the consumer gateway", async () => {
+    const hintedRootStatusNote = { id: "root-status-note" };
+    const hintedRootAuthorityNote = { id: "root-authority-note" };
+    const hintedCredentialNote = { id: "linked-credential-note" };
+    const hintedStatusNote = { id: "linked-status-note" };
+    const policy = {
+      credentialType: CredentialType.Passport,
+      constraints: [
+        {
+          claimId: ClaimId.AgeMinProven,
+          op: ConstraintOp.Gte,
+          value: 18n,
+        },
+      ],
+    };
+
+    let capturedArgs: unknown[] | undefined;
+    let capturedSendOptions: { from: string; fee?: unknown } | undefined;
+    const consumer = {
+      methods: {
+        login_with_linked_magna: (...args: unknown[]) => {
+          capturedArgs = args;
+          return {
+            send: async (opts: { from: string; fee?: unknown }) => {
+              capturedSendOptions = opts;
+              return { ok: true };
+            },
+          };
+        },
+      },
+    };
+
+    const client = new MagnaVerificationEngine({
+      orchestratorAddress: "0x1111111111111111111111111111111111111111",
+      issuerContract: {
+        methods: {
+          get_linked_credential_hinted: () => ({
+            simulate: async () => hintedCredentialNote,
+          }),
+          get_linked_status_hinted: () => ({
+            simulate: async () => hintedStatusNote,
+          }),
+          get_root_status_hinted: () => ({
+            simulate: async () => hintedRootStatusNote,
+          }),
+          get_root_authority_hinted: () => ({
+            simulate: async () => hintedRootAuthorityNote,
+          }),
+        },
+      } as never,
+      consumerContractFactory: () => consumer as never,
+    });
+
+    await client.loginWithLinkedMagnaThroughConsumer({
+      policy,
+      consumerGatewayAddress: "0xconsumer",
+      rootCommitment: "99",
+      claimsHash: "123",
+      claimsWitness: {
+        minAgeProven: 21,
+        nationalityAlpha3Packed: 0x43414en,
+      },
+      from: "0x2222222222222222222222222222222222222222222222222222222222222222",
+    });
+
+    assert.deepEqual(capturedArgs, [
+      {
+        credential_type: normalizePolicy(policy).credentialType,
+        constraints: normalizePolicy(policy).constraints.map(constraint => ({
+          claim_id: constraint.claimId,
+          op: constraint.op,
+          value: constraint.value,
+        })),
+      },
+      hintedRootStatusNote,
+      hintedRootAuthorityNote,
+      hintedCredentialNote,
+      hintedStatusNote,
+      21,
+      0x43414en,
+      0,
+    ]);
+    assert.deepEqual(capturedSendOptions, {
+      from: "0x2222222222222222222222222222222222222222222222222222222222222222",
+    });
+  });
+
+  it("loginWithLinkedMagnaThroughConsumer preserves simulate this binding during hint discovery", async () => {
+    const hintedRootStatusNote = { id: "root-status-note" };
+    const hintedRootAuthorityNote = { id: "root-authority-note" };
+    const hintedCredentialNote = { id: "linked-credential-note" };
+    const hintedStatusNote = { id: "linked-status-note" };
+    let sent = false;
+
+    const boundSensitiveHintCall = (value: unknown) => ({
+      marker: "aztec-contract-function-interaction",
+      value,
+      async simulate(this: { marker: string; value: unknown }) {
+        assert.equal(this.marker, "aztec-contract-function-interaction");
+        return this.value;
+      },
+    });
+
+    const client = new MagnaVerificationEngine({
+      orchestratorAddress: "0x1111111111111111111111111111111111111111",
+      issuerContract: {
+        methods: {
+          get_linked_credential_hinted: () => boundSensitiveHintCall(hintedCredentialNote),
+          get_linked_status_hinted: () => boundSensitiveHintCall(hintedStatusNote),
+          get_root_status_hinted: () => boundSensitiveHintCall(hintedRootStatusNote),
+          get_root_authority_hinted: () => boundSensitiveHintCall(hintedRootAuthorityNote),
+        },
+      } as never,
+      consumerContractFactory: () => ({
+        methods: {
+          login_with_linked_magna: (...args: unknown[]) => {
+            assert.deepEqual(args.slice(1, 5), [
+              hintedRootStatusNote,
+              hintedRootAuthorityNote,
+              hintedCredentialNote,
+              hintedStatusNote,
+            ]);
+            return {
+              send: async () => {
+                sent = true;
+                return { ok: true };
+              },
+            };
+          },
+        },
+      }) as never,
+    });
+
+    await client.loginWithLinkedMagnaThroughConsumer({
+      policy: {
+        credentialType: CredentialType.Passport,
+        constraints: [],
+      },
+      consumerGatewayAddress: "0xconsumer",
+      rootCommitment: "99",
+      claimsHash: "123",
+      claimsWitness: {
+        minAgeProven: 21,
+        nationalityAlpha3Packed: 0x43414en,
+      },
+      from: "0x2222222222222222222222222222222222222222222222222222222222222222",
+    });
+
+    assert.equal(sent, true);
+  });
+
+  it("loginWithLinkedMagnaThroughConsumer rebuilds and retries transient Aztec tx expiration failures", async () => {
+    const hintedRootStatusNote = { id: "root-status-note" };
+    const hintedRootAuthorityNote = { id: "root-authority-note" };
+    const hintedCredentialNote = { id: "linked-credential-note" };
+    const hintedStatusNote = { id: "linked-status-note" };
+    let loginInteractionBuilds = 0;
+    let sendAttempts = 0;
+
+    const client = new MagnaVerificationEngine({
+      orchestratorAddress: "0x1111111111111111111111111111111111111111",
+      issuerContract: {
+        methods: {
+          get_linked_credential_hinted: () => ({
+            simulate: async () => hintedCredentialNote,
+          }),
+          get_linked_status_hinted: () => ({
+            simulate: async () => hintedStatusNote,
+          }),
+          get_root_status_hinted: () => ({
+            simulate: async () => hintedRootStatusNote,
+          }),
+          get_root_authority_hinted: () => ({
+            simulate: async () => hintedRootAuthorityNote,
+          }),
+        },
+      } as never,
+      consumerContractFactory: () => ({
+        methods: {
+          login_with_linked_magna: () => {
+            loginInteractionBuilds += 1;
+            return {
+              send: async () => {
+                sendAttempts += 1;
+                if (sendAttempts === 1) {
+                  throw new Error("Invalid tx: Invalid expiration timestamp");
+                }
+                return { ok: true };
+              },
+            };
+          },
+        },
+      }) as never,
+    });
+
+    await client.loginWithLinkedMagnaThroughConsumer({
+      policy: {
+        credentialType: CredentialType.Passport,
+        constraints: [],
+      },
+      consumerGatewayAddress: "0xconsumer",
+      rootCommitment: "99",
+      claimsHash: "123",
+      claimsWitness: {
+        minAgeProven: 21,
+        nationalityAlpha3Packed: 0x43414en,
+      },
+      from: "0x2222222222222222222222222222222222222222222222222222222222222222",
+    });
+
+    assert.equal(loginInteractionBuilds, 2);
+    assert.equal(sendAttempts, 2);
+  });
+
+  it("loginWithLinkedMagnaThroughConsumer syncs and retries pending rooted hint discovery", async () => {
+    const hintedRootStatusNote = { id: "root-status-note" };
+    const hintedRootAuthorityNote = { id: "root-authority-note" };
+    const hintedCredentialNote = { id: "linked-credential-note" };
+    const hintedStatusNote = { id: "linked-status-note" };
+    let linkedCredentialAttempts = 0;
+    let syncAttempts = 0;
+    let sent = false;
+
+    const client = new MagnaVerificationEngine({
+      orchestratorAddress: "0x1111111111111111111111111111111111111111",
+      syncBeforeHintLookup: async () => {
+        syncAttempts += 1;
+      },
+      hintLookupRetryDelayMs: 0,
+      issuerContract: {
+        methods: {
+          get_linked_credential_hinted: () => ({
+            simulate: async () => {
+              linkedCredentialAttempts += 1;
+              if (linkedCredentialAttempts === 1) {
+                throw new Error("linked credential note not found");
+              }
+              return hintedCredentialNote;
+            },
+          }),
+          get_linked_status_hinted: () => ({
+            simulate: async () => hintedStatusNote,
+          }),
+          get_root_status_hinted: () => ({
+            simulate: async () => hintedRootStatusNote,
+          }),
+          get_root_authority_hinted: () => ({
+            simulate: async () => hintedRootAuthorityNote,
+          }),
+        },
+      } as never,
+      consumerContractFactory: () => ({
+        methods: {
+          login_with_linked_magna: () => ({
+            send: async () => {
+              sent = true;
+              return { ok: true };
+            },
+          }),
+        },
+      }) as never,
+    });
+
+    await client.loginWithLinkedMagnaThroughConsumer({
+      policy: {
+        credentialType: CredentialType.Passport,
+        constraints: [],
+      },
+      consumerGatewayAddress: "0xconsumer",
+      rootCommitment: "99",
+      claimsHash: "123",
+      claimsWitness: {
+        minAgeProven: 21,
+        nationalityAlpha3Packed: 0x43414en,
+      },
+      from: "0x2222222222222222222222222222222222222222222222222222222222222222",
+    });
+
+    assert.equal(linkedCredentialAttempts, 2);
+    assert.equal(syncAttempts, 2);
+    assert.equal(sent, true);
   });
 
   it("loginWithCompanySponsor rejects when companySponsorContract is missing", async () => {
@@ -539,7 +834,7 @@ describe("MagnaVerificationEngine login flows", () => {
       from: "0x1111111111111111111111111111111111111111",
     });
     assert.deepEqual(capturedVerifyArgs, [
-      normalizePolicy({
+      contractPolicy({
         credentialType: CredentialType.Instagram,
         constraints: [
           {

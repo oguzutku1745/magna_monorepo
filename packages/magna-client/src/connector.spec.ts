@@ -7,6 +7,7 @@ import {
   generateSessionSigningKeyPair,
   signSessionAssertion,
   ageGteConstraint,
+  CredentialType,
   type SessionAssertion,
 } from "@magna/core";
 
@@ -140,5 +141,54 @@ test("MagnaClient.login sends the request once for duplicate ready messages", as
   listener?.({ origin: "http://localhost:5999", data: { kind: "magna:ready" } });
 
   assert.equal(requestCount, 1);
+  await assert.rejects(() => login, /timed out/);
+});
+
+test("MagnaClient.loginWithRequirements sends mixed requirements in one popup request", async () => {
+  const { publicKeyJwk } = await makeFixture();
+  let listener: ((e: { origin: string; data: unknown }) => void) | undefined;
+  let posted: unknown;
+  const client = new MagnaClient({
+    clientId: "dapp_abc",
+    walletOrigin: "http://localhost:5999",
+    magnaPublicKeyJwk: publicKeyJwk,
+    timeoutMs: 50,
+    windowImpl: {
+      open: () => ({
+        closed: false,
+        postMessage: message => {
+          posted = message;
+        },
+        close: () => {},
+      }),
+      addMessageListener: fn => {
+        listener = fn;
+        return () => {};
+      },
+      origin: "http://localhost:5173",
+    },
+  });
+
+  const login = client.loginWithRequirements([
+    { id: "passport", kind: "policy", policy },
+    { id: "instagram", kind: "instagram-handle", handle: "akinspur" },
+  ]);
+  while (!listener) {
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+  listener?.({ origin: "http://localhost:5999", data: { kind: "magna:ready" } });
+
+  assert.equal((posted as { kind?: string }).kind, "magna:login-request");
+  assert.deepEqual((posted as { requirements?: unknown[] }).requirements?.map(requirement => ({
+    id: (requirement as { id: string }).id,
+    kind: (requirement as { kind: string }).kind,
+  })), [
+    { id: "passport", kind: "policy" },
+    { id: "instagram", kind: "instagram-handle" },
+  ]);
+  assert.equal(
+    ((posted as { requirements: [{ policy: { credentialType: number } }] }).requirements[0].policy.credentialType),
+    CredentialType.Passport,
+  );
   await assert.rejects(() => login, /timed out/);
 });

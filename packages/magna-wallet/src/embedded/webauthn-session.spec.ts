@@ -5,7 +5,9 @@ import {
   isAztecWorldStateAnchorError,
 } from "../browser/pxe-cache.js";
 import {
+  loadStoredWebAuthnAccounts,
   parseWebAuthnPublicKeyRecoveryBundle,
+  saveStoredWebAuthnAccount,
   serializeWebAuthnPublicKeyRecoveryBundle,
   storedWebAuthnAccountFromRegistration,
   webAuthnPrfOutputsToAccountMaterial,
@@ -87,6 +89,23 @@ test("PRF outputs convert to deterministic Aztec account material", () => {
   assert.equal(first.salt.toString(), second.salt.toString());
 });
 
+test("saving a fresh WebAuthn account replaces the reusable account for the same wallet origin", () => {
+  const storage = memoryStorage();
+  const stale = storedWebAuthnAccountFromRegistration(registrationFixture(), "0xstale");
+  const fresh = storedWebAuthnAccountFromRegistration(
+    {
+      ...registrationFixture(),
+      credentialId: new Uint8Array([5, 6, 7, 8]),
+    },
+    "0xfresh",
+  );
+
+  saveStoredWebAuthnAccount(storage, stale);
+  saveStoredWebAuthnAccount(storage, fresh);
+
+  assert.deepEqual(loadStoredWebAuthnAccounts(storage), [fresh]);
+});
+
 test("Aztec world-state anchor errors are recognized without matching unrelated block errors", () => {
   assert.equal(
     isAztecWorldStateAnchorError(
@@ -115,5 +134,25 @@ function registrationFixture(): WebAuthnRegistration {
     rpId: "wallet.example",
     rpIdHash: new Uint8Array(32).fill(3),
     origin: "https://wallet.example",
+  };
+}
+
+function memoryStorage(): Storage {
+  const store = new Map<string, string>();
+  return {
+    get length() {
+      return store.size;
+    },
+    clear: () => {
+      store.clear();
+    },
+    getItem: (key: string) => store.get(key) ?? null,
+    key: (index: number) => Array.from(store.keys())[index] ?? null,
+    removeItem: (key: string) => {
+      store.delete(key);
+    },
+    setItem: (key: string, value: string) => {
+      store.set(key, value);
+    },
   };
 }

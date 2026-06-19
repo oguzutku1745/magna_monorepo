@@ -17,6 +17,8 @@ const LAST_ISSUED_PASSPORT_STORAGE_KEY = "magna-web:last-issued-passport:v1";
 type StoredPassportRef = {
   ownerAddress: string;
   claimsHash: string;
+  mode: "passport" | "rooted";
+  rootCommitment?: string;
   normalizedClaims?: {
     nationalityAlpha3: string;
     minAgeProven: number;
@@ -38,11 +40,15 @@ function loadStoredPassportRef(): StoredPassportRef {
     !parsed.ownerAddress ||
     typeof parsed.claimsHash !== "string" ||
     !parsed.claimsHash ||
+    (parsed.mode !== "passport" && parsed.mode !== "rooted") ||
     !parsed.normalizedClaims ||
     typeof parsed.normalizedClaims.nationalityAlpha3 !== "string" ||
     typeof parsed.normalizedClaims.minAgeProven !== "number"
   ) {
     throw new Error("Stored Magna credential reference is incomplete");
+  }
+  if (parsed.mode === "rooted" && (typeof parsed.rootCommitment !== "string" || !parsed.rootCommitment)) {
+    throw new Error("Stored rooted Magna credential reference is missing its root commitment");
   }
   return parsed as StoredPassportRef;
 }
@@ -82,16 +88,27 @@ export async function runWalletLoginForRequest(input: {
       issuerContract: issuer,
       consumerContractFactory: (address: string) => MagnaConsumerContract.at(toAddress(address), session.wallet),
     });
-    const receipt = await engine.loginWithMagnaThroughConsumer({
-      policy: input.policy,
-      consumerGatewayAddress: input.consumerGatewayAddress,
-      claimsHash: credential.claimsHash,
-      claimsWitness: {
-        minAgeProven: credential.normalizedClaims!.minAgeProven,
-        nationalityAlpha3Packed: packAlpha3(credential.normalizedClaims!.nationalityAlpha3),
-      },
-      from: session.activeAccount.address,
-    });
+    const claimsWitness = {
+      minAgeProven: credential.normalizedClaims!.minAgeProven,
+      nationalityAlpha3Packed: packAlpha3(credential.normalizedClaims!.nationalityAlpha3),
+    };
+    const receipt =
+      credential.mode === "rooted"
+        ? await engine.loginWithLinkedMagnaThroughConsumer({
+            policy: input.policy,
+            consumerGatewayAddress: input.consumerGatewayAddress,
+            rootCommitment: credential.rootCommitment!,
+            claimsHash: credential.claimsHash,
+            claimsWitness,
+            from: session.activeAccount.address,
+          })
+        : await engine.loginWithMagnaThroughConsumer({
+            policy: input.policy,
+            consumerGatewayAddress: input.consumerGatewayAddress,
+            claimsHash: credential.claimsHash,
+            claimsWitness,
+            from: session.activeAccount.address,
+          });
     return { verified: true, receipt: readTxHash(receipt) ?? null };
   } catch (error) {
     console.warn("magna verification failed", error);

@@ -12,8 +12,8 @@ pub(crate) global MAGNA_SPONSOR_RL_MAX_SLOTS_PER_WINDOW: u8 = 5;
 // determines the private-read validity horizon (via expiration_timestamp).
 pub(crate) global MAGNA_SPONSOR_POLICY_DELAY_SECONDS: u64 = 3600;
 
-// Gateway disablement is consumed in private sponsored entrypoints via DelayedPublicMutable.
+// Gateway allowlist/disablement is consumed in private login entrypoints via DelayedPublicMutable.
 // Aztec computes a private-read horizon of roughly `INITIAL_DELAY - 1`, so this must stay well above
-// local proving / submission latency or sponsored txs can expire before reaching the sequencer.
-pub(crate) global MAGNA_SPONSOR_GATEWAY_DELAY_SECONDS: u64 = 300;
+// browser proving / submission latency or login txs can expire before reaching the sequencer.
+pub(crate) global MAGNA_SPONSOR_GATEWAY_DELAY_SECONDS: u64 = MAGNA_SPONSOR_POLICY_DELAY_SECONDS;
 pub(crate) global MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS: u64 = MAGNA_SPONSOR_GATEWAY_DELAY_SECONDS;
