@@ -25,7 +25,7 @@ pub contract MagnaWebAuthnAccount {
     global WEBAUTHN_WITNESS_LEN: u32 = 387;
 
     #[storage]
-    struct Storage {
+    struct Storage<Context> {
         signing_public_key: SinglePrivateImmutable<WebAuthnPublicKeyNote, Context>,
     }
 

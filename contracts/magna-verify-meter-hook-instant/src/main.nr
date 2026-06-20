@@ -15,7 +15,7 @@ pub contract MagnaVerifyMeterHookInstant {
     global POLICY_DELAY_SECONDS: u64 = 0;
 
     #[storage]
-    struct Storage {
+    struct Storage<Context> {
         admin: PublicImmutable<AztecAddress, Context>,
         // Address allowed to call `meter_verify_or_revert`. Set by admin post-deploy.
         // This should be set to the MagnaIssuer contract address in production.

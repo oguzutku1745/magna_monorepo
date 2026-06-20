@@ -19,7 +19,7 @@ pub contract MagnaCompanyRightsRegistry {
     };
 
     #[storage]
-    struct Storage {
+    struct Storage<Context> {
         admin: PublicImmutable<AztecAddress, Context>,
         portal: PublicImmutable<EthAddress, Context>,
         l2_purchase_adapter: PublicMutable<AztecAddress, Context>,

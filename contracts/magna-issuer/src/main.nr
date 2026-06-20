@@ -73,7 +73,7 @@ pub contract MagnaIssuer {
 
     // v1 uses immutable orchestrator allowlist (single address).
     #[storage]
-    struct Storage {
+    struct Storage<Context> {
         orchestrator: PublicImmutable<AztecAddress, Context>,
         verify_meter_hook: PublicImmutable<AztecAddress, Context>,
         company_sponsor_gateways: Map<
@@ -898,7 +898,7 @@ pub contract MagnaIssuer {
                 sponsor_slot,
                 MAGNA_SPONSOR_RL_DS,
             );
-            self.context.push_nullifier(rl_nullifier);
+            self.context.push_nullifier_unsafe(rl_nullifier);
 
             // Also bind inclusion to the current rate-limit window end.
             let window_end = (window_id + 1) * MAGNA_SPONSOR_RL_WINDOW_SECONDS;
@@ -983,7 +983,7 @@ pub contract MagnaIssuer {
                 sponsor_slot,
                 MAGNA_SPONSOR_RL_DS,
             );
-            self.context.push_nullifier(rl_nullifier);
+            self.context.push_nullifier_unsafe(rl_nullifier);
 
             let window_end = (window_id + 1) * MAGNA_SPONSOR_RL_WINDOW_SECONDS;
             if window_end < hinted_credential.note.expiry_ts {
@@ -1097,7 +1097,7 @@ pub contract MagnaIssuer {
                 sponsor_slot,
                 MAGNA_SPONSOR_RL_DS,
             );
-            self.context.push_nullifier(rl_nullifier);
+            self.context.push_nullifier_unsafe(rl_nullifier);
 
             let window_end = (window_id + 1) * MAGNA_SPONSOR_RL_WINDOW_SECONDS;
             if window_end < hinted_credential.note.expiry_ts {
@@ -1227,7 +1227,7 @@ pub contract MagnaIssuer {
                 sponsor_slot,
                 MAGNA_SPONSOR_RL_DS,
             );
-            self.context.push_nullifier(rl_nullifier);
+            self.context.push_nullifier_unsafe(rl_nullifier);
 
             let window_end = (window_id + 1) * MAGNA_SPONSOR_RL_WINDOW_SECONDS;
             if window_end < hinted_credential.note.expiry_ts {
@@ -1402,7 +1402,7 @@ pub contract MagnaIssuer {
         );
         assert_nullifier_did_not_exist_by(header, prior_authority_kill_switch_siloed);
 
-        self.context.push_nullifier(prior_authority_kill_switch_nullifier);
+        self.context.push_nullifier_unsafe(prior_authority_kill_switch_nullifier);
 
         // Safety: Randomness here is only used as a note secret input and does not
         // influence consensus-critical public state branching.
@@ -1450,7 +1450,7 @@ pub contract MagnaIssuer {
             hinted_recovery.owner,
             recovery_note_hash_for_nullification,
         );
-        self.context.push_nullifier(recovery_spend_nullifier);
+        self.context.push_nullifier_for_note_hash(recovery_spend_nullifier, recovery_note_hash_for_nullification);
 
         // Emit kill-switch nullifier that invalidates old active-owner proofs.
         let kill_switch_nullifier = compute_revocation_nullifier(
@@ -1459,7 +1459,7 @@ pub contract MagnaIssuer {
             hinted_recovery.note.claims_hash,
             MAGNA_REVOCATION_DS,
         );
-        self.context.push_nullifier(kill_switch_nullifier);
+        self.context.push_nullifier_unsafe(kill_switch_nullifier);
 
         // Re-issue status + recovery with fresh secret while preserving claims commitment.
         // Safety: Randomness here is only used as a note secret input and does not
@@ -1518,14 +1518,14 @@ pub contract MagnaIssuer {
             hinted_root_recovery.owner,
             root_recovery_note_hash_for_nullification,
         );
-        self.context.push_nullifier(root_recovery_spend_nullifier);
+        self.context.push_nullifier_for_note_hash(root_recovery_spend_nullifier, root_recovery_note_hash_for_nullification);
 
         let root_kill_switch_nullifier = compute_root_revocation_nullifier(
             hinted_root_recovery.note.revocation_secret,
             hinted_root_recovery.note.root_commitment,
             MAGNA_ROOT_REVOCATION_DS,
         );
-        self.context.push_nullifier(root_kill_switch_nullifier);
+        self.context.push_nullifier_unsafe(root_kill_switch_nullifier);
 
         // Safety: Randomness here is only used as a note secret input and does not
         // influence consensus-critical public state branching.
@@ -1569,7 +1569,7 @@ pub contract MagnaIssuer {
             hinted_recovery.owner,
             linked_recovery_note_hash_for_nullification,
         );
-        self.context.push_nullifier(linked_recovery_spend_nullifier);
+        self.context.push_nullifier_for_note_hash(linked_recovery_spend_nullifier, linked_recovery_note_hash_for_nullification);
 
         let linked_kill_switch_nullifier = compute_revocation_nullifier(
             hinted_recovery.note.revocation_secret,
@@ -1577,7 +1577,7 @@ pub contract MagnaIssuer {
             hinted_recovery.note.claims_hash,
             MAGNA_REVOCATION_DS,
         );
-        self.context.push_nullifier(linked_kill_switch_nullifier);
+        self.context.push_nullifier_unsafe(linked_kill_switch_nullifier);
     }
 
     #[external("public")]
