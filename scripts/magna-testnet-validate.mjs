@@ -28,7 +28,7 @@ import { pad, parseAbiItem } from "viem";
 import rightsRegistryArtifactJson from "../contracts/magna-company-rights-registry/target/magna_company_rights_registry-MagnaCompanyRightsRegistry.json" with { type: "json" };
 import rightsPurchaseArtifactJson from "../contracts/magna-rights-purchase-l2/target/magna_rights_purchase_l2-MagnaRightsPurchaseL2.json" with { type: "json" };
 
-const PINNED_AZTEC_VERSION = process.env.AZTEC_VERSION_PIN ?? "4.2.0-aztecnr-rc.2";
+const PINNED_AZTEC_VERSION = process.env.AZTEC_VERSION_PIN ?? "5.0.0-rc.1";
 const DEFAULT_PRICE_PER_VERIFY = 150_000n;
 const DEFAULT_L1_TOKEN_DECIMALS = 6;
 const DEFAULT_REPORTS_DIR = "reports";
