@@ -10,7 +10,7 @@ import { SetPublicAuthwitContractInteraction } from "@aztec/aztec.js/authorizati
 import { AztecAddress } from "@aztec/aztec.js/addresses";
 import { createAztecNodeClient } from "@aztec/aztec.js/node";
 import { Fr } from "@aztec/aztec.js/fields";
-import { ProtocolContractAddress } from "@aztec/aztec.js/protocol";
+import { FeeJuiceContract, ProtocolContractAddress } from "@aztec/aztec.js/protocol";
 import { getFeeJuiceBalance } from "@aztec/aztec.js/utils";
 import { createExtendedL1Client } from "@aztec/ethereum/client";
 import { deployL1Contract } from "@aztec/ethereum/deploy-l1-contract";
@@ -21,7 +21,6 @@ import { TestDateProvider } from "@aztec/foundation/timer";
 import { retryUntil } from "@aztec/foundation/retry";
 import { getNonNullifiedL1ToL2MessageWitness } from "@aztec/stdlib/messaging";
 import { EmbeddedWallet } from "@aztec/wallets/embedded";
-import { FeeJuiceContract } from "@aztec/noir-contracts.js/FeeJuice";
 import { TokenContract } from "@aztec/noir-contracts.js/Token";
 
 import { MagnaIssuerContract } from "../packages/contracts-bindings/src/MagnaIssuer.ts";
@@ -340,7 +339,7 @@ async function claimBridgedFeeJuice(
     );
   }
 
-  const feeJuice = await FeeJuiceContract.at(ProtocolContractAddress.FeeJuice, wallet);
+  const feeJuice = FeeJuiceContract.at(wallet);
   const claimReceipt = await runRetriedStep(`FeeJuice.claim(${recipient.toString()})`, async () => {
     return await feeJuice.methods
       .claim(recipient, claim.claimAmount, claim.claimSecret, claim.messageLeafIndex)

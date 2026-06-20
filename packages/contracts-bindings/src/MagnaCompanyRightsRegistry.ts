@@ -4,7 +4,7 @@
 /* eslint-disable */
 import { AztecAddress, CompleteAddress } from '@aztec/aztec.js/addresses';
 import { type AbiType, type AztecAddressLike, type ContractArtifact, EventSelector, decodeFromAbi, type EthAddressLike, type FieldLike, type FunctionSelectorLike, loadContractArtifact, loadContractArtifactForPublic, type NoirCompiledContract, type OptionLike, type U128Like, type WrappedFieldLike } from '@aztec/aztec.js/abi';
-import { Contract, ContractBase, ContractFunctionInteraction, type ContractMethod, type ContractStorageLayout, type DeployInstantiationOptions, DeployMethod } from '@aztec/aztec.js/contracts';
+import { Contract, ContractBase, ContractFunctionInteraction, type ContractMethod, type ContractStorageLayout, DeployMethod } from '@aztec/aztec.js/contracts';
 import { EthAddress } from '@aztec/aztec.js/addresses';
 import { Fr, Point } from '@aztec/aztec.js/fields';
 import { type PublicKey, PublicKeys } from '@aztec/aztec.js/keys';
@@ -47,15 +47,13 @@ export class MagnaCompanyRightsRegistryContract extends ContractBase {
    * @param instantiation - Optional address-affecting parameters (salt, deployer / universalDeploy, publicKeys).
    *                       Salt defaults to a random value; the deployer is locked lazily from the first send-time `from`.
    */
-  public static deploy(wallet: Wallet, portal: EthAddressLike, admin: AztecAddressLike, instantiation?: DeployInstantiationOptions) {
-    return DeployMethod.create<MagnaCompanyRightsRegistryContract>(
+  public static deploy(wallet: Wallet, portal: EthAddressLike, admin: AztecAddressLike) {
+    return new DeployMethod(
+      PublicKeys.default(),
       wallet,
-      {
-        artifact: MagnaCompanyRightsRegistryContractArtifact,
-        postDeployCtor: (instance, wallet) => MagnaCompanyRightsRegistryContract.at(instance.address, wallet),
-        args: [portal, admin],
-      },
-      instantiation,
+      MagnaCompanyRightsRegistryContractArtifact,
+      (instance, wallet) => MagnaCompanyRightsRegistryContract.at(instance.address, wallet),
+      [portal, admin],
     );
   }
 
@@ -63,18 +61,16 @@ export class MagnaCompanyRightsRegistryContract extends ContractBase {
    * Creates a tx to deploy a new instance of this contract using the specified constructor method.
    */
   public static deployWithOpts<M extends keyof MagnaCompanyRightsRegistryContract['methods']>(
-    opts: { method?: M; wallet: Wallet; instantiation?: DeployInstantiationOptions },
+    opts: { method?: M; wallet: Wallet },
     ...args: Parameters<MagnaCompanyRightsRegistryContract['methods'][M]>
   ) {
-    return DeployMethod.create<MagnaCompanyRightsRegistryContract>(
+    return new DeployMethod(
+      PublicKeys.default(),
       opts.wallet,
-      {
-        artifact: MagnaCompanyRightsRegistryContractArtifact,
-        postDeployCtor: (instance, wallet) => MagnaCompanyRightsRegistryContract.at(instance.address, wallet),
-        args,
-        constructorNameOrArtifact: opts.method ?? 'constructor',
-      },
-      opts.instantiation,
+      MagnaCompanyRightsRegistryContractArtifact,
+      (instance, wallet) => MagnaCompanyRightsRegistryContract.at(instance.address, wallet),
+      args,
+      opts.method ?? 'constructor',
     );
   }
   

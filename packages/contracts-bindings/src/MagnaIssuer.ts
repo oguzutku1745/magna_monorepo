@@ -4,7 +4,7 @@
 /* eslint-disable */
 import { AztecAddress, CompleteAddress } from '@aztec/aztec.js/addresses';
 import { type AbiType, type AztecAddressLike, type ContractArtifact, EventSelector, decodeFromAbi, type EthAddressLike, type FieldLike, type FunctionSelectorLike, loadContractArtifact, loadContractArtifactForPublic, type NoirCompiledContract, type OptionLike, type U128Like, type WrappedFieldLike } from '@aztec/aztec.js/abi';
-import { Contract, ContractBase, ContractFunctionInteraction, type ContractMethod, type ContractStorageLayout, type DeployInstantiationOptions, DeployMethod } from '@aztec/aztec.js/contracts';
+import { Contract, ContractBase, ContractFunctionInteraction, type ContractMethod, type ContractStorageLayout, DeployMethod } from '@aztec/aztec.js/contracts';
 import { EthAddress } from '@aztec/aztec.js/addresses';
 import { Fr, Point } from '@aztec/aztec.js/fields';
 import { type PublicKey, PublicKeys } from '@aztec/aztec.js/keys';
@@ -47,15 +47,13 @@ export class MagnaIssuerContract extends ContractBase {
    * @param instantiation - Optional address-affecting parameters (salt, deployer / universalDeploy, publicKeys).
    *                       Salt defaults to a random value; the deployer is locked lazily from the first send-time `from`.
    */
-  public static deploy(wallet: Wallet, orchestrator_address: AztecAddressLike, verify_meter_hook_address: AztecAddressLike, instantiation?: DeployInstantiationOptions) {
-    return DeployMethod.create<MagnaIssuerContract>(
+  public static deploy(wallet: Wallet, orchestrator_address: AztecAddressLike, verify_meter_hook_address: AztecAddressLike) {
+    return new DeployMethod(
+      PublicKeys.default(),
       wallet,
-      {
-        artifact: MagnaIssuerContractArtifact,
-        postDeployCtor: (instance, wallet) => MagnaIssuerContract.at(instance.address, wallet),
-        args: [orchestrator_address, verify_meter_hook_address],
-      },
-      instantiation,
+      MagnaIssuerContractArtifact,
+      (instance, wallet) => MagnaIssuerContract.at(instance.address, wallet),
+      [orchestrator_address, verify_meter_hook_address],
     );
   }
 
@@ -63,18 +61,16 @@ export class MagnaIssuerContract extends ContractBase {
    * Creates a tx to deploy a new instance of this contract using the specified constructor method.
    */
   public static deployWithOpts<M extends keyof MagnaIssuerContract['methods']>(
-    opts: { method?: M; wallet: Wallet; instantiation?: DeployInstantiationOptions },
+    opts: { method?: M; wallet: Wallet },
     ...args: Parameters<MagnaIssuerContract['methods'][M]>
   ) {
-    return DeployMethod.create<MagnaIssuerContract>(
+    return new DeployMethod(
+      PublicKeys.default(),
       opts.wallet,
-      {
-        artifact: MagnaIssuerContractArtifact,
-        postDeployCtor: (instance, wallet) => MagnaIssuerContract.at(instance.address, wallet),
-        args,
-        constructorNameOrArtifact: opts.method ?? 'constructor',
-      },
-      opts.instantiation,
+      MagnaIssuerContractArtifact,
+      (instance, wallet) => MagnaIssuerContract.at(instance.address, wallet),
+      args,
+      opts.method ?? 'constructor',
     );
   }
   

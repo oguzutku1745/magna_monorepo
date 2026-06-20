@@ -4,7 +4,7 @@
 /* eslint-disable */
 import { AztecAddress, CompleteAddress } from '@aztec/aztec.js/addresses';
 import { type AbiType, type AztecAddressLike, type ContractArtifact, EventSelector, decodeFromAbi, type EthAddressLike, type FieldLike, type FunctionSelectorLike, loadContractArtifact, loadContractArtifactForPublic, type NoirCompiledContract, type OptionLike, type U128Like, type WrappedFieldLike } from '@aztec/aztec.js/abi';
-import { Contract, ContractBase, ContractFunctionInteraction, type ContractMethod, type ContractStorageLayout, type DeployInstantiationOptions, DeployMethod } from '@aztec/aztec.js/contracts';
+import { Contract, ContractBase, ContractFunctionInteraction, type ContractMethod, type ContractStorageLayout, DeployMethod } from '@aztec/aztec.js/contracts';
 import { EthAddress } from '@aztec/aztec.js/addresses';
 import { Fr, Point } from '@aztec/aztec.js/fields';
 import { type PublicKey, PublicKeys } from '@aztec/aztec.js/keys';
@@ -47,15 +47,13 @@ export class MagnaWebAuthnAccountContract extends ContractBase {
    * @param instantiation - Optional address-affecting parameters (salt, deployer / universalDeploy, publicKeys).
    *                       Salt defaults to a random value; the deployer is locked lazily from the first send-time `from`.
    */
-  public static deploy(wallet: Wallet, signing_pub_key_x: (bigint | number)[], signing_pub_key_y: (bigint | number)[], rp_id_hash: (bigint | number)[], origin: (bigint | number)[], origin_len: (bigint | number), instantiation?: DeployInstantiationOptions) {
-    return DeployMethod.create<MagnaWebAuthnAccountContract>(
+  public static deploy(wallet: Wallet, signing_pub_key_x: (bigint | number)[], signing_pub_key_y: (bigint | number)[], rp_id_hash: (bigint | number)[], origin: (bigint | number)[], origin_len: (bigint | number)) {
+    return new DeployMethod(
+      PublicKeys.default(),
       wallet,
-      {
-        artifact: MagnaWebAuthnAccountContractArtifact,
-        postDeployCtor: (instance, wallet) => MagnaWebAuthnAccountContract.at(instance.address, wallet),
-        args: [signing_pub_key_x, signing_pub_key_y, rp_id_hash, origin, origin_len],
-      },
-      instantiation,
+      MagnaWebAuthnAccountContractArtifact,
+      (instance, wallet) => MagnaWebAuthnAccountContract.at(instance.address, wallet),
+      [signing_pub_key_x, signing_pub_key_y, rp_id_hash, origin, origin_len],
     );
   }
 
@@ -63,18 +61,16 @@ export class MagnaWebAuthnAccountContract extends ContractBase {
    * Creates a tx to deploy a new instance of this contract using the specified constructor method.
    */
   public static deployWithOpts<M extends keyof MagnaWebAuthnAccountContract['methods']>(
-    opts: { method?: M; wallet: Wallet; instantiation?: DeployInstantiationOptions },
+    opts: { method?: M; wallet: Wallet },
     ...args: Parameters<MagnaWebAuthnAccountContract['methods'][M]>
   ) {
-    return DeployMethod.create<MagnaWebAuthnAccountContract>(
+    return new DeployMethod(
+      PublicKeys.default(),
       opts.wallet,
-      {
-        artifact: MagnaWebAuthnAccountContractArtifact,
-        postDeployCtor: (instance, wallet) => MagnaWebAuthnAccountContract.at(instance.address, wallet),
-        args,
-        constructorNameOrArtifact: opts.method ?? 'constructor',
-      },
-      opts.instantiation,
+      MagnaWebAuthnAccountContractArtifact,
+      (instance, wallet) => MagnaWebAuthnAccountContract.at(instance.address, wallet),
+      args,
+      opts.method ?? 'constructor',
     );
   }
   
