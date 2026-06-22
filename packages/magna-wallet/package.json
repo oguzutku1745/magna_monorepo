@@ -7,7 +7,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test dist/**/*.spec.js",
+    "test": "npm run build && node ../../scripts/node-test-runner.mjs 'dist/**/*.spec.js'",
     "lint": "echo \"no lint configured\""
   },
   "peerDependencies": {
