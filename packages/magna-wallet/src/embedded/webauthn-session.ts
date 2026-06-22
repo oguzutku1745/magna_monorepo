@@ -345,7 +345,7 @@ async function createWebAuthnWalletSessionOnce(options: WebAuthnWalletSessionOpt
       sessionOrigin = "new";
     }
 
-    const accountManager = await AccountManager.create(wallet, secret, webAuthnAccountContract(registration), salt);
+    const accountManager = await AccountManager.create(wallet, secret, webAuthnAccountContract(registration), { salt });
     const address = accountManager.address.toString();
     if (recoveryBundle?.address && recoveryBundle.address !== address) {
       throw new Error(`Recovered WebAuthn account address mismatch. expected=${recoveryBundle.address} derived=${address}`);

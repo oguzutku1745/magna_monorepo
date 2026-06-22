@@ -685,7 +685,7 @@ async function createAndDeployWebAuthnAccount(
   );
   const accountManager = await runStep(
     `AccountManager.create(WebAuthn ${alias})`,
-    async () => await AccountManager.create(wallet, Fr.random(), accountContract, Fr.random()),
+    async () => await AccountManager.create(wallet, Fr.random(), accountContract, { salt: Fr.random() }),
   );
   await runStep(`wallet.registerContract(WebAuthn ${alias})`, async () => {
     await wallet.registerContract(

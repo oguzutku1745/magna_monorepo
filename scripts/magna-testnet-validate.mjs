@@ -13,7 +13,6 @@ import { loadContractArtifact } from "@aztec/aztec.js/abi";
 import { SetPublicAuthwitContractInteraction } from "@aztec/aztec.js/authorization";
 import { Contract, DeployMethod } from "@aztec/aztec.js/contracts";
 import { Fq, Fr } from "@aztec/aztec.js/fields";
-import { PublicKeys } from "@aztec/aztec.js/keys";
 import { getFeeJuiceBalance } from "@aztec/aztec.js/utils";
 import { createExtendedL1Client } from "@aztec/ethereum/client";
 import { deployL1Contract } from "@aztec/ethereum/deploy-l1-contract";
@@ -106,12 +105,13 @@ function makeBinding(artifact) {
       return Contract.at(address, artifact, wallet);
     },
     deploy(wallet, ...args) {
-      return new DeployMethod(
-        PublicKeys.default(),
+      return DeployMethod.create(
         wallet,
-        artifact,
-        (instance, innerWallet) => Contract.at(instance.address, artifact, innerWallet),
-        args,
+        {
+          artifact,
+          postDeployCtor: (instance, innerWallet) => Contract.at(instance.address, artifact, innerWallet),
+          args,
+        },
       );
     },
   };
