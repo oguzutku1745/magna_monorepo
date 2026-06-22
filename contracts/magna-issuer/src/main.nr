@@ -1450,7 +1450,10 @@ pub contract MagnaIssuer {
             hinted_recovery.owner,
             recovery_note_hash_for_nullification,
         );
-        self.context.push_nullifier_for_note_hash(recovery_spend_nullifier, recovery_note_hash_for_nullification);
+        // The recovery note is proven via history (assert_note_existed_by), so it is a settled
+        // note from a prior transaction, not a pending same-tx note. Use push_nullifier_unsafe;
+        // push_nullifier_for_note_hash would try to squash a pending note that does not exist.
+        self.context.push_nullifier_unsafe(recovery_spend_nullifier);
 
         // Emit kill-switch nullifier that invalidates old active-owner proofs.
         let kill_switch_nullifier = compute_revocation_nullifier(
@@ -1518,7 +1521,8 @@ pub contract MagnaIssuer {
             hinted_root_recovery.owner,
             root_recovery_note_hash_for_nullification,
         );
-        self.context.push_nullifier_for_note_hash(root_recovery_spend_nullifier, root_recovery_note_hash_for_nullification);
+        // Settled note proven via history; nullify with push_nullifier_unsafe (see recover_for_caller).
+        self.context.push_nullifier_unsafe(root_recovery_spend_nullifier);
 
         let root_kill_switch_nullifier = compute_root_revocation_nullifier(
             hinted_root_recovery.note.revocation_secret,
@@ -1569,7 +1573,8 @@ pub contract MagnaIssuer {
             hinted_recovery.owner,
             linked_recovery_note_hash_for_nullification,
         );
-        self.context.push_nullifier_for_note_hash(linked_recovery_spend_nullifier, linked_recovery_note_hash_for_nullification);
+        // Settled note proven via history; nullify with push_nullifier_unsafe (see recover_for_caller).
+        self.context.push_nullifier_unsafe(linked_recovery_spend_nullifier);
 
         let linked_kill_switch_nullifier = compute_revocation_nullifier(
             hinted_recovery.note.revocation_secret,
