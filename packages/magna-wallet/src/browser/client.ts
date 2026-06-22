@@ -778,21 +778,13 @@ export class MagnaBrowserClient {
     }
     const issuerAddress = toAddress(this.env.issuerAddress!);
     const owner = toAddress(ownerAddress);
-    try {
-      return await debug.getNotes(issuerAddress, owner, storageSlot, NoteStatus.ACTIVE, [owner]);
-    } catch (error) {
-      try {
-        return await debug.getNotes({
-          contractAddress: issuerAddress,
-          owner,
-          storageSlot,
-          status: NoteStatus.ACTIVE,
-          scopes: [owner],
-        });
-      } catch {
-        throw error;
-      }
-    }
+    return await debug.getNotes({
+      contractAddress: issuerAddress,
+      owner,
+      storageSlot,
+      status: NoteStatus.ACTIVE,
+      scopes: [owner],
+    });
   }
 
   private credentialRefFromNote(ownerAddress: string, note: NoteDao): DiscoveredMagnaCredentialRef | undefined {
