@@ -4,7 +4,7 @@
 /* eslint-disable */
 import { AztecAddress, CompleteAddress } from '@aztec/aztec.js/addresses';
 import { type AbiType, type AztecAddressLike, type ContractArtifact, EventSelector, decodeFromAbi, type EthAddressLike, type FieldLike, type FunctionSelectorLike, loadContractArtifact, loadContractArtifactForPublic, type NoirCompiledContract, type OptionLike, type U128Like, type WrappedFieldLike } from '@aztec/aztec.js/abi';
-import { Contract, ContractBase, ContractFunctionInteraction, type ContractMethod, type ContractStorageLayout, DeployMethod } from '@aztec/aztec.js/contracts';
+import { Contract, ContractBase, ContractFunctionInteraction, type ContractMethod, type ContractStorageLayout, type DeployInstantiationOptions, DeployMethod } from '@aztec/aztec.js/contracts';
 import { EthAddress } from '@aztec/aztec.js/addresses';
 import { Fr, Point } from '@aztec/aztec.js/fields';
 import { type PublicKey, PublicKeys } from '@aztec/aztec.js/keys';
@@ -47,13 +47,15 @@ export class MagnaRightsPurchaseL2Contract extends ContractBase {
    * @param instantiation - Optional address-affecting parameters (salt, deployer / universalDeploy, publicKeys).
    *                       Salt defaults to a random value; the deployer is locked lazily from the first send-time `from`.
    */
-  public static deploy(wallet: Wallet, admin: AztecAddressLike, treasury: AztecAddressLike, payment_token: AztecAddressLike, rights_registry: AztecAddressLike, price_per_verify: (bigint | number)) {
-    return new DeployMethod(
-      PublicKeys.default(),
+  public static deploy(wallet: Wallet, admin: AztecAddressLike, treasury: AztecAddressLike, payment_token: AztecAddressLike, rights_registry: AztecAddressLike, price_per_verify: (bigint | number), instantiation?: DeployInstantiationOptions) {
+    return DeployMethod.create<MagnaRightsPurchaseL2Contract>(
       wallet,
-      MagnaRightsPurchaseL2ContractArtifact,
-      (instance, wallet) => MagnaRightsPurchaseL2Contract.at(instance.address, wallet),
-      [admin, treasury, payment_token, rights_registry, price_per_verify],
+      {
+        artifact: MagnaRightsPurchaseL2ContractArtifact,
+        postDeployCtor: (instance, wallet) => MagnaRightsPurchaseL2Contract.at(instance.address, wallet),
+        args: [admin, treasury, payment_token, rights_registry, price_per_verify],
+      },
+      instantiation,
     );
   }
 
@@ -61,16 +63,18 @@ export class MagnaRightsPurchaseL2Contract extends ContractBase {
    * Creates a tx to deploy a new instance of this contract using the specified constructor method.
    */
   public static deployWithOpts<M extends keyof MagnaRightsPurchaseL2Contract['methods']>(
-    opts: { method?: M; wallet: Wallet },
+    opts: { method?: M; wallet: Wallet; instantiation?: DeployInstantiationOptions },
     ...args: Parameters<MagnaRightsPurchaseL2Contract['methods'][M]>
   ) {
-    return new DeployMethod(
-      PublicKeys.default(),
+    return DeployMethod.create<MagnaRightsPurchaseL2Contract>(
       opts.wallet,
-      MagnaRightsPurchaseL2ContractArtifact,
-      (instance, wallet) => MagnaRightsPurchaseL2Contract.at(instance.address, wallet),
-      args,
-      opts.method ?? 'constructor',
+      {
+        artifact: MagnaRightsPurchaseL2ContractArtifact,
+        postDeployCtor: (instance, wallet) => MagnaRightsPurchaseL2Contract.at(instance.address, wallet),
+        args,
+        constructorNameOrArtifact: opts.method ?? 'constructor',
+      },
+      opts.instantiation,
     );
   }
   

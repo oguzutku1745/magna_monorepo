@@ -4,7 +4,7 @@
 /* eslint-disable */
 import { AztecAddress, CompleteAddress } from '@aztec/aztec.js/addresses';
 import { type AbiType, type AztecAddressLike, type ContractArtifact, EventSelector, decodeFromAbi, type EthAddressLike, type FieldLike, type FunctionSelectorLike, loadContractArtifact, loadContractArtifactForPublic, type NoirCompiledContract, type OptionLike, type U128Like, type WrappedFieldLike } from '@aztec/aztec.js/abi';
-import { Contract, ContractBase, ContractFunctionInteraction, type ContractMethod, type ContractStorageLayout, DeployMethod } from '@aztec/aztec.js/contracts';
+import { Contract, ContractBase, ContractFunctionInteraction, type ContractMethod, type ContractStorageLayout, type DeployInstantiationOptions, DeployMethod } from '@aztec/aztec.js/contracts';
 import { EthAddress } from '@aztec/aztec.js/addresses';
 import { Fr, Point } from '@aztec/aztec.js/fields';
 import { type PublicKey, PublicKeys } from '@aztec/aztec.js/keys';
@@ -47,13 +47,15 @@ export class MagnaConsumerContract extends ContractBase {
    * @param instantiation - Optional address-affecting parameters (salt, deployer / universalDeploy, publicKeys).
    *                       Salt defaults to a random value; the deployer is locked lazily from the first send-time `from`.
    */
-  public static deploy(wallet: Wallet, issuer_address: AztecAddressLike) {
-    return new DeployMethod(
-      PublicKeys.default(),
+  public static deploy(wallet: Wallet, issuer_address: AztecAddressLike, instantiation?: DeployInstantiationOptions) {
+    return DeployMethod.create<MagnaConsumerContract>(
       wallet,
-      MagnaConsumerContractArtifact,
-      (instance, wallet) => MagnaConsumerContract.at(instance.address, wallet),
-      [issuer_address],
+      {
+        artifact: MagnaConsumerContractArtifact,
+        postDeployCtor: (instance, wallet) => MagnaConsumerContract.at(instance.address, wallet),
+        args: [issuer_address],
+      },
+      instantiation,
     );
   }
 
@@ -61,16 +63,18 @@ export class MagnaConsumerContract extends ContractBase {
    * Creates a tx to deploy a new instance of this contract using the specified constructor method.
    */
   public static deployWithOpts<M extends keyof MagnaConsumerContract['methods']>(
-    opts: { method?: M; wallet: Wallet },
+    opts: { method?: M; wallet: Wallet; instantiation?: DeployInstantiationOptions },
     ...args: Parameters<MagnaConsumerContract['methods'][M]>
   ) {
-    return new DeployMethod(
-      PublicKeys.default(),
+    return DeployMethod.create<MagnaConsumerContract>(
       opts.wallet,
-      MagnaConsumerContractArtifact,
-      (instance, wallet) => MagnaConsumerContract.at(instance.address, wallet),
-      args,
-      opts.method ?? 'constructor',
+      {
+        artifact: MagnaConsumerContractArtifact,
+        postDeployCtor: (instance, wallet) => MagnaConsumerContract.at(instance.address, wallet),
+        args,
+        constructorNameOrArtifact: opts.method ?? 'constructor',
+      },
+      opts.instantiation,
     );
   }
   
