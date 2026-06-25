@@ -1,10 +1,71 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@zkpassport/sdk", () => ({
-  ZKPassport: class MockZKPassport {},
+const mockState = vi.hoisted(() => ({
+  sdk: undefined as
+    | {
+        request: ReturnType<typeof vi.fn>;
+        cancelRequest: ReturnType<typeof vi.fn>;
+      }
+    | undefined,
 }));
 
-import { verifyAndIssuePassportPilotThroughBackend, verifyRootRecoveryPreflightThroughBackend } from "./zkpassport";
+vi.mock("@zkpassport/sdk", () => ({
+  ZKPassport: vi.fn(() => mockState.sdk),
+}));
+
+import {
+  startPassportZkRequest,
+  verifyAndIssuePassportPilotThroughBackend,
+  verifyRootRecoveryPreflightThroughBackend,
+} from "./zkpassport";
+
+function installMockZkPassport() {
+  const built = {
+    requestId: "request-1",
+    url: "https://zkpassport.test/request-1",
+    query: { id: "query-1" },
+    onBridgeConnect: vi.fn(),
+    onRequestReceived: vi.fn(),
+    onGeneratingProof: vi.fn(),
+    onProofGenerated: vi.fn(),
+    onReject: vi.fn(),
+    onError: vi.fn(),
+    onResult: vi.fn(),
+  };
+  const queryBuilder = {
+    gte: vi.fn(() => queryBuilder),
+    disclose: vi.fn(() => queryBuilder),
+    done: vi.fn(() => built),
+  };
+  const sdk = mockState.sdk ?? {
+    request: vi.fn(),
+    cancelRequest: vi.fn(),
+  };
+  sdk.request = vi.fn(async () => queryBuilder);
+  sdk.cancelRequest = vi.fn();
+  mockState.sdk = sdk;
+}
+
+describe("startPassportZkRequest", () => {
+  it("requests compressed-evm mode when proofMode is provided", async () => {
+    installMockZkPassport();
+    await startPassportZkRequest({
+      ageThreshold: 18,
+      proofMode: "compressed-evm",
+      metadata: {
+        name: "Magna",
+        logo: "https://magna.test/logo.png",
+        purpose: "Issue",
+      },
+    });
+
+    expect(mockState.sdk?.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: "compressed-evm",
+      }),
+    );
+  });
+});
 
 describe("verifyRootRecoveryPreflightThroughBackend", () => {
   afterEach(() => {

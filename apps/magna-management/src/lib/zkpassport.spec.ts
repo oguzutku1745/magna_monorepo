@@ -27,7 +27,7 @@ vi.mock("@zkpassport/sdk", () => ({
   ZKPassport: vi.fn(() => mockState.sdk),
 }));
 
-import { startPassportZkRequest } from "./zkpassport";
+import { startPassportZkRequest, verifyAndIssuePassportPilotThroughBackend } from "./zkpassport";
 
 function installMockZkPassport() {
   mockState.callbacks = {};
@@ -125,5 +125,46 @@ describe("startPassportZkRequest", () => {
       uniqueIdentifier: "12345",
       queryResult: { id: "verified-query-result" },
     });
+  });
+});
+
+describe("verifyAndIssuePassportPilotThroughBackend", () => {
+  it("posts no-PII pilot issuance payload without zkPassport artifacts", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        issuanceTxHash: "0xtx",
+        ghostOwner: "0xghost",
+        rootCommitment: "12345",
+        claimsHash: "67890",
+        mode: "rooted",
+        ghostDerivationVersion: "v2_scoped",
+        orchestratorAddress: "0xorchestrator",
+        verificationSummary: {
+          verified: true,
+          pilot: true,
+          piiBlind: true,
+        },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await verifyAndIssuePassportPilotThroughBackend("http://localhost:4310", {
+      pilotSchema: "passport-pii-blind-v0",
+      activeOwner: "0xactive",
+      claimsHash: "67890",
+      ghostOwner: "0xghost",
+      rootCommitment: "12345",
+      credentialValidUntil: "1893456000",
+      mode: "rooted",
+      ghostDerivationVersion: "v2_scoped",
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(body.queryResult).toBeUndefined();
+    expect(body.committedInputs).toBeUndefined();
+    expect(body.outerProof).toBeUndefined();
+    expect(body.expiryTs).toBeUndefined();
+    expect(body.pilotSchema).toBe("passport-pii-blind-v0");
   });
 });
