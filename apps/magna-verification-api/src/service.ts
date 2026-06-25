@@ -800,6 +800,26 @@ function requirePositiveUnixTimestampString(value: unknown, fieldName: string): 
   return normalized;
 }
 
+function requireOptionalPilotMode(value: unknown): VerificationMode | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "passport" || value === "rooted") {
+    return value;
+  }
+  throw new Error("mode must be passport or rooted.");
+}
+
+function requireOptionalPilotGhostDerivationVersion(value: unknown): GhostDerivationVersion | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "v1_legacy_unscoped" || value === "v2_scoped") {
+    return value;
+  }
+  throw new Error("ghostDerivationVersion must be v1_legacy_unscoped or v2_scoped.");
+}
+
 export function isPassportPilotRequest(input: unknown): input is VerifyAndIssuePassportPilotRequest {
   return Boolean(
     input &&
@@ -820,8 +840,8 @@ export function validatePassportPilotRequest(
   requireDecimalString(input.claimsHash, "claimsHash");
   requireDecimalString(input.rootCommitment, "rootCommitment");
   requirePositiveUnixTimestampString(input.credentialValidUntil, "credentialValidUntil");
-  const mode = resolveVerificationMode(input.mode);
-  resolveGhostDerivationVersion(input.ghostDerivationVersion, mode);
+  const mode = resolveVerificationMode(requireOptionalPilotMode(input.mode));
+  resolveGhostDerivationVersion(requireOptionalPilotGhostDerivationVersion(input.ghostDerivationVersion), mode);
   return input;
 }
 

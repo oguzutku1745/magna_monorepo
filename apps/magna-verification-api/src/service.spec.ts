@@ -191,9 +191,30 @@ describe("passport PII-blind pilot request validation", () => {
     expect(() =>
       validatePassportPilotRequest({
         ...cleanPilotPayload,
+        rootCommitment: "not-a-field",
+      }),
+    ).toThrow("rootCommitment must be a decimal string");
+    expect(() =>
+      validatePassportPilotRequest({
+        ...cleanPilotPayload,
         credentialValidUntil: "0",
       }),
     ).toThrow("credentialValidUntil must be a positive unix timestamp string");
+  });
+
+  it("rejects invalid runtime mode and ghost derivation values", () => {
+    expect(() =>
+      validatePassportPilotRequest({
+        ...cleanPilotPayload,
+        mode: "email" as never,
+      }),
+    ).toThrow("mode must be passport or rooted");
+    expect(() =>
+      validatePassportPilotRequest({
+        ...cleanPilotPayload,
+        ghostDerivationVersion: "v3_global" as never,
+      }),
+    ).toThrow("ghostDerivationVersion must be v1_legacy_unscoped or v2_scoped");
   });
 });
 
