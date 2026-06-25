@@ -3,6 +3,10 @@ import { describe, it } from "node:test";
 import {
   computeInstagramClaimsHash,
   computeInstagramHandleHash,
+  computePassportClaimsHash,
+  computePassportCommittedClaimsHash,
+  computePassportExpiryCommitment,
+  computePassportNationalityCommitment,
   packAlpha3,
   poseidon2FieldHasher,
 } from "./encoding.js";
@@ -12,6 +16,74 @@ describe("packAlpha3", () => {
   it("packs USA deterministically", () => {
     const packed = packAlpha3("USA");
     assert.equal(packed, (85n << 16n) | (83n << 8n) | 65n);
+  });
+});
+
+describe("passport v2 hidden claims hashing", () => {
+  it("commits nationality and passport expiry before hashing claims", () => {
+    const nationalityBlind = 111n;
+    const expiryBlind = 222n;
+    const expiryTs = 1_932_249_599n;
+
+    const nationalityCommitment = computePassportNationalityCommitment(
+      "TUR",
+      nationalityBlind,
+      poseidon2FieldHasher,
+    );
+    const expiryCommitment = computePassportExpiryCommitment(
+      expiryTs,
+      expiryBlind,
+      poseidon2FieldHasher,
+    );
+    const claimsHash = computePassportCommittedClaimsHash(
+      {
+        schemaVersion: 2,
+        credentialType: CredentialType.Passport,
+        nationalityCommitment,
+        minAgeProven: 18,
+        expiryCommitment,
+      },
+      poseidon2FieldHasher,
+    );
+
+    assert.notEqual(nationalityCommitment, packAlpha3("TUR"));
+    assert.notEqual(expiryCommitment, expiryTs);
+    assert.equal(typeof claimsHash, "bigint");
+    assert(claimsHash > 0n);
+  });
+
+  it("does not collide with the v1 raw-passport claims hash for the same visible values", () => {
+    const expiryTs = 1_932_249_599n;
+    const v1 = computePassportClaimsHash(
+      {
+        schemaVersion: 1,
+        credentialType: CredentialType.Passport,
+        nationalityAlpha3Packed: packAlpha3("TUR"),
+        minAgeProven: 18,
+        expiryTs,
+      },
+      poseidon2FieldHasher,
+    );
+    const v2 = computePassportCommittedClaimsHash(
+      {
+        schemaVersion: 2,
+        credentialType: CredentialType.Passport,
+        nationalityCommitment: computePassportNationalityCommitment(
+          "TUR",
+          111n,
+          poseidon2FieldHasher,
+        ),
+        minAgeProven: 18,
+        expiryCommitment: computePassportExpiryCommitment(
+          expiryTs,
+          222n,
+          poseidon2FieldHasher,
+        ),
+      },
+      poseidon2FieldHasher,
+    );
+
+    assert.notEqual(v2, v1);
   });
 });
 

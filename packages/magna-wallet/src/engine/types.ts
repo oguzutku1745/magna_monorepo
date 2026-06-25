@@ -12,6 +12,22 @@ export type PassportCanonicalClaims = {
   expiryTs: bigint;
 };
 
+export type PassportCommittedClaims = {
+  schemaVersion: 2;
+  credentialType: CredentialType.Passport;
+  nationalityCommitment: bigint;
+  minAgeProven: number;
+  expiryCommitment: bigint;
+};
+
+export type PassportCommittedClaimsWitness = {
+  minAgeProven: number;
+  nationalityAlpha3Packed: bigint;
+  nationalityBlind: bigint;
+  expiryTs: bigint;
+  expiryBlind: bigint;
+};
+
 export type InstagramCanonicalClaims = {
   schemaVersion: number;
   credentialType: CredentialType.Instagram;

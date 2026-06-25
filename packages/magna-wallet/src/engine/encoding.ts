@@ -1,6 +1,11 @@
 import { poseidon2HashWithSeparator } from "@aztec/foundation/crypto/sync";
 import { CredentialType } from "@magna/core";
-import type { Hasher, InstagramCanonicalClaims, PassportCanonicalClaims } from "./types.js";
+import type {
+  Hasher,
+  InstagramCanonicalClaims,
+  PassportCanonicalClaims,
+  PassportCommittedClaims,
+} from "./types.js";
 
 export const MAGNA_CLAIMS_DS = 0x4d414743n; // "MAGC"
 export const MAGNA_REVOCATION_DS = 0x4d415247n; // "MARG"
@@ -8,6 +13,8 @@ export const MAGNA_ROOT_AUTHORITY_REVOCATION_DS = 0x4d415241n; // "MARA"
 export const MAGNA_GHOST_DS = 0x4d414748n; // "MAGH"
 export const MAGNA_INSTAGRAM_HANDLE_DS = 0x4d414948n; // "MAIH"
 export const MAGNA_ROOT_DS = 0x4d414749n; // "MAGI"
+export const MAGNA_PASSPORT_NATIONALITY_COMMITMENT_DS = 0x4d414e43n; // "MANC"
+export const MAGNA_PASSPORT_EXPIRY_COMMITMENT_DS = 0x4d414558n; // "MAEX"
 // Backward-compatible alias.
 export const MAGNA_RECOVERY_DS = MAGNA_GHOST_DS;
 const textEncoder = new TextEncoder();
@@ -36,6 +43,41 @@ export function computePassportClaimsHash(
     claims.nationalityAlpha3Packed,
     BigInt(claims.minAgeProven),
     claims.expiryTs,
+  ]);
+}
+
+export function computePassportNationalityCommitment(
+  alpha3: string,
+  blind: bigint,
+  hasher: Hasher,
+): bigint {
+  return hasher(MAGNA_PASSPORT_NATIONALITY_COMMITMENT_DS, [packAlpha3(alpha3), blind]);
+}
+
+export function computePassportExpiryCommitment(
+  expiryTs: bigint,
+  blind: bigint,
+  hasher: Hasher,
+): bigint {
+  return hasher(MAGNA_PASSPORT_EXPIRY_COMMITMENT_DS, [expiryTs, blind]);
+}
+
+export function computePassportCommittedClaimsHash(
+  claims: PassportCommittedClaims,
+  hasher: Hasher,
+): bigint {
+  if (claims.credentialType !== CredentialType.Passport) {
+    throw new Error("passport committed claims hash expects CredentialType.Passport");
+  }
+  if (claims.schemaVersion !== 2) {
+    throw new Error("passport committed claims hash expects schemaVersion 2");
+  }
+  return hasher(MAGNA_CLAIMS_DS, [
+    BigInt(claims.schemaVersion),
+    BigInt(claims.credentialType),
+    claims.nationalityCommitment,
+    BigInt(claims.minAgeProven),
+    claims.expiryCommitment,
   ]);
 }
 
