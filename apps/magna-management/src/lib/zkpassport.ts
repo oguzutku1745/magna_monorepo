@@ -71,6 +71,7 @@ export type VerifyAndIssuePassportPilotResponse = {
   claimsHash: string;
   mode: "passport" | "rooted";
   ghostDerivationVersion: GhostDerivationVersion;
+  issuerAddress: string;
   orchestratorAddress: string;
   verificationSummary: {
     verified: true;

@@ -11,6 +11,7 @@ describe("getAppEnv", () => {
     expect(env.zkPassportRequestName).toBe("Magna");
     expect(env.zkPassportRequestScope).toBe("magna-passport-onboarding");
     expect(env.zkPassportDevMode).toBe(false);
+    expect(env.zkPassportIssuanceKind).toBe("legacy");
     expect(env.zkPassportPrimaryIssuanceMode).toBe("rooted");
     expect(env.zkPassportGhostDerivationVersion).toBe("v2_scoped");
     expect(env.companySponsors).toEqual([]);
@@ -35,6 +36,7 @@ describe("getAppEnv", () => {
       VITE_MAGNA_ZKPASSPORT_REQUEST_PURPOSE: "Prove passport claims for Magna stage",
       VITE_MAGNA_ZKPASSPORT_REQUEST_SCOPE: "magna-stage-passport",
       VITE_MAGNA_ZKPASSPORT_DEV_MODE: "true",
+      VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "pilot",
       VITE_MAGNA_ZKPASSPORT_PRIMARY_ISSUANCE_MODE: "passport",
       VITE_MAGNA_ZKPASSPORT_GHOST_DERIVATION_VERSION: "v1_legacy_unscoped",
       VITE_MAGNA_ISSUER_ADDRESS: "0x123",
@@ -62,6 +64,7 @@ describe("getAppEnv", () => {
     expect(env.zkPassportRequestPurpose).toBe("Prove passport claims for Magna stage");
     expect(env.zkPassportRequestScope).toBe("magna-stage-passport");
     expect(env.zkPassportDevMode).toBe(true);
+    expect(env.zkPassportIssuanceKind).toBe("pilot");
     expect(env.zkPassportPrimaryIssuanceMode).toBe("passport");
     expect(env.zkPassportGhostDerivationVersion).toBe("v1_legacy_unscoped");
     expect(env.issuerAddress).toBe("0x123");
@@ -94,5 +97,9 @@ describe("getAppEnv", () => {
     expect(env.companySponsorAddresses).toEqual(["0xactive"]);
     expect(env.companySponsors).toEqual([{ address: "0xactive", isActiveDefault: true }]);
     expect(env.companySponsorAddress).toBe("0xactive");
+  });
+
+  it("accepts explicit a1 issuance config so the app can fail clearly at runtime", () => {
+    expect(getAppEnv({ VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "a1" }).zkPassportIssuanceKind).toBe("a1");
   });
 });

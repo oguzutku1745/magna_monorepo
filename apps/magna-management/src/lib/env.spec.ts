@@ -13,11 +13,17 @@ describe("getManagementEnv", () => {
     const env = getManagementEnv({});
 
     expect(env.zkPassportDevMode).toBe(false);
+    expect(env.zkPassportIssuanceKind).toBe("legacy");
   });
 
   it("allows explicit zkPassport dev mode configuration to override the local-dev default", () => {
     expect(getManagementEnv({ DEV: true, VITE_MAGNA_ZKPASSPORT_DEV_MODE: "false" }).zkPassportDevMode).toBe(false);
     expect(getManagementEnv({ DEV: false, VITE_MAGNA_ZKPASSPORT_DEV_MODE: "true" }).zkPassportDevMode).toBe(true);
+  });
+
+  it("parses explicit passport issuance kind configuration", () => {
+    expect(getManagementEnv({ VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "pilot" }).zkPassportIssuanceKind).toBe("pilot");
+    expect(getManagementEnv({ VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "a1" }).zkPassportIssuanceKind).toBe("a1");
   });
 
   it("hydrates local contract addresses from the deployment manifest when env omits them", () => {

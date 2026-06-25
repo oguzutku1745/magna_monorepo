@@ -2,6 +2,7 @@ import type { GhostDerivationVersion } from "@magna/wallet";
 
 export type CredentialKind = "passport" | "instagram";
 export type CredentialStatus = "active" | "pending_attestation" | "recovery_pending" | "unknown";
+export type CredentialIssuanceKind = "legacy" | "pilot" | "a1";
 
 export type StoredCredentialRef = {
   id: string;
@@ -16,6 +17,7 @@ export type StoredCredentialRef = {
   issuerAddress?: string;
   orchestratorAddress?: string;
   mode?: "passport" | "rooted";
+  issuanceKind?: CredentialIssuanceKind;
   rootCommitment?: string;
   ghostOwner?: string;
   ghostDerivationVersion?: GhostDerivationVersion;

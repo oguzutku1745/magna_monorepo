@@ -33,11 +33,16 @@ import {
   startPassportZkRequest,
   verifyAndRefreshRootAuthorityThroughBackend,
   verifyAndIssueInstagramThroughBackend,
+  verifyAndIssuePassportPilotThroughBackend,
   verifyAndIssueThroughBackend,
   verifyRootRecoveryPreflightThroughBackend,
   type ActiveZkPassportRequest,
   type ZkPassportLifecycleEvent,
 } from "./lib/zkpassport";
+import {
+  issuePassportThroughConfiguredBackend,
+  proofModeForPassportIssuanceKind,
+} from "./lib/passport-issuance";
 
 type Role = "user" | "company";
 
@@ -611,6 +616,15 @@ export function App() {
       setNotice({ tone: "danger", text: "VITE_MAGNA_VERIFICATION_API_URL is required for zkPassport issuance." });
       return;
     }
+    let proofMode: ReturnType<typeof proofModeForPassportIssuanceKind>;
+    try {
+      proofMode = proofModeForPassportIssuanceKind(env.zkPassportIssuanceKind);
+    } catch (error) {
+      const message = errorMessage(error);
+      setNotice({ tone: "danger", text: message });
+      appendLog(`zkPassport issuance unavailable: ${message}`);
+      return;
+    }
 
     setZkStage("creating_request");
     setZkProofCount(0);
@@ -618,12 +632,16 @@ export function App() {
     if (env.zkPassportDevMode) {
       appendLog("zkPassport dev mode enabled (mock proofs allowed).");
     }
+    if (env.zkPassportIssuanceKind === "pilot") {
+      appendLog("PII-blind pilot issuance enabled (non-production; not passport-authentic).");
+    }
     let finalResultTimeout: number | undefined;
     let timedOutWaitingForResult = false;
     let activeZkPassportRequest: ActiveZkPassportRequest | null = null;
     const request = await runAction("Create zkPassport request", async () =>
       startPassportZkRequest({
         ageThreshold: parsedAge,
+        proofMode,
         metadata: {
           name: env.zkPassportRequestName,
           logo: env.zkPassportRequestLogo,
@@ -670,16 +688,29 @@ export function App() {
           return;
         }
         setZkStage("submitting_to_backend");
-        appendLog("zkPassport final result received. Submitting proofs to verification API.");
-        const issued = await verifyAndIssueThroughBackend(env.verificationApiUrl!, {
-          proofs: completion.proofs,
-          originalQuery: completion.originalQuery,
-          queryResult: completion.queryResult,
-          activeOwner: activeSession.activeAccount.address,
-          ageThreshold: parsedAge,
-          mode: env.zkPassportPrimaryIssuanceMode,
-          ghostDerivationVersion: env.zkPassportGhostDerivationVersion,
-        });
+        appendLog(
+          env.zkPassportIssuanceKind === "pilot"
+            ? "zkPassport final result received. Submitting local pilot commitments to verification API."
+            : "zkPassport final result received. Submitting proofs to verification API.",
+        );
+        const issueResult = await issuePassportThroughConfiguredBackend(
+          {
+            issuanceKind: env.zkPassportIssuanceKind,
+            verificationApiUrl: env.verificationApiUrl!,
+            completion,
+            activeOwner: activeSession.activeAccount.address,
+            ageThreshold: parsedAge,
+            mode: env.zkPassportPrimaryIssuanceMode,
+            ghostDerivationVersion: env.zkPassportGhostDerivationVersion,
+          },
+          {
+            verifyAndIssueThroughBackend,
+            verifyAndIssuePassportPilotThroughBackend,
+          },
+        );
+        const issued = issueResult.response;
+        const normalizedClaims =
+          issueResult.issuanceKind === "legacy" ? issueResult.response.normalizedClaims : undefined;
         const ref: StoredCredentialRef = {
           id: credentialId({
             ownerAddress: activeSession.activeAccount.address,
@@ -698,16 +729,27 @@ export function App() {
           issuerAddress: issued.issuerAddress,
           orchestratorAddress: issued.orchestratorAddress,
           mode: issued.mode,
+          issuanceKind: issueResult.issuanceKind,
           rootCommitment: issued.rootCommitment,
           ghostOwner: issued.ghostOwner,
           ghostDerivationVersion: issued.ghostDerivationVersion,
-          normalizedClaims: issued.normalizedClaims,
+          normalizedClaims,
         };
         setCredentials(upsertCredentialRef(ref));
         await loadHintsForCredentialRefs(activeSession, [ref]);
-        setNotice({ tone: "success", text: "zkPassport credential issued and stored for this wallet." });
+        setNotice({
+          tone: "success",
+          text:
+            issueResult.issuanceKind === "pilot"
+              ? "PII-blind pilot credential issued and stored for this wallet (non-production; not passport-authentic)."
+              : "zkPassport credential issued and stored for this wallet.",
+        });
         setZkStage("issued");
-        appendLog(`zkPassport credential issued. Claims hash: ${issued.claimsHash}`);
+        appendLog(
+          issueResult.issuanceKind === "pilot"
+            ? `PII-blind pilot credential issued (non-production; not passport-authentic). Claims hash: ${issued.claimsHash}`
+            : `zkPassport credential issued. Claims hash: ${issued.claimsHash}`,
+        );
       })
       .catch(error => {
         if (finalResultTimeout) {
@@ -1507,6 +1549,16 @@ function CredentialCard(props: { refData: StoredCredentialRef; hintState?: Crede
         <strong>{ref.status.replace(/_/g, " ")}</strong>
       </div>
       <KeyValue label="Claims hash" value={ref.claimsHash} />
+      {ref.kind === "passport" ? (
+        <KeyValue
+          label="Authenticity"
+          value={
+            ref.issuanceKind === "pilot"
+              ? "PII-blind pilot (non-production; not passport-authentic)"
+              : "legacy zkPassport backend verification"
+          }
+        />
+      ) : null}
       {props.hintState ? <KeyValue label="Hinted notes" value={props.hintState.message ?? props.hintState.status} /> : null}
       {ref.mode ? <KeyValue label="Mode" value={ref.mode} /> : null}
       {ref.rootCommitment ? <KeyValue label="Root commitment" value={ref.rootCommitment} /> : null}

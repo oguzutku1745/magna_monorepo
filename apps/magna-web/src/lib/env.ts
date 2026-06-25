@@ -16,6 +16,7 @@ export type MagnaAppEnv = {
   zkPassportRequestPurpose: string;
   zkPassportRequestScope: string;
   zkPassportDevMode: boolean;
+  zkPassportIssuanceKind: "legacy" | "pilot" | "a1";
   zkPassportPrimaryIssuanceMode: "rooted" | "passport";
   zkPassportGhostDerivationVersion: "v1_legacy_unscoped" | "v2_scoped";
   issuerAddress?: string;
@@ -89,6 +90,16 @@ function parseIssuanceMode(value: string | boolean | number | undefined): "roote
   return "rooted";
 }
 
+function parsePassportIssuanceKind(value: string | boolean | number | undefined): "legacy" | "pilot" | "a1" {
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "pilot" || normalized === "a1") {
+      return normalized;
+    }
+  }
+  return "legacy";
+}
+
 function parseGhostDerivationVersion(
   value: string | boolean | number | undefined,
 ): "v1_legacy_unscoped" | "v2_scoped" {
@@ -151,6 +162,7 @@ export function getAppEnv(source: EnvSource = import.meta.env): MagnaAppEnv {
     zkPassportRequestScope:
       parseOptionalString(source.VITE_MAGNA_ZKPASSPORT_REQUEST_SCOPE) ?? "magna-passport-onboarding",
     zkPassportDevMode: parseBoolean(source.VITE_MAGNA_ZKPASSPORT_DEV_MODE, false),
+    zkPassportIssuanceKind: parsePassportIssuanceKind(source.VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND),
     zkPassportPrimaryIssuanceMode: parseIssuanceMode(source.VITE_MAGNA_ZKPASSPORT_PRIMARY_ISSUANCE_MODE),
     zkPassportGhostDerivationVersion: parseGhostDerivationVersion(
       source.VITE_MAGNA_ZKPASSPORT_GHOST_DERIVATION_VERSION,
