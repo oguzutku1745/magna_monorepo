@@ -221,6 +221,9 @@ linked_recovery_notes: {
     /** register_credential(active_owner: struct, ghost_owner: struct, claims_hash: field, credential_type: integer, expiry_ts: integer) */
     register_credential: ((active_owner: AztecAddressLike, ghost_owner: AztecAddressLike, claims_hash: FieldLike, credential_type: (bigint | number), expiry_ts: (bigint | number)) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
+    /** register_credential_v2(active_owner: struct, ghost_owner: struct, claims_hash: field, credential_type: integer, credential_valid_until: integer) */
+    register_credential_v2: ((active_owner: AztecAddressLike, ghost_owner: AztecAddressLike, claims_hash: FieldLike, credential_type: (bigint | number), credential_valid_until: (bigint | number)) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
+
     /** register_linked_credential(active_owner: struct, ghost_owner: struct, root_commitment: field, claims_hash: field, credential_type: integer, expiry_ts: integer) */
     register_linked_credential: ((active_owner: AztecAddressLike, ghost_owner: AztecAddressLike, root_commitment: FieldLike, claims_hash: FieldLike, credential_type: (bigint | number), expiry_ts: (bigint | number)) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
@@ -232,6 +235,9 @@ linked_recovery_notes: {
 
     /** register_rooted_passport(active_owner: struct, ghost_owner: struct, root_commitment: field, claims_hash: field, expiry_ts: integer) */
     register_rooted_passport: ((active_owner: AztecAddressLike, ghost_owner: AztecAddressLike, root_commitment: FieldLike, claims_hash: FieldLike, expiry_ts: (bigint | number)) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
+
+    /** register_rooted_passport_v2(active_owner: struct, ghost_owner: struct, root_commitment: field, claims_hash: field, credential_valid_until: integer) */
+    register_rooted_passport_v2: ((active_owner: AztecAddressLike, ghost_owner: AztecAddressLike, root_commitment: FieldLike, claims_hash: FieldLike, credential_valid_until: (bigint | number)) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
     /** remove_company_sponsor_gateway(gateway: struct) */
     remove_company_sponsor_gateway: ((gateway: AztecAddressLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;

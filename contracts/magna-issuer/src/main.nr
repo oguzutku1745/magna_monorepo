@@ -225,6 +225,49 @@ pub contract MagnaIssuer {
     }
 
     #[external("private")]
+    fn register_credential_v2(
+        active_owner: AztecAddress,
+        ghost_owner: AztecAddress,
+        claims_hash: Field,
+        credential_type: u8,
+        credential_valid_until: u64,
+    ) {
+        assert_orchestrator_sender(self.msg_sender(), self.storage.orchestrator.read());
+
+        // Safety: Randomness here is only used as a note secret input and does not
+        // influence consensus-critical public state branching.
+        let revocation_secret = unsafe { random() };
+
+        let credential_note = CredentialNote {
+            claims_hash,
+            credential_type,
+            expiry_ts: credential_valid_until,
+        };
+        self.storage.credential_notes.at(active_owner).insert(credential_note).deliver(
+            MessageDelivery::onchain_unconstrained(),
+        );
+
+        let status_note = StatusNote {
+            revocation_secret,
+            claims_hash,
+            credential_type,
+        };
+        self.storage.status_notes.at(active_owner).insert(status_note).deliver(
+            MessageDelivery::onchain_unconstrained(),
+        );
+
+        let recovery_note = RecoveryNote {
+            revocation_secret,
+            claims_hash,
+            credential_type,
+            expiry_ts: credential_valid_until,
+        };
+        self.storage.recovery_notes.at(ghost_owner).insert(recovery_note).deliver(
+            MessageDelivery::onchain_unconstrained(),
+        );
+    }
+
+    #[external("private")]
     fn register_root(active_owner: AztecAddress, ghost_owner: AztecAddress, root_commitment: Field) {
         assert_orchestrator_sender(self.msg_sender(), self.storage.orchestrator.read());
         assert(root_commitment != 0, "root commitment required");
@@ -301,6 +344,53 @@ pub contract MagnaIssuer {
             claims_hash,
             1,
             expiry_ts,
+            linked_revocation_secret,
+        );
+    }
+
+    #[external("private")]
+    fn register_rooted_passport_v2(
+        active_owner: AztecAddress,
+        ghost_owner: AztecAddress,
+        root_commitment: Field,
+        claims_hash: Field,
+        credential_valid_until: u64,
+    ) {
+        assert_orchestrator_sender(self.msg_sender(), self.storage.orchestrator.read());
+        assert(root_commitment != 0, "root commitment required");
+        assert(claims_hash != 0, "authority claims hash required");
+
+        // Safety: Randomness here is only used as a note secret input and does not
+        // influence consensus-critical public state branching.
+        let root_revocation_secret = unsafe { random() };
+        self.internal.mint_root_notes(
+            active_owner,
+            ghost_owner,
+            root_commitment,
+            root_revocation_secret,
+        );
+
+        // Safety: Randomness here is only used as a note secret input and does not
+        // influence consensus-critical public state branching.
+        let authority_revocation_secret = unsafe { random() };
+        self.internal.mint_root_authority_note(
+            active_owner,
+            root_commitment,
+            claims_hash,
+            credential_valid_until,
+            authority_revocation_secret,
+        );
+
+        // Safety: Randomness here is only used as a note secret input and does not
+        // influence consensus-critical public state branching.
+        let linked_revocation_secret = unsafe { random() };
+        self.internal.mint_linked_credential_notes(
+            active_owner,
+            ghost_owner,
+            root_commitment,
+            claims_hash,
+            1,
+            credential_valid_until,
             linked_revocation_secret,
         );
     }
