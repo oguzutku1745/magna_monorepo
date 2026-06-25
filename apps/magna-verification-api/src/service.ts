@@ -12,6 +12,7 @@ import type { Wallet } from "@aztec/aztec.js/wallet";
 import { contractInstanceWithAddressFromPlainObject } from "@aztec/stdlib/contract";
 import { EmbeddedWallet } from "@aztec/wallets/embedded";
 import {
+  assertNoZkPassportPrivateArtifacts,
   computeInstagramClaimsHash,
   computeInstagramHandleHash,
   computePassportClaimsHash,
@@ -29,6 +30,8 @@ import type { ProofResult, Query, QueryResult } from "@zkpassport/sdk";
 import { proveInstagramEmail, type InstagramProofArtifact } from "@magna/instagram-proof";
 
 export type VerificationMode = "passport" | "rooted";
+
+export const PASSPORT_PII_BLIND_PILOT_SCHEMA = "passport-pii-blind-v0" as const;
 
 export type VerificationApiConfig = {
   port: number;
@@ -48,6 +51,17 @@ export type VerifyAndIssueRequest = {
   queryResult: QueryResult;
   activeOwner: string;
   ageThreshold?: number;
+  mode?: VerificationMode;
+  ghostDerivationVersion?: GhostDerivationVersion;
+};
+
+export type VerifyAndIssuePassportPilotRequest = {
+  pilotSchema: typeof PASSPORT_PII_BLIND_PILOT_SCHEMA;
+  activeOwner: string;
+  claimsHash: string;
+  ghostOwner: string;
+  rootCommitment: string;
+  credentialValidUntil: string;
   mode?: VerificationMode;
   ghostDerivationVersion?: GhostDerivationVersion;
 };
@@ -769,6 +783,46 @@ function requireFieldLikeString(value: unknown, fieldName: string): string {
     }
   }
   throw new Error(`${fieldName} must be field-like.`);
+}
+
+function requireDecimalString(value: unknown, fieldName: string): string {
+  if (typeof value !== "string" || !/^[0-9]+$/.test(value)) {
+    throw new Error(`${fieldName} must be a decimal string.`);
+  }
+  return value;
+}
+
+function requirePositiveUnixTimestampString(value: unknown, fieldName: string): string {
+  const normalized = requireDecimalString(value, fieldName);
+  if (BigInt(normalized) <= 0n) {
+    throw new Error(`${fieldName} must be a positive unix timestamp string.`);
+  }
+  return normalized;
+}
+
+export function isPassportPilotRequest(input: unknown): input is VerifyAndIssuePassportPilotRequest {
+  return Boolean(
+    input &&
+      typeof input === "object" &&
+      Reflect.get(input, "pilotSchema") === PASSPORT_PII_BLIND_PILOT_SCHEMA,
+  );
+}
+
+export function validatePassportPilotRequest(
+  input: VerifyAndIssuePassportPilotRequest,
+): VerifyAndIssuePassportPilotRequest {
+  assertNoZkPassportPrivateArtifacts(input);
+  if (input.pilotSchema !== PASSPORT_PII_BLIND_PILOT_SCHEMA) {
+    throw new Error("pilotSchema must be passport-pii-blind-v0.");
+  }
+  requireString(input.activeOwner, "activeOwner");
+  requireString(input.ghostOwner, "ghostOwner");
+  requireDecimalString(input.claimsHash, "claimsHash");
+  requireDecimalString(input.rootCommitment, "rootCommitment");
+  requirePositiveUnixTimestampString(input.credentialValidUntil, "credentialValidUntil");
+  const mode = resolveVerificationMode(input.mode);
+  resolveGhostDerivationVersion(input.ghostDerivationVersion, mode);
+  return input;
 }
 
 function defaultInstagramExpiryTs(): bigint {

@@ -3,12 +3,15 @@ import {
   applyHydratedEnvEntries,
   buildStaleIssuerDeploymentMessage,
   deploymentManifestEnvEntries,
+  isPassportPilotRequest,
   verifyRootRecoveryPreflight,
   resolveGhostDerivationVersion,
   resolveRootRecoveryGhostDerivationVersion,
   resolveVerificationMode,
   loadVerificationApiConfigFromEnv,
   normalizePassportClaimsFromQueryResult,
+  PASSPORT_PII_BLIND_PILOT_SCHEMA,
+  validatePassportPilotRequest,
   verifyAndIssueInstagram,
 } from "./service.js";
 import { clearSessionCodesForTest, createSessionCode, exchangeSessionCode } from "./session-code-store.js";
@@ -147,6 +150,50 @@ describe("loadVerificationApiConfigFromEnv", () => {
 
     const config = loadVerificationApiConfigFromEnv();
     expect(config.zkPassportDevMode).toBe(true);
+  });
+});
+
+describe("passport PII-blind pilot request validation", () => {
+  const cleanPilotPayload = {
+    pilotSchema: PASSPORT_PII_BLIND_PILOT_SCHEMA,
+    activeOwner: "0x1111111111111111111111111111111111111111111111111111111111111111",
+    claimsHash: "123",
+    ghostOwner: "0x2222222222222222222222222222222222222222222222222222222222222222",
+    rootCommitment: "456",
+    credentialValidUntil: "1893456000",
+    mode: "rooted" as const,
+    ghostDerivationVersion: "v2_scoped" as const,
+  };
+
+  it("recognizes the pilot schema without accepting zkPassport private artifacts", () => {
+    expect(isPassportPilotRequest(cleanPilotPayload)).toBe(true);
+    expect(validatePassportPilotRequest(cleanPilotPayload)).toEqual(cleanPilotPayload);
+  });
+
+  it("rejects queryResult, committedInputs, outerProof, raw uniqueIdentifier, and passport expiry", () => {
+    for (const key of ["queryResult", "committedInputs", "outerProof", "uniqueIdentifier", "expiryTs"]) {
+      expect(() =>
+        validatePassportPilotRequest({
+          ...cleanPilotPayload,
+          [key]: "leak",
+        } as never),
+      ).toThrow("PII-bearing zkPassport artifact");
+    }
+  });
+
+  it("requires decimal string field values for claims and validity", () => {
+    expect(() =>
+      validatePassportPilotRequest({
+        ...cleanPilotPayload,
+        claimsHash: "not-a-field",
+      }),
+    ).toThrow("claimsHash must be a decimal string");
+    expect(() =>
+      validatePassportPilotRequest({
+        ...cleanPilotPayload,
+        credentialValidUntil: "0",
+      }),
+    ).toThrow("credentialValidUntil must be a positive unix timestamp string");
   });
 });
 
