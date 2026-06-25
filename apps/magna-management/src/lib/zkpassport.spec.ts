@@ -50,17 +50,41 @@ function installMockZkPassport() {
   const queryBuilder = {
     gte: vi.fn(() => queryBuilder),
     disclose: vi.fn(() => queryBuilder),
+    bind: vi.fn(() => queryBuilder),
     done: vi.fn(() => built),
   };
-  mockState.sdk = {
-    request: vi.fn(async () => queryBuilder),
+  const sdk = mockState.sdk ?? {
+    request: vi.fn(),
     cancelRequest: vi.fn(),
     handleEncryptedMessage: vi.fn(async () => undefined),
   };
+  sdk.request = vi.fn(async () => queryBuilder);
+  sdk.cancelRequest = vi.fn();
+  sdk.handleEncryptedMessage = vi.fn(async () => undefined);
+  mockState.sdk = sdk;
   return { built };
 }
 
 describe("startPassportZkRequest", () => {
+  it("requests compressed-evm mode when proofMode is provided", async () => {
+    installMockZkPassport();
+    await startPassportZkRequest({
+      ageThreshold: 18,
+      proofMode: "compressed-evm",
+      metadata: {
+        name: "Magna",
+        logo: "https://magna.test/logo.png",
+        purpose: "Issue",
+      },
+    });
+
+    expect(mockState.sdk?.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: "compressed-evm",
+      }),
+    );
+  });
+
   it("waits for zkPassport onResult so recovery receives uniqueIdentifier", async () => {
     installMockZkPassport();
     const events: string[] = [];
