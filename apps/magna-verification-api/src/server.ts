@@ -3,9 +3,11 @@ import express from "express";
 import {
   createIssuanceContextLoader,
   hydrateVerificationApiEnvFromFiles,
+  isPassportPilotRequest,
   loadVerificationApiConfigFromEnv,
   verifyAndIssueInstagram,
   verifyAndIssuePassport,
+  verifyAndIssuePassportPilot,
   verifyRootRecoveryPreflight,
   verifyAndRefreshRootAuthority,
   type VerifyRootRecoveryPreflightRequest,
@@ -86,7 +88,9 @@ app.post("/api/session/exchange", (req, res) => {
 app.post("/zkpassport/verify-and-issue", async (req, res) => {
   try {
     const payload = req.body as VerifyAndIssueRequest;
-    const result = await verifyAndIssuePassport(config, payload, loadIssuanceContext);
+    const result = isPassportPilotRequest(payload)
+      ? await verifyAndIssuePassportPilot(config, payload, loadIssuanceContext)
+      : await verifyAndIssuePassport(config, payload, loadIssuanceContext);
     res.status(200).json(result);
   } catch (error) {
     const message = errorMessage(error);

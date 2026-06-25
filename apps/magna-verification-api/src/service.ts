@@ -94,7 +94,7 @@ export type VerifyRootRecoveryPreflightRequest = {
   ageThreshold?: number;
 };
 
-export type VerifyAndIssueResponse = {
+type VerifyAndIssuePassportResponse = {
   issuanceTxHash?: string;
   ghostOwner: string;
   rootCommitment: string;
@@ -114,6 +114,24 @@ export type VerifyAndIssueResponse = {
     expiryTs: string;
   };
 };
+
+type VerifyAndIssuePassportPilotResponse = {
+  issuanceTxHash?: string;
+  ghostOwner: string;
+  rootCommitment: string;
+  claimsHash: string;
+  mode: VerificationMode;
+  ghostDerivationVersion: GhostDerivationVersion;
+  issuerAddress: string;
+  orchestratorAddress: string;
+  verificationSummary: {
+    verified: true;
+    pilot: true;
+    piiBlind: true;
+  };
+};
+
+export type VerifyAndIssueResponse = VerifyAndIssuePassportResponse | VerifyAndIssuePassportPilotResponse;
 
 export type VerifyAndIssueInstagramResponse = {
   issuanceTxHash?: string;
@@ -942,6 +960,55 @@ export async function verifyAndIssuePassport(
       minAgeProven: normalized.claims.minAgeProven,
       passportExpiryDate: normalized.passportExpiryDate,
       expiryTs: normalized.claims.expiryTs.toString(),
+    },
+  };
+}
+
+export async function verifyAndIssuePassportPilot(
+  config: VerificationApiConfig,
+  input: VerifyAndIssuePassportPilotRequest,
+  contextLoader: () => Promise<IssuanceContext>,
+): Promise<VerifyAndIssueResponse> {
+  const validated = validatePassportPilotRequest(input);
+  const mode = resolveVerificationMode(validated.mode);
+  const ghostDerivationVersion = resolveGhostDerivationVersion(validated.ghostDerivationVersion, mode);
+  const context = await contextLoader();
+  const activeOwnerAddress = AztecAddress.fromString(validated.activeOwner);
+  const ghostOwnerAddress = AztecAddress.fromString(validated.ghostOwner);
+  const claimsHash = new Fr(BigInt(validated.claimsHash));
+  const credentialValidUntil = BigInt(validated.credentialValidUntil);
+
+  const interaction =
+    mode === "rooted"
+      ? context.issuer.methods.register_rooted_passport_v2(
+          activeOwnerAddress,
+          ghostOwnerAddress,
+          new Fr(BigInt(validated.rootCommitment)),
+          claimsHash,
+          credentialValidUntil,
+        )
+      : context.issuer.methods.register_credential_v2(
+          activeOwnerAddress,
+          ghostOwnerAddress,
+          claimsHash,
+          CredentialType.Passport,
+          credentialValidUntil,
+        );
+
+  const receipt = await interaction.send({ from: context.orchestratorAddress });
+  return {
+    issuanceTxHash: readTxHash(receipt),
+    ghostOwner: validated.ghostOwner,
+    rootCommitment: validated.rootCommitment,
+    claimsHash: validated.claimsHash,
+    mode,
+    ghostDerivationVersion,
+    issuerAddress: config.issuerAddress,
+    orchestratorAddress: context.orchestratorAddress.toString(),
+    verificationSummary: {
+      verified: true,
+      pilot: true,
+      piiBlind: true,
     },
   };
 }

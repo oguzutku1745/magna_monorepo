@@ -218,6 +218,57 @@ describe("passport PII-blind pilot request validation", () => {
   });
 });
 
+describe("verifyAndIssuePassportPilot", () => {
+  it("registers using v2 contract methods and never returns normalized passport PII", async () => {
+    const send = vi.fn(async () => ({ txHash: "0xpilot" }));
+    const context = {
+      orchestratorAddress: {
+        toString: () => "0xorchestrator",
+      },
+      issuer: {
+        methods: {
+          register_rooted_passport_v2: vi.fn(() => ({ send })),
+        },
+      },
+    };
+
+    const { verifyAndIssuePassportPilot } = await import("./service.js");
+    const result = await verifyAndIssuePassportPilot(
+      {
+        port: 4310,
+        allowedOrigin: "*",
+        zkPassportDomain: "localhost",
+        zkPassportScope: "magna-passport-onboarding",
+        zkPassportDevMode: true,
+        aztecNodeUrl: "http://localhost:8080",
+        issuerAddress: "0xissuer",
+        localTestAccountIndex: 0,
+      },
+      {
+        pilotSchema: PASSPORT_PII_BLIND_PILOT_SCHEMA,
+        activeOwner: "0x1111111111111111111111111111111111111111111111111111111111111111",
+        claimsHash: "123",
+        ghostOwner: "0x2222222222222222222222222222222222222222222222222222222222222222",
+        rootCommitment: "456",
+        credentialValidUntil: "1893456000",
+        mode: "rooted",
+        ghostDerivationVersion: "v2_scoped",
+      },
+      async () => context as never,
+    );
+
+    expect(result.claimsHash).toBe("123");
+    expect(result.rootCommitment).toBe("456");
+    expect(result.verificationSummary).toEqual({
+      verified: true,
+      pilot: true,
+      piiBlind: true,
+    });
+    expect("normalizedClaims" in result).toBe(false);
+    expect(context.issuer.methods.register_rooted_passport_v2).toHaveBeenCalled();
+  });
+});
+
 describe("applyHydratedEnvEntries", () => {
   it("overrides stale inherited env values with repo file values", () => {
     const target = {
