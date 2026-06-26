@@ -16,11 +16,12 @@
     "@aztec/wallets": "5.0.0-rc.1",
     "@magna/client": "0.2.0",
     "@magna/contracts-bindings": "0.1.0",
+    "@magna/instagram-proof": "0.1.0",
+    "@magna/passport-wrapper-proof": "0.1.0",
+    "@magna/wallet": "0.1.0",
     "@zkpassport/sdk": "0.15.1",
     "cors": "latest",
-    "express": "latest",
-    "@magna/instagram-proof": "0.1.0",
-    "@magna/wallet": "0.1.0"
+    "express": "latest"
   },
   "devDependencies": {
     "@types/cors": "latest",

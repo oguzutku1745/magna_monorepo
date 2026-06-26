@@ -3,7 +3,9 @@ import {
   applyHydratedEnvEntries,
   buildStaleIssuerDeploymentMessage,
   deploymentManifestEnvEntries,
+  isPassportA1Request,
   isPassportPilotRequest,
+  PASSPORT_A1_SCHEMA,
   verifyRootRecoveryPreflight,
   resolveGhostDerivationVersion,
   resolveRootRecoveryGhostDerivationVersion,
@@ -11,7 +13,10 @@ import {
   loadVerificationApiConfigFromEnv,
   normalizePassportClaimsFromQueryResult,
   PASSPORT_PII_BLIND_PILOT_SCHEMA,
+  selectVerifyAndIssuePassportHandler,
+  validatePassportA1Request,
   validatePassportPilotRequest,
+  verifyAndIssuePassportA1,
   verifyAndIssueInstagram,
 } from "./service.js";
 import { clearSessionCodesForTest, createSessionCode, exchangeSessionCode } from "./session-code-store.js";
@@ -218,6 +223,58 @@ describe("passport PII-blind pilot request validation", () => {
   });
 });
 
+describe("passport A1 request validation and dispatch", () => {
+  const cleanA1Payload = {
+    schema: PASSPORT_A1_SCHEMA,
+    activeOwner: "0x1111111111111111111111111111111111111111111111111111111111111111",
+    ghostOwner: "0x2222222222222222222222222222222222222222222222222222222222222222",
+    rootCommitment: "456",
+    credentialValidUntil: "1893456000",
+    wrapperProof: { proof: "wrapper-proof" },
+    wrapperPublicInputs: ["123", "789", "101112", "18", "1893456000", "999"],
+    claimsHash: "123",
+    mode: "rooted" as const,
+    ghostDerivationVersion: "v2_scoped" as const,
+  };
+
+  it("recognizes and validates the production A1 schema", () => {
+    expect(isPassportA1Request(cleanA1Payload)).toBe(true);
+    expect(validatePassportA1Request(cleanA1Payload)).toEqual(cleanA1Payload);
+  });
+
+  it("rejects raw zkPassport artifacts in A1 payloads", () => {
+    for (const key of ["queryResult", "committedInputs", "outerProof", "uniqueIdentifier", "expiryTs"]) {
+      expect(() =>
+        validatePassportA1Request({
+          ...cleanA1Payload,
+          [key]: "leak",
+        } as never),
+      ).toThrow("PII-bearing zkPassport artifact");
+    }
+    expect(() =>
+      validatePassportA1Request({
+        ...cleanA1Payload,
+        wrapperProof: {
+          publicInputs: ["allowed-wrapper-proof-shape"],
+          outerProof: "raw-zkpassport-proof",
+        },
+      }),
+    ).toThrow("PII-bearing zkPassport artifact");
+  });
+
+  it("selects A1 before pilot and legacy handlers", () => {
+    expect(selectVerifyAndIssuePassportHandler(cleanA1Payload)).toBe("passport-a1");
+    expect(
+      selectVerifyAndIssuePassportHandler({
+        pilotSchema: PASSPORT_PII_BLIND_PILOT_SCHEMA,
+      }),
+    ).toBe("passport-pii-blind-pilot");
+    expect(selectVerifyAndIssuePassportHandler({ proofs: [], originalQuery: {}, queryResult: {} })).toBe(
+      "passport-legacy",
+    );
+  });
+});
+
 describe("verifyAndIssuePassportPilot", () => {
   it("registers using v2 contract methods and never returns normalized passport PII", async () => {
     const send = vi.fn(async () => ({ txHash: "0xpilot" }));
@@ -305,6 +362,162 @@ describe("verifyAndIssuePassportPilot", () => {
         },
       ),
     ).rejects.toThrow("credentialValidUntil cannot exceed 30 days from server time");
+    expect(contextLoader).not.toHaveBeenCalled();
+  });
+});
+
+describe("verifyAndIssuePassportA1", () => {
+  const config = {
+    port: 4310,
+    allowedOrigin: "*",
+    zkPassportDomain: "localhost",
+    zkPassportScope: "magna-passport-onboarding",
+    zkPassportDevMode: false,
+    aztecNodeUrl: "http://localhost:8080",
+    issuerAddress: "0xissuer",
+    localTestAccountIndex: 0,
+  };
+  const cleanA1Payload = {
+    schema: PASSPORT_A1_SCHEMA,
+    activeOwner: "0x1111111111111111111111111111111111111111111111111111111111111111",
+    ghostOwner: "0x2222222222222222222222222222222222222222222222222222222222222222",
+    rootCommitment: "456",
+    credentialValidUntil: "1893456000",
+    wrapperProof: { proof: "wrapper-proof" },
+    wrapperPublicInputs: ["123", "789", "101112", "18", "1893456000", "999"],
+    mode: "rooted" as const,
+    ghostDerivationVersion: "v2_scoped" as const,
+  };
+
+  function contextWithV2Issuer() {
+    const send = vi.fn(async () => ({ receipt: { txHash: "0xa1" } }));
+    const registerRootedPassportV2 = vi.fn(() => ({ send }));
+    const registerCredentialV2 = vi.fn(() => ({ send }));
+    return {
+      context: {
+        orchestratorAddress: {
+          toString: () => "0xorchestrator",
+        },
+        issuer: {
+          methods: {
+            register_rooted_passport_v2: registerRootedPassportV2,
+            register_credential_v2: registerCredentialV2,
+          },
+        },
+      },
+      send,
+      registerRootedPassportV2,
+      registerCredentialV2,
+    };
+  }
+
+  it("verifies wrapper proof and registers rooted A1 issuance with v2 values", async () => {
+    const { context, registerRootedPassportV2, registerCredentialV2 } = contextWithV2Issuer();
+    const verifyWrapperProof = vi.fn(async () => true);
+
+    const result = await verifyAndIssuePassportA1(config, cleanA1Payload, async () => context as never, {
+      verifyWrapperProof,
+    });
+
+    expect(verifyWrapperProof).toHaveBeenCalledWith(cleanA1Payload.wrapperProof);
+    expect(registerRootedPassportV2).toHaveBeenCalledOnce();
+    expect(registerCredentialV2).not.toHaveBeenCalled();
+    expect(result.issuanceTxHash).toBe("0xa1");
+    expect(result.claimsHash).toBe("123");
+    expect(result.rootCommitment).toBe("456");
+    expect(result.verificationSummary).toEqual({
+      verified: true,
+      passportA1: true,
+      piiBlind: true,
+    });
+    expect("normalizedClaims" in result).toBe(false);
+  });
+
+  it("verifies wrapper proof and registers passport-mode A1 issuance with v2 values", async () => {
+    const { context, registerRootedPassportV2, registerCredentialV2 } = contextWithV2Issuer();
+    const verifyWrapperProof = vi.fn(async () => true);
+
+    const result = await verifyAndIssuePassportA1(
+      config,
+      {
+        ...cleanA1Payload,
+        mode: "passport",
+        ghostDerivationVersion: undefined,
+      },
+      async () => context as never,
+      { verifyWrapperProof },
+    );
+
+    expect(registerCredentialV2).toHaveBeenCalledOnce();
+    expect(registerRootedPassportV2).not.toHaveBeenCalled();
+    expect(result.mode).toBe("passport");
+    expect(result.ghostDerivationVersion).toBe("v1_legacy_unscoped");
+    expect("normalizedClaims" in result).toBe(false);
+  });
+
+  it("rejects invalid wrapper proofs before loading contract context", async () => {
+    const contextLoader = vi.fn(async () => {
+      throw new Error("context should not be loaded for invalid wrapper proofs");
+    });
+
+    await expect(
+      verifyAndIssuePassportA1(config, cleanA1Payload, contextLoader as never, {
+        verifyWrapperProof: async () => false,
+      }),
+    ).rejects.toThrow("Passport A1 wrapper proof verification failed");
+    expect(contextLoader).not.toHaveBeenCalled();
+  });
+
+  it("rejects mismatched claims hash before wrapper verification", async () => {
+    const verifyWrapperProof = vi.fn(async () => true);
+    const contextLoader = vi.fn(async () => {
+      throw new Error("context should not be loaded for mismatched claims");
+    });
+
+    await expect(
+      verifyAndIssuePassportA1(
+        config,
+        {
+          ...cleanA1Payload,
+          claimsHash: "999",
+        },
+        contextLoader as never,
+        { verifyWrapperProof },
+      ),
+    ).rejects.toThrow("claimsHash must match wrapper public outputs");
+    expect(verifyWrapperProof).not.toHaveBeenCalled();
+    expect(contextLoader).not.toHaveBeenCalled();
+  });
+
+  it("rejects mismatched credential validity before wrapper verification", async () => {
+    const verifyWrapperProof = vi.fn(async () => true);
+    const contextLoader = vi.fn(async () => {
+      throw new Error("context should not be loaded for mismatched validity");
+    });
+
+    await expect(
+      verifyAndIssuePassportA1(
+        config,
+        {
+          ...cleanA1Payload,
+          credentialValidUntil: "1893456001",
+        },
+        contextLoader as never,
+        { verifyWrapperProof },
+      ),
+    ).rejects.toThrow("credentialValidUntil must match wrapper public outputs");
+    expect(verifyWrapperProof).not.toHaveBeenCalled();
+    expect(contextLoader).not.toHaveBeenCalled();
+  });
+
+  it("fails closed by default without the wrapper package development opt-in", async () => {
+    const contextLoader = vi.fn(async () => {
+      throw new Error("context should not be loaded when wrapper verifier is not production-ready");
+    });
+
+    await expect(verifyAndIssuePassportA1(config, cleanA1Payload, contextLoader as never)).rejects.toThrow(
+      "Passport wrapper verification is blocked",
+    );
     expect(contextLoader).not.toHaveBeenCalled();
   });
 });
