@@ -6,6 +6,7 @@ import {
   computePassportExpiryCommitment,
   computePassportNationalityCommitment,
   computeZkPassportParameterCommitmentManifest,
+  buildPassportWrapperWitnessFromZkPassportResult,
   poseidon2FieldHasher,
   type MinimalZkPassportWitness,
 } from "@magna/wallet";
@@ -201,6 +202,37 @@ describe("buildPassportWrapperInputs", () => {
           },
         }),
       /bindCommitment does not match/,
+    );
+  });
+
+  it("accepts a wrapper witness normalized by the wallet safe-witness helper", async () => {
+    const walletWitness = await buildPassportWrapperWitnessFromZkPassportResult(
+      {
+        outerProof: { proof: { bytes: [1, 2, 3] }, verificationKey: { key: "vk" } },
+        outerPublicInputs: ["101", "202"],
+      },
+      {
+        nationalityAlpha3: "TUR",
+        expiryTs: 1_942_358_399n,
+        minAgeProven: 18,
+        credentialValidUntil: 1_893_456_000n,
+        agePredicate: { minAge: 18, maxAge: 255 },
+        bind: { customData: "magna-wrapper-bind" },
+        nationalityBlind: 111n,
+        expiryBlind: 222n,
+        scopedNullifier: 999n,
+      },
+    );
+
+    const result = await buildPassportWrapperInputs(walletWitness);
+
+    assert.equal(result.outputs.minAgeProven, 18);
+    assert.equal(result.outputs.credentialValidUntil, "1893456000");
+    assert.equal(result.outputs.scopedNullifier, "999");
+    assert.equal(result.metadata.zkPassportOuterPublicInputsCount, 2);
+    assert.deepEqual(
+      result.metadata.parameterCommitmentManifest,
+      walletWitness.expectedParameterCommitmentManifest,
     );
   });
 });
