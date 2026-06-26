@@ -1,0 +1,8 @@
+[package]
+name = "magna_passport_wrapper_proof"
+type = "bin"
+authors = ["Magna Team"]
+compiler_version = ">=0.35.0"
+
+[dependencies]
+aztec = { git = "https://github.com/AztecProtocol/aztec-packages/", tag = "v5.0.0-rc.1", directory = "noir-projects/aztec-nr/aztec" }

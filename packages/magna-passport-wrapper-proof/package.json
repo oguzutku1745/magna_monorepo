@@ -1,0 +1,25 @@
+{
+  "name": "@magna/passport-wrapper-proof",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "compile:circuit": "${AZTEC_NARGO_BIN:-aztec-nargo} compile --program-dir circuit",
+    "test": "npm run build && node ../../scripts/node-test-runner.mjs 'dist/**/*.spec.js'",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aztec/bb.js": "0.84.0",
+    "@magna/core": "0.1.0",
+    "@magna/wallet": "0.1.0",
+    "@noir-lang/noir_js": "1.0.0-beta.3",
+    "@noir-lang/types": "1.0.0-beta.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.5",
+    "typescript": "^5.9.3"
+  }
+}
