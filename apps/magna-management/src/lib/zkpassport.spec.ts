@@ -27,7 +27,11 @@ vi.mock("@zkpassport/sdk", () => ({
   ZKPassport: vi.fn(() => mockState.sdk),
 }));
 
-import { startPassportZkRequest, verifyAndIssuePassportPilotThroughBackend } from "./zkpassport";
+import {
+  startPassportZkRequest,
+  verifyAndIssuePassportA1ThroughBackend,
+  verifyAndIssuePassportPilotThroughBackend,
+} from "./zkpassport";
 
 function installMockZkPassport() {
   mockState.callbacks = {};
@@ -83,6 +87,22 @@ describe("startPassportZkRequest", () => {
         mode: "compressed-evm",
       }),
     );
+  });
+
+  it("binds A1 custom data when provided", async () => {
+    installMockZkPassport();
+    await startPassportZkRequest({
+      ageThreshold: 18,
+      a1BindCustomData: "magna-passport-a1:scope:0xactive",
+      metadata: {
+        name: "Magna",
+        logo: "https://magna.test/logo.png",
+        purpose: "Issue",
+      },
+    });
+
+    const queryBuilder = await mockState.sdk?.request.mock.results[0].value;
+    expect(queryBuilder.bind).toHaveBeenCalledWith("custom_data", "magna-passport-a1:scope:0xactive");
   });
 
   it("waits for zkPassport onResult so recovery receives uniqueIdentifier", async () => {
@@ -166,5 +186,51 @@ describe("verifyAndIssuePassportPilotThroughBackend", () => {
     expect(body.outerProof).toBeUndefined();
     expect(body.expiryTs).toBeUndefined();
     expect(body.pilotSchema).toBe("passport-pii-blind-v0");
+  });
+
+  it("posts A1 issuance payload without raw zkPassport artifacts", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        issuanceTxHash: "0xtx",
+        ghostOwner: "0xghost",
+        rootCommitment: "12345",
+        claimsHash: "67890",
+        mode: "rooted",
+        ghostDerivationVersion: "v2_scoped",
+        issuerAddress: "0xissuer",
+        orchestratorAddress: "0xorchestrator",
+        verificationSummary: {
+          verified: true,
+          passportA1: true,
+          piiBlind: true,
+        },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await verifyAndIssuePassportA1ThroughBackend("http://localhost:4310", {
+      schema: "passport-a1-v1",
+      activeOwner: "0xactive",
+      ghostOwner: "0xghost",
+      rootCommitment: "12345",
+      credentialValidUntil: "1893456000",
+      wrapperProof: { proof: "wrapper-proof", publicInputs: ["67890", "2", "3", "21", "1893456000", "0"] },
+      wrapperPublicInputs: ["67890", "2", "3", "21", "1893456000", "0"],
+      claimsHash: "67890",
+      mode: "rooted",
+      ghostDerivationVersion: "v2_scoped",
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(body.schema).toBe("passport-a1-v1");
+    expect(body.queryResult).toBeUndefined();
+    expect(body.committedInputs).toBeUndefined();
+    expect(body.originalQuery).toBeUndefined();
+    expect(body.proofs).toBeUndefined();
+    expect(body.outerPublicInputs).toBeUndefined();
+    expect(body.expiryTs).toBeUndefined();
+    expect(body.nationality).toBeUndefined();
+    expect(body.uniqueIdentifier).toBeUndefined();
   });
 });

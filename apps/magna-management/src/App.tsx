@@ -33,6 +33,7 @@ import {
   startPassportZkRequest,
   verifyAndRefreshRootAuthorityThroughBackend,
   verifyAndIssueInstagramThroughBackend,
+  verifyAndIssuePassportA1ThroughBackend,
   verifyAndIssuePassportPilotThroughBackend,
   verifyAndIssueThroughBackend,
   verifyRootRecoveryPreflightThroughBackend,
@@ -41,8 +42,10 @@ import {
 } from "./lib/zkpassport";
 import {
   issuePassportThroughConfiguredBackend,
+  passportA1BindCustomData,
   passportPilotCredentialUsageBlock,
   proofModeForPassportIssuanceKind,
+  type PassportA1LocalWitness,
 } from "./lib/passport-issuance";
 
 type Role = "user" | "company";
@@ -213,6 +216,9 @@ export function passportCredentialAuthenticityLabel(
   if (ref.kind !== "passport") {
     return undefined;
   }
+  if (ref.issuanceKind === "a1") {
+    return "passport A1 wrapper proof (PII-blind)";
+  }
   if (ref.issuanceKind === "pilot") {
     return "PII-blind pilot (non-production; not passport-authentic)";
   }
@@ -251,6 +257,7 @@ export function App() {
   const [zkRequest, setZkRequest] = useState<ActiveZkPassportRequest | null>(null);
   const [zkStage, setZkStage] = useState("idle");
   const [zkProofCount, setZkProofCount] = useState(0);
+  const [passportA1LocalWitness, setPassportA1LocalWitness] = useState<PassportA1LocalWitness | null>(null);
   const [ageThreshold, setAgeThreshold] = useState("18");
   const [instagramHandle, setInstagramHandle] = useState("");
   const [instagramEmailFile, setInstagramEmailFile] = useState<File | null>(null);
@@ -650,15 +657,26 @@ export function App() {
       appendLog(`zkPassport issuance unavailable: ${message}`);
       return;
     }
+    const a1BindCustomData =
+      env.zkPassportIssuanceKind === "a1"
+        ? passportA1BindCustomData({
+            activeOwner: activeSession.activeAccount.address,
+            requestScope: env.zkPassportRequestScope,
+          })
+        : undefined;
 
     setZkStage("creating_request");
     setZkProofCount(0);
+    setPassportA1LocalWitness(null);
     appendLog("zkPassport issuance flow started.");
     if (env.zkPassportDevMode) {
       appendLog("zkPassport dev mode enabled (mock proofs allowed).");
     }
     if (env.zkPassportIssuanceKind === "pilot") {
       appendLog("PII-blind pilot issuance enabled (non-production; not passport-authentic).");
+    }
+    if (env.zkPassportIssuanceKind === "a1") {
+      appendLog("Passport A1 issuance enabled. zkPassport will use compressed proof mode and local wrapper proving.");
     }
     let finalResultTimeout: number | undefined;
     let timedOutWaitingForResult = false;
@@ -667,6 +685,7 @@ export function App() {
       startPassportZkRequest({
         ageThreshold: parsedAge,
         proofMode,
+        a1BindCustomData,
         metadata: {
           name: env.zkPassportRequestName,
           logo: env.zkPassportRequestLogo,
@@ -727,12 +746,30 @@ export function App() {
             ageThreshold: parsedAge,
             mode: env.zkPassportPrimaryIssuanceMode,
             ghostDerivationVersion: env.zkPassportGhostDerivationVersion,
+            requestScope: env.zkPassportRequestScope,
+            a1BindCustomData,
           },
           {
             verifyAndIssueThroughBackend,
             verifyAndIssuePassportPilotThroughBackend,
+            verifyAndIssuePassportA1ThroughBackend,
+            onA1Progress: event => {
+              if (event.type === "building_witness") {
+                setZkStage("building_a1_witness");
+                appendLog("Building local A1 wrapper witness.");
+              } else if (event.type === "generating_wrapper_proof") {
+                setZkStage("generating_a1_wrapper_proof");
+                appendLog("Generating local A1 wrapper proof.");
+              } else {
+                setZkStage("submitting_to_backend");
+                appendLog("Submitting A1-safe public payload to verification API.");
+              }
+            },
           },
         );
+        if (issueResult.issuanceKind === "a1") {
+          setPassportA1LocalWitness(issueResult.localWitness);
+        }
         const issued = issueResult.response;
         const normalizedClaims =
           issueResult.issuanceKind === "legacy" ? issueResult.response.normalizedClaims : undefined;
@@ -765,13 +802,17 @@ export function App() {
         setNotice({
           tone: "success",
           text:
-            issueResult.issuanceKind === "pilot"
+            issueResult.issuanceKind === "a1"
+              ? "Passport A1 credential issued and stored for this wallet. Local witness is held in memory only."
+              : issueResult.issuanceKind === "pilot"
               ? "PII-blind pilot credential issued and stored for this wallet (non-production; not passport-authentic)."
               : "zkPassport credential issued and stored for this wallet.",
         });
         setZkStage("issued");
         appendLog(
-          issueResult.issuanceKind === "pilot"
+          issueResult.issuanceKind === "a1"
+            ? `Passport A1 credential issued. Local witness retained in memory only. Claims hash: ${issued.claimsHash}`
+            : issueResult.issuanceKind === "pilot"
             ? `PII-blind pilot credential issued (non-production; not passport-authentic). Claims hash: ${issued.claimsHash}`
             : `zkPassport credential issued. Claims hash: ${issued.claimsHash}`,
         );
@@ -1173,6 +1214,8 @@ export function App() {
             zkRequest={zkRequest}
             zkStage={zkStage}
             zkProofCount={zkProofCount}
+            zkPassportIssuanceKind={env.zkPassportIssuanceKind}
+            passportA1LocalWitnessAvailable={Boolean(passportA1LocalWitness)}
             ageThreshold={ageThreshold}
             setAgeThreshold={setAgeThreshold}
             instagramHandle={instagramHandle}
@@ -1620,6 +1663,8 @@ function Issuance(props: {
   zkRequest: ActiveZkPassportRequest | null;
   zkStage: string;
   zkProofCount: number;
+  zkPassportIssuanceKind: "legacy" | "pilot" | "a1";
+  passportA1LocalWitnessAvailable: boolean;
   ageThreshold: string;
   setAgeThreshold: (value: string) => void;
   instagramHandle: string;
@@ -1646,6 +1691,22 @@ function Issuance(props: {
           </button>
           <div className={`zk-status-card ${status === "success" ? "success" : status === "failed" ? "danger" : ""}`}>
             <KeyValue label="Status" value={status} />
+            <KeyValue label="zkPassport stage" value={props.zkStage} />
+            <KeyValue label="Proofs generated" value={String(props.zkProofCount)} />
+            <KeyValue
+              label="A1 wrapper status"
+              value={
+                props.zkPassportIssuanceKind === "a1"
+                  ? "fail-closed unless production wrapper proving is available"
+                  : "not selected"
+              }
+            />
+            {props.zkPassportIssuanceKind === "a1" ? (
+              <KeyValue
+                label="A1 local witness"
+                value={props.passportA1LocalWitnessAvailable ? "available in memory only" : "not retained"}
+              />
+            ) : null}
             <p>{zkStatusMessage(status)}</p>
           </div>
           {props.zkRequest ? (

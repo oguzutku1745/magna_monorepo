@@ -45,9 +45,11 @@ import {
   startPassportZkRequest,
   verifyAndRefreshRootAuthorityThroughBackend,
   verifyRootRecoveryPreflightThroughBackend,
+  verifyAndIssuePassportA1ThroughBackend,
   verifyAndIssuePassportPilotThroughBackend,
   verifyAndIssueThroughBackend,
   type ActiveZkPassportRequest,
+  type VerifyAndIssuePassportA1Response as ZkPassportA1IssueResponse,
   type VerifyAndIssuePassportPilotResponse as ZkPassportPilotIssueResponse,
   type VerifyAndIssueResponse as ZkPassportIssueResponse,
   type VerifyRootRecoveryPreflightResponse as ZkPassportRecoveryPreflightResponse,
@@ -56,8 +58,10 @@ import {
 } from "./lib/zkpassport";
 import {
   issuePassportThroughConfiguredBackend,
+  passportA1BindCustomData,
   passportPilotCredentialUsageBlock,
   proofModeForPassportIssuanceKind,
+  type PassportA1LocalWitness,
   type PassportIssuanceKind,
 } from "./lib/passport-issuance";
 
@@ -176,7 +180,8 @@ type LastIssuedPassportRef = {
 
 type ZkPassportIssueState =
   | (ZkPassportIssueResponse & { issuanceKind: "legacy" })
-  | (ZkPassportPilotIssueResponse & { issuanceKind: "pilot" });
+  | (ZkPassportPilotIssueResponse & { issuanceKind: "pilot" })
+  | (ZkPassportA1IssueResponse & { issuanceKind: "a1" });
 
 function fingerprintFromChainContext(
   chain: { chainId: string; version: string },
@@ -347,6 +352,7 @@ export function App() {
   const [activeRecoveryRequest, setActiveRecoveryRequest] = useState<ActiveZkPassportRequest | null>(null);
   const [zkPassportStage, setZkPassportStage] = useState<string>("idle");
   const [zkPassportProofCount, setZkPassportProofCount] = useState<number>(0);
+  const [passportA1LocalWitness, setPassportA1LocalWitness] = useState<PassportA1LocalWitness | null>(null);
   const [ghostContextStage, setGhostContextStage] = useState<string>("idle");
   const [ghostContextProofCount, setGhostContextProofCount] = useState<number>(0);
   const [zkPassportLastIssue, setZkPassportLastIssue] = useState<ZkPassportIssueState | null>(null);
@@ -966,9 +972,14 @@ export function App() {
       appendLog(`zkPassport issuance unavailable: ${message}`);
       return;
     }
+    const a1BindCustomData =
+      env.zkPassportIssuanceKind === "a1"
+        ? passportA1BindCustomData({ activeOwner: activeAccount.address, requestScope: env.zkPassportRequestScope })
+        : undefined;
 
     setError(null);
     setGhostLifecycle(null);
+    setPassportA1LocalWitness(null);
     setZkPassportProofCount(0);
     setZkPassportStage("creating_request");
     setStatusMessage("Creating zkPassport request...");
@@ -979,11 +990,15 @@ export function App() {
     if (env.zkPassportIssuanceKind === "pilot") {
       appendLog("PII-blind pilot issuance enabled (non-production; not passport-authentic).");
     }
+    if (env.zkPassportIssuanceKind === "a1") {
+      appendLog("Passport A1 issuance enabled. zkPassport will use compressed proof mode and local wrapper proving.");
+    }
 
     try {
       const request = await startPassportZkRequest({
         ageThreshold,
         proofMode,
+        a1BindCustomData,
         metadata: {
           name: env.zkPassportRequestName,
           logo: env.zkPassportRequestLogo,
@@ -1090,10 +1105,28 @@ export function App() {
                 mode: env.zkPassportPrimaryIssuanceMode,
                 ghostDerivationVersion: env.zkPassportGhostDerivationVersion,
                 preparedGhostOwner: preparedGhost?.address,
+                requestScope: env.zkPassportRequestScope,
+                a1BindCustomData,
               },
               {
                 verifyAndIssueThroughBackend,
                 verifyAndIssuePassportPilotThroughBackend,
+                verifyAndIssuePassportA1ThroughBackend,
+                onA1Progress: event => {
+                  if (event.type === "building_witness") {
+                    setZkPassportStage("building_a1_witness");
+                    setStatusMessage("Building local A1 wrapper witness.");
+                    appendLog("Building local A1 wrapper witness");
+                  } else if (event.type === "generating_wrapper_proof") {
+                    setZkPassportStage("generating_a1_wrapper_proof");
+                    setStatusMessage("Generating local A1 wrapper proof.");
+                    appendLog("Generating local A1 wrapper proof");
+                  } else {
+                    setZkPassportStage("submitting_to_backend");
+                    setStatusMessage("Submitting A1-safe public payload to verification API.");
+                    appendLog("Submitting A1-safe public payload to verification API");
+                  }
+                },
               },
             ),
           );
@@ -1131,28 +1164,51 @@ export function App() {
               );
             }
           } else {
-            const issued = issueResult.response;
-            setZkPassportLastIssue({ ...issued, issuanceKind: "pilot" });
-            setLastIssuedPassportRef({
-              ownerAddress: activeAccount.address,
-              claimsHash: issued.claimsHash,
-              mode: issued.mode,
-              issuanceKind: "pilot",
-              rootCommitment: issued.mode === "rooted" ? issued.rootCommitment : undefined,
-              ghostOwner: issued.ghostOwner,
-              ghostDerivationVersion: issued.ghostDerivationVersion,
-            });
-            setGhostOwner(issued.ghostOwner);
-            setStatusMessage(
-              `PII-blind pilot credential issued (non-production; not passport-authentic). Claims hash: ${issued.claimsHash}`,
-            );
-            appendLog(
-              `PII-blind pilot issuance completed (non-production; not passport-authentic). Claims hash: ${issued.claimsHash}`,
-            );
-            if (preparedGhost && preparedGhost.address !== issued.ghostOwner) {
-              throw new Error(
-                `Ghost derivation mismatch: backend=${issued.ghostOwner} frontend=${preparedGhost.address}`,
+            if (issueResult.issuanceKind === "a1") {
+              const issued = issueResult.response;
+              setZkPassportLastIssue({ ...issued, issuanceKind: "a1" });
+              setPassportA1LocalWitness(issueResult.localWitness);
+              setLastIssuedPassportRef({
+                ownerAddress: activeAccount.address,
+                claimsHash: issued.claimsHash,
+                mode: issued.mode,
+                issuanceKind: "a1",
+                rootCommitment: issued.mode === "rooted" ? issued.rootCommitment : undefined,
+                ghostOwner: issued.ghostOwner,
+                ghostDerivationVersion: issued.ghostDerivationVersion,
+              });
+              setGhostOwner(issued.ghostOwner);
+              setStatusMessage(`Passport A1 credential issued. Local witness is held in memory only. Claims hash: ${issued.claimsHash}`);
+              appendLog(`Passport A1 issuance completed. Local witness retained in memory only. Claims hash: ${issued.claimsHash}`);
+              if (preparedGhost && preparedGhost.address !== issued.ghostOwner) {
+                throw new Error(
+                  `Ghost derivation mismatch: backend=${issued.ghostOwner} frontend=${preparedGhost.address}`,
+                );
+              }
+            } else {
+              const issued = issueResult.response;
+              setZkPassportLastIssue({ ...issued, issuanceKind: "pilot" });
+              setLastIssuedPassportRef({
+                ownerAddress: activeAccount.address,
+                claimsHash: issued.claimsHash,
+                mode: issued.mode,
+                issuanceKind: "pilot",
+                rootCommitment: issued.mode === "rooted" ? issued.rootCommitment : undefined,
+                ghostOwner: issued.ghostOwner,
+                ghostDerivationVersion: issued.ghostDerivationVersion,
+              });
+              setGhostOwner(issued.ghostOwner);
+              setStatusMessage(
+                `PII-blind pilot credential issued (non-production; not passport-authentic). Claims hash: ${issued.claimsHash}`,
               );
+              appendLog(
+                `PII-blind pilot issuance completed (non-production; not passport-authentic). Claims hash: ${issued.claimsHash}`,
+              );
+              if (preparedGhost && preparedGhost.address !== issued.ghostOwner) {
+                throw new Error(
+                  `Ghost derivation mismatch: backend=${issued.ghostOwner} frontend=${preparedGhost.address}`,
+                );
+              }
             }
           }
         })
@@ -2337,6 +2393,14 @@ export function App() {
               label="Proof mode"
               value={env.zkPassportDevMode ? "dev mode (mock proofs allowed)" : "strict mode (real proofs only)"}
             />
+            <KeyValue
+              label="A1 wrapper status"
+              value={
+                env.zkPassportIssuanceKind === "a1"
+                  ? "fail-closed unless production wrapper proving is available"
+                  : "not selected"
+              }
+            />
             {activeZkRequest ? <KeyValue label="Request id" value={activeZkRequest.requestId} /> : null}
           </div>
           {activeZkRequest ? (
@@ -2360,7 +2424,9 @@ export function App() {
               <KeyValue
                 label="Authenticity"
                 value={
-                  zkPassportLastIssue.issuanceKind === "pilot"
+                  zkPassportLastIssue.issuanceKind === "a1"
+                    ? "passport A1 wrapper proof (PII-blind)"
+                    : zkPassportLastIssue.issuanceKind === "pilot"
                     ? "PII-blind pilot (non-production; not passport-authentic)"
                     : "legacy zkPassport backend verification"
                 }
@@ -2369,6 +2435,12 @@ export function App() {
               <KeyValue label="Root commitment" value={zkPassportLastIssue.rootCommitment} />
               <KeyValue label="Issuer mode" value={zkPassportLastIssue.mode} />
               <KeyValue label="Ghost derivation version" value={zkPassportLastIssue.ghostDerivationVersion} />
+              {zkPassportLastIssue.issuanceKind === "a1" ? (
+                <KeyValue
+                  label="A1 local witness"
+                  value={passportA1LocalWitness ? "available in memory only" : "not retained"}
+                />
+              ) : null}
             </div>
           ) : null}
           {ghostLifecycle ? (
@@ -3043,6 +3115,14 @@ function ZkPassportRequestEditor(props: {
           <p className="muted-text">
             Pilot credentials are non-production and not passport-authentic. The pilot response intentionally omits
             normalized passport claims.
+          </p>
+        </div>
+      ) : lastIssue?.issuanceKind === "a1" ? (
+        <div className="sub-card">
+          <p className="label">Latest passport A1 credential</p>
+          <p className="muted-text">
+            A1 submission used wrapper public outputs only. Local witness secrets are kept in memory for this session and
+            are not sent to the orchestrator.
           </p>
         </div>
       ) : (
