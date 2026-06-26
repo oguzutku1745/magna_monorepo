@@ -39,7 +39,7 @@ function validWitness(): PassportWrapperLocalWitness {
     zkPassportOuterPublicInputs: ["101", "202"],
     minimalZkPassportWitness,
     nationalityAlpha3: "TUR",
-    expiryTs: 1_932_249_599n,
+    expiryTs: 1_942_358_399n,
     minAgeProven: 18,
     credentialValidUntil: 1_893_456_000n,
     agePredicate: {
@@ -64,7 +64,7 @@ describe("buildPassportWrapperInputs", () => {
       poseidon2FieldHasher,
     );
     const expiryCommitment = computePassportExpiryCommitment(
-      1_932_249_599n,
+      1_942_358_399n,
       222n,
       poseidon2FieldHasher,
     );
@@ -148,6 +148,40 @@ describe("buildPassportWrapperInputs", () => {
           bind: { customData: "different-bind" },
         }),
       /bind data does not match/,
+    );
+  });
+
+  it("rejects nationality disclosures that do not match local committed nationality", async () => {
+    await assert.rejects(
+      () =>
+        buildPassportWrapperInputs({
+          ...validWitness(),
+          minimalZkPassportWitness: {
+            ...minimalZkPassportWitness,
+            nationalityDisclosure: {
+              discloseMask: [1, 1, 1],
+              disclosedBytes: [85, 83, 65],
+            },
+          },
+        }),
+      /nationalityAlpha3 does not match/,
+    );
+  });
+
+  it("rejects expiry disclosures that do not match local committed expiry timestamp", async () => {
+    await assert.rejects(
+      () =>
+        buildPassportWrapperInputs({
+          ...validWitness(),
+          minimalZkPassportWitness: {
+            ...minimalZkPassportWitness,
+            expiryDisclosure: {
+              discloseMask: [1, 1, 1, 1, 1, 1],
+              disclosedBytes: [51, 49, 48, 55, 50, 49],
+            },
+          },
+        }),
+      /expiryTs does not match/,
     );
   });
 

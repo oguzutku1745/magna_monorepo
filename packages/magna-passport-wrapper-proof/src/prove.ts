@@ -49,14 +49,29 @@ export function parsePassportWrapperPublicInputs(
       `Passport wrapper proof must expose exactly ${PASSPORT_WRAPPER_PUBLIC_INPUT_COUNT} public inputs.`,
     );
   }
+  const minAgeProven = parsePublicU8(publicInputs[3], "minAgeProven");
   return {
     claimsHash: publicInputs[0],
     nationalityCommitment: publicInputs[1],
     expiryCommitment: publicInputs[2],
-    minAgeProven: Number(publicInputs[3]),
+    minAgeProven,
     credentialValidUntil: publicInputs[4],
     scopedNullifier: publicInputs[5],
   };
+}
+
+function parsePublicU8(value: string, label: string): number {
+  if (!/^(0|[1-9][0-9]*)$/.test(value)) {
+    throw new Error(`${label} public input must be a non-negative integer string.`);
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new Error(`${label} public input must be a safe integer.`);
+  }
+  if (parsed > 255) {
+    throw new Error(`${label} public input must fit in u8.`);
+  }
+  return parsed;
 }
 
 export async function provePassportWrapper(

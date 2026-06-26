@@ -18,6 +18,7 @@ import type {
 
 const MAX_U8 = 255;
 const MAX_U64 = (1n << 64n) - 1n;
+const textDecoder = new TextDecoder("ascii", { fatal: true });
 
 function bigintFrom(value: BigintLike, label: string): bigint {
   if (typeof value === "bigint") {
@@ -67,6 +68,87 @@ function assertMatchingField(actual: bigint, expected: BigintLike, label: string
   assertUnsigned(parsedExpected, label);
   if (actual !== parsedExpected) {
     throw new Error(`${label} does not match the wrapper witness.`);
+  }
+}
+
+function disclosureAscii(bytes: number[], label: string): string {
+  try {
+    return textDecoder.decode(Uint8Array.from(bytes));
+  } catch {
+    throw new Error(`${label} must be ASCII disclosure bytes.`);
+  }
+}
+
+function assertDisclosureMaskCovers(bytes: number[], mask: number[], label: string): void {
+  if (mask.length !== bytes.length || mask.some((value) => value !== 1)) {
+    throw new Error(`${label} must disclose exactly the local committed value.`);
+  }
+}
+
+function assertNationalityDisclosureMatches(witness: PassportWrapperLocalWitness): void {
+  const disclosure = witness.minimalZkPassportWitness.nationalityDisclosure;
+  assertDisclosureMaskCovers(
+    disclosure.disclosedBytes,
+    disclosure.discloseMask,
+    "nationality disclosure",
+  );
+  const disclosedNationality = disclosureAscii(
+    disclosure.disclosedBytes,
+    "nationality disclosure",
+  );
+  if (disclosedNationality !== witness.nationalityAlpha3) {
+    throw new Error("nationalityAlpha3 does not match the minimal zkPassport nationality disclosure.");
+  }
+}
+
+function mrzExpiryFromTimestamp(expiryTs: bigint): string {
+  const expiryMs = expiryTs * 1000n;
+  if (expiryMs > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error("expiryTs is too large to convert to a UTC disclosure date.");
+  }
+  const date = new Date(Number(expiryMs));
+  if (Number.isNaN(date.getTime())) {
+    throw new Error("expiryTs must be a valid UTC timestamp.");
+  }
+  const yy = String(date.getUTCFullYear() % 100).padStart(2, "0");
+  const mm = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(date.getUTCDate()).padStart(2, "0");
+  return `${yy}${mm}${dd}`;
+}
+
+function canonicalExpiryTimestampFromMrz(mrzExpiry: string): bigint {
+  if (!/^[0-9]{6}$/.test(mrzExpiry)) {
+    throw new Error("expiry disclosure must be an MRZ YYMMDD date.");
+  }
+  const year = 2000 + Number(mrzExpiry.slice(0, 2));
+  const month = Number(mrzExpiry.slice(2, 4));
+  const day = Number(mrzExpiry.slice(4, 6));
+  const ms = Date.UTC(year, month - 1, day, 23, 59, 59, 0);
+  const date = new Date(ms);
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() + 1 !== month ||
+    date.getUTCDate() !== day
+  ) {
+    throw new Error("expiry disclosure must be a valid MRZ YYMMDD date.");
+  }
+  return BigInt(Math.floor(ms / 1000));
+}
+
+function assertExpiryDisclosureMatches(
+  witness: PassportWrapperLocalWitness,
+  expiryTs: bigint,
+): void {
+  const disclosure = witness.minimalZkPassportWitness.expiryDisclosure;
+  assertDisclosureMaskCovers(
+    disclosure.disclosedBytes,
+    disclosure.discloseMask,
+    "expiry disclosure",
+  );
+  const disclosedExpiry = disclosureAscii(disclosure.disclosedBytes, "expiry disclosure");
+  const expectedExpiryTs = canonicalExpiryTimestampFromMrz(disclosedExpiry);
+  if (expiryTs !== expectedExpiryTs || mrzExpiryFromTimestamp(expiryTs) !== disclosedExpiry) {
+    throw new Error("expiryTs does not match the minimal zkPassport expiry disclosure.");
   }
 }
 
@@ -152,6 +234,8 @@ export async function buildPassportWrapperInputs(
   const minAgeProven = u8From(witness.minAgeProven, "minAgeProven");
   const nationalityAlpha3Packed = packAlpha3(witness.nationalityAlpha3);
   const expiryTs = u64From(witness.expiryTs, "expiryTs");
+  assertNationalityDisclosureMatches(witness);
+  assertExpiryDisclosureMatches(witness, expiryTs);
   const credentialValidUntil = u64From(
     witness.credentialValidUntil,
     "credentialValidUntil",

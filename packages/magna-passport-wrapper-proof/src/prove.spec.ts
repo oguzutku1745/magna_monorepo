@@ -26,6 +26,15 @@ describe("parsePassportWrapperPublicInputs", () => {
       /exactly 6 public inputs/,
     );
   });
+
+  it("rejects malformed or unsafe minAgeProven public inputs", () => {
+    for (const value of ["not-a-number", "-1", "18.5", "9007199254740992", "256"]) {
+      assert.throws(
+        () => parsePassportWrapperPublicInputs(["1", "2", "3", value, "1893456000", "0"]),
+        /minAgeProven public input/,
+      );
+    }
+  });
 });
 
 describe("Task 2 recursive zkPassport boundary", () => {
