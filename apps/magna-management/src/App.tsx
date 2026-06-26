@@ -405,6 +405,7 @@ export function App() {
       issuanceTxHash: discovered.issuanceTxHash ?? existing?.issuanceTxHash,
       issuerAddress: env.issuerAddress,
       mode: discovered.mode,
+      issuanceKind: existing?.issuanceKind ?? (existing?.normalizedClaims ? "legacy" : undefined),
       rootCommitment: discovered.rootCommitment ?? existing?.rootCommitment,
     };
   }

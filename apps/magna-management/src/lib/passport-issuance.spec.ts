@@ -182,4 +182,21 @@ describe("passport issuance routing", () => {
     expect(passportPilotCredentialUsageBlock({ issuanceKind: "legacy" })).toBeUndefined();
     expect(passportPilotCredentialUsageBlock(null)).toBeUndefined();
   });
+
+  it("blocks rediscovered passport refs that lack legacy evidence", () => {
+    expect(passportPilotCredentialUsageBlock({})).toBe(PILOT_CREDENTIAL_UNUSABLE_MESSAGE);
+  });
+
+  it("allows older local legacy refs when normalized claims prove legacy issuance", () => {
+    expect(
+      passportPilotCredentialUsageBlock({
+        normalizedClaims: {
+          nationalityAlpha3: "TUR",
+          minAgeProven: 21,
+          passportExpiryDate: "2031-07-20",
+          expiryTs: "1942358399",
+        },
+      }),
+    ).toBeUndefined();
+  });
 });
