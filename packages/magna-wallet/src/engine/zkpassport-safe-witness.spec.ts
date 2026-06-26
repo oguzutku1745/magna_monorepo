@@ -10,6 +10,8 @@ import {
   type MinimalZkPassportWitness,
 } from "./zkpassport-safe-witness.js";
 
+const validOuterPublicInputs = ["0", "1", "2", "33", "44", "555", "666", "1", "999", "1000"];
+
 const witness: MinimalZkPassportWitness = {
   nationalityDisclosure: {
     discloseMask: [1, 1, 1],
@@ -70,14 +72,14 @@ describe("extractZkPassportOuterProofArtifacts", () => {
       proofs: [
         {
           outerProof: { proof: "outer-proof-bytes", verificationKey: "vk" },
-          outerPublicInputs: ["11", 22n],
+          outerPublicInputs: validOuterPublicInputs,
         },
       ],
     });
 
     assert.equal(extracted.outerProof.proof, "outer-proof-bytes");
     assert.equal(extracted.outerProof.verificationKey, "vk");
-    assert.deepEqual(extracted.outerPublicInputs, ["11", 22n]);
+    assert.deepEqual(extracted.outerPublicInputs, validOuterPublicInputs);
     assert.deepEqual(extracted.shape, {
       proofPath: "proofs[0].outerProof.proof",
       publicInputsPath: "proofs[0].outerPublicInputs",
@@ -87,10 +89,10 @@ describe("extractZkPassportOuterProofArtifacts", () => {
   it("extracts proof/public inputs from representative nested SDK result shapes", () => {
     const direct = extractZkPassportOuterProofArtifacts({
       proof: "direct-proof",
-      publicInputs: [1, "2", 3n],
+      publicInputs: validOuterPublicInputs,
     });
     assert.equal(direct.outerProof.proof, "direct-proof");
-    assert.deepEqual(direct.outerPublicInputs, [1, "2", 3n]);
+    assert.deepEqual(direct.outerPublicInputs, validOuterPublicInputs);
     assert.deepEqual(direct.shape, {
       proofPath: "proof",
       publicInputsPath: "publicInputs",
@@ -101,13 +103,13 @@ describe("extractZkPassportOuterProofArtifacts", () => {
         {
           proof: {
             proof: Uint8Array.from([1, 2, 3]),
-            publicInputs: ["44"],
+            publicInputs: validOuterPublicInputs,
           },
         },
       ],
     });
     assert(nested.outerProof.proof instanceof Uint8Array);
-    assert.deepEqual(nested.outerPublicInputs, ["44"]);
+    assert.deepEqual(nested.outerPublicInputs, validOuterPublicInputs);
     assert.deepEqual(nested.shape, {
       proofPath: "proofs[0].proof.proof",
       publicInputsPath: "proofs[0].proof.publicInputs",
@@ -120,6 +122,49 @@ describe("extractZkPassportOuterProofArtifacts", () => {
       /Could not find zkPassport outer proof and public inputs/,
     );
   });
+
+  it("rejects missing, empty, and unsupported proof payloads", () => {
+    for (const proof of [undefined, null, "", [], {}, { bytes: [] }, { unknown: "shape" }]) {
+      assert.throws(
+        () => extractZkPassportOuterProofArtifacts({ proof, publicInputs: validOuterPublicInputs }),
+        /zkPassport outer proof/,
+      );
+    }
+  });
+
+  it("rejects negative, unsafe, and short outer public inputs", () => {
+    assert.throws(
+      () =>
+        extractZkPassportOuterProofArtifacts({
+          proof: "proof-bytes",
+          publicInputs: ["0", -2, "2", "33", "44", "555", "666", "1", "999", "1000"],
+        }),
+      /publicInputs\[1\] must be non-negative/,
+    );
+    assert.throws(
+      () =>
+        extractZkPassportOuterProofArtifacts({
+          proof: "proof-bytes",
+          publicInputs: [
+            Number.MAX_SAFE_INTEGER + 1,
+            "1",
+            "2",
+            "33",
+            "44",
+            "555",
+            "666",
+            "1",
+            "999",
+            "1000",
+          ],
+        }),
+      /publicInputs\[0\] must be a safe integer/,
+    );
+    assert.throws(
+      () => extractZkPassportOuterProofArtifacts({ proof: "proof-bytes", publicInputs: ["1", "2"] }),
+      /must contain at least 8 field values/,
+    );
+  });
 });
 
 describe("buildPassportWrapperWitnessFromZkPassportResult", () => {
@@ -128,7 +173,7 @@ describe("buildPassportWrapperWitnessFromZkPassportResult", () => {
       {
         status: "verified",
         outerProof: "outer-proof-bytes",
-        outerPublicInputs: ["101", "202"],
+        outerPublicInputs: validOuterPublicInputs,
       },
       {
         nationalityAlpha3: "TUR",
@@ -147,7 +192,7 @@ describe("buildPassportWrapperWitnessFromZkPassportResult", () => {
     );
 
     assert.equal(result.zkPassportOuterProof.proof, "outer-proof-bytes");
-    assert.deepEqual(result.zkPassportOuterPublicInputs, ["101", "202"]);
+    assert.deepEqual(result.zkPassportOuterPublicInputs, validOuterPublicInputs);
     assert.deepEqual(result.minimalZkPassportWitness.nationalityDisclosure.disclosedBytes, [84, 85, 82]);
     assert.deepEqual(result.minimalZkPassportWitness.expiryDisclosure.disclosedBytes, [51, 49, 48, 55, 50, 48]);
     assert.equal(result.nationalityAlpha3, "TUR");
@@ -204,14 +249,13 @@ describe("assertNoZkPassportPrivateArtifacts", () => {
 describe("extractZkPassportOuterProofUtilityMetadata", () => {
   it("matches installed @zkpassport/utils outer proof public input parsers", async () => {
     const utils = (await import("@zkpassport/utils")) as Record<string, unknown>;
-    const publicInputs = ["0", "1", "2", "33", "44", "555", "666", "1", "999", "1000"];
 
     assert.equal(typeof utils.getDiscloseParameterCommitment, "function");
     assert.equal(typeof utils.getAgeParameterCommitment, "function");
     assert.equal(typeof utils.getBindParameterCommitment, "function");
     assert.equal(typeof utils.getParamCommitmentsFromOuterProof, "function");
     assert.equal(typeof utils.getNullifierFromOuterProof, "function");
-    assert.deepEqual(extractZkPassportOuterProofUtilityMetadata(publicInputs), {
+    assert.deepEqual(extractZkPassportOuterProofUtilityMetadata(validOuterPublicInputs), {
       parameterCommitments: ["555", "666"],
       scopedNullifier: "999",
       nullifierType: "1",

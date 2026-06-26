@@ -127,6 +127,7 @@ const FORBIDDEN_ZKPASSPORT_KEYS = new Set([
 
 const MAX_U8 = 255;
 const MAX_U64 = (1n << 64n) - 1n;
+const MIN_OUTER_PUBLIC_INPUT_COUNT = 8;
 const asciiEncoder = new TextEncoder();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -224,11 +225,17 @@ function mrzExpiryFromTimestamp(expiryTs: ZkPassportSafeBigintLike): string {
 
 function assertBigintLike(value: unknown, label: string): asserts value is ZkPassportSafeBigintLike {
   if (typeof value === "bigint") {
+    if (value < 0n) {
+      throw new Error(`${label} must be non-negative.`);
+    }
     return;
   }
   if (typeof value === "number") {
     if (!Number.isSafeInteger(value)) {
       throw new Error(`${label} must be a safe integer.`);
+    }
+    if (value < 0) {
+      throw new Error(`${label} must be non-negative.`);
     }
     return;
   }
@@ -239,8 +246,11 @@ function assertBigintLike(value: unknown, label: string): asserts value is ZkPas
 }
 
 function normalizeOuterPublicInputs(value: unknown, path: string): readonly ZkPassportSafeBigintLike[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new Error(`${path} must be a non-empty array of public input field values.`);
+  if (!Array.isArray(value)) {
+    throw new Error(`${path} must be an array of public input field values.`);
+  }
+  if (value.length < MIN_OUTER_PUBLIC_INPUT_COUNT) {
+    throw new Error(`${path} must contain at least 8 field values for zkPassport outer proof metadata.`);
   }
   value.forEach((entry, index) => assertBigintLike(entry, `${path}[${index}]`));
   return [...value];
@@ -260,6 +270,48 @@ export function extractZkPassportOuterProofUtilityMetadata(
     scope: getScopeFromOuterProof(proofData).toString(),
     subscope: getSubscopeFromOuterProof(proofData).toString(),
   };
+}
+
+function isByteArrayLike(value: unknown): boolean {
+  if (value instanceof Uint8Array) {
+    return value.length > 0;
+  }
+  if (!Array.isArray(value) || value.length === 0) {
+    return false;
+  }
+  return value.every(byte => Number.isInteger(byte) && byte >= 0 && byte <= 255);
+}
+
+function assertOuterProofPayload(value: unknown, path: string): void {
+  if (value === undefined || value === null) {
+    throw new Error(`zkPassport outer proof payload at ${path} is required.`);
+  }
+  if (typeof value === "string") {
+    if (!value.trim()) {
+      throw new Error(`zkPassport outer proof payload at ${path} must not be empty.`);
+    }
+    return;
+  }
+  if (value instanceof Uint8Array) {
+    if (value.length === 0) {
+      throw new Error(`zkPassport outer proof payload at ${path} must not be empty.`);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      throw new Error(`zkPassport outer proof payload at ${path} must not be empty.`);
+    }
+    for (const [index, entry] of value.entries()) {
+      assertBigintLike(entry, `${path}[${index}]`);
+    }
+    return;
+  }
+  if (isRecord(value) && "bytes" in value && isByteArrayLike(value.bytes)) {
+    return;
+  }
+
+  throw new Error(`zkPassport outer proof payload at ${path} has an unsupported shape.`);
 }
 
 function verificationKeyFrom(
@@ -283,12 +335,16 @@ function normalizeOuterProofArtifact(
   const rawProofRecord = isRecord(rawProof) ? rawProof : undefined;
   const proof = rawProofRecord && "proof" in rawProofRecord ? rawProofRecord.proof : rawProof;
   const normalizedProofPath = rawProofRecord && "proof" in rawProofRecord ? childPath(proofPath, "proof") : proofPath;
+  assertOuterProofPayload(proof, normalizedProofPath);
   const verificationKey = verificationKeyFrom(proofContainer, rawProof);
   const outerPublicInputs = normalizeOuterPublicInputs(proofContainer[publicInputsKey], publicInputsPath);
-  const zkPassportUtils =
-    outerPublicInputs.length >= 8
-      ? extractZkPassportOuterProofUtilityMetadata(outerPublicInputs)
-      : { skipped: "insufficient_public_inputs" };
+  let zkPassportUtils: ZkPassportOuterProofUtilityMetadata;
+  try {
+    zkPassportUtils = extractZkPassportOuterProofUtilityMetadata(outerPublicInputs);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`zkPassport outer public inputs at ${publicInputsPath} are malformed: ${message}`);
+  }
   const outerProof: ZkPassportOuterProofArtifact = {
     proof,
     metadata: {

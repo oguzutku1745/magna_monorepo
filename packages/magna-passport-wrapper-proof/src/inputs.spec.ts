@@ -31,6 +31,8 @@ const minimalZkPassportWitness: MinimalZkPassportWitness = {
   },
 };
 
+const normalizedOuterPublicInputs = ["0", "1", "2", "33", "44", "555", "666", "1", "999", "1000"];
+
 function validWitness(): PassportWrapperLocalWitness {
   return {
     zkPassportOuterProof: {
@@ -209,7 +211,7 @@ describe("buildPassportWrapperInputs", () => {
     const walletWitness = await buildPassportWrapperWitnessFromZkPassportResult(
       {
         outerProof: { proof: { bytes: [1, 2, 3] }, verificationKey: { key: "vk" } },
-        outerPublicInputs: ["101", "202"],
+        outerPublicInputs: normalizedOuterPublicInputs,
       },
       {
         nationalityAlpha3: "TUR",
@@ -229,7 +231,7 @@ describe("buildPassportWrapperInputs", () => {
     assert.equal(result.outputs.minAgeProven, 18);
     assert.equal(result.outputs.credentialValidUntil, "1893456000");
     assert.equal(result.outputs.scopedNullifier, "999");
-    assert.equal(result.metadata.zkPassportOuterPublicInputsCount, 2);
+    assert.equal(result.metadata.zkPassportOuterPublicInputsCount, normalizedOuterPublicInputs.length);
     assert.deepEqual(
       result.metadata.parameterCommitmentManifest,
       walletWitness.expectedParameterCommitmentManifest,
