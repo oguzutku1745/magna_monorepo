@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { Recovery, buildRecoveryGhostDeploymentAttempts } from "./App";
+import { Recovery, buildRecoveryGhostDeploymentAttempts, passportCredentialAuthenticityLabel } from "./App";
 import type { ActiveZkPassportRequest } from "./lib/zkpassport";
 
 vi.mock("@magna/wallet", () => ({
@@ -86,5 +86,36 @@ describe("Recovery", () => {
 
     expect(html).toContain("https://zkpassport.test/request-1");
     expect(html).toContain("Open request link");
+  });
+});
+
+describe("passportCredentialAuthenticityLabel", () => {
+  it("does not label rediscovered unsupported passport refs as legacy", () => {
+    expect(passportCredentialAuthenticityLabel({ kind: "passport" })).toBe(
+      "unsupported passport credential (re-issue with A1/v2 support)",
+    );
+  });
+
+  it("labels explicit pilot and legacy passport refs", () => {
+    expect(passportCredentialAuthenticityLabel({ kind: "passport", issuanceKind: "pilot" })).toBe(
+      "PII-blind pilot (non-production; not passport-authentic)",
+    );
+    expect(passportCredentialAuthenticityLabel({ kind: "passport", issuanceKind: "legacy" })).toBe(
+      "legacy zkPassport backend verification",
+    );
+  });
+
+  it("uses normalized claims as legacy evidence for older local refs", () => {
+    expect(
+      passportCredentialAuthenticityLabel({
+        kind: "passport",
+        normalizedClaims: {
+          nationalityAlpha3: "TUR",
+          minAgeProven: 21,
+          passportExpiryDate: "2031-07-20",
+          expiryTs: "1942358399",
+        },
+      }),
+    ).toBe("legacy zkPassport backend verification");
   });
 });

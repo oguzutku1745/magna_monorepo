@@ -207,6 +207,21 @@ function claimsFormFromRef(ref: StoredCredentialRef): PassportClaimsForm {
   };
 }
 
+export function passportCredentialAuthenticityLabel(
+  ref: Pick<StoredCredentialRef, "kind" | "issuanceKind" | "normalizedClaims">,
+): string | undefined {
+  if (ref.kind !== "passport") {
+    return undefined;
+  }
+  if (ref.issuanceKind === "pilot") {
+    return "PII-blind pilot (non-production; not passport-authentic)";
+  }
+  if (ref.issuanceKind === "legacy" || ref.normalizedClaims) {
+    return "legacy zkPassport backend verification";
+  }
+  return "unsupported passport credential (re-issue with A1/v2 support)";
+}
+
 function readFileAsBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1562,6 +1577,7 @@ function Dashboard(props: {
 
 function CredentialCard(props: { refData: StoredCredentialRef; hintState?: CredentialHintState }) {
   const ref = props.refData;
+  const passportAuthenticity = passportCredentialAuthenticityLabel(ref);
   return (
     <article className="credential-card">
       <div className="card-head">
@@ -1569,16 +1585,7 @@ function CredentialCard(props: { refData: StoredCredentialRef; hintState?: Crede
         <strong>{ref.status.replace(/_/g, " ")}</strong>
       </div>
       <KeyValue label="Claims hash" value={ref.claimsHash} />
-      {ref.kind === "passport" ? (
-        <KeyValue
-          label="Authenticity"
-          value={
-            ref.issuanceKind === "pilot"
-              ? "PII-blind pilot (non-production; not passport-authentic)"
-              : "legacy zkPassport backend verification"
-          }
-        />
-      ) : null}
+      {passportAuthenticity ? <KeyValue label="Authenticity" value={passportAuthenticity} /> : null}
       {props.hintState ? <KeyValue label="Hinted notes" value={props.hintState.message ?? props.hintState.status} /> : null}
       {ref.mode ? <KeyValue label="Mode" value={ref.mode} /> : null}
       {ref.rootCommitment ? <KeyValue label="Root commitment" value={ref.rootCommitment} /> : null}

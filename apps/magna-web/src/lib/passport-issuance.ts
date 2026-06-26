@@ -22,7 +22,7 @@ export type VerifiedPassportCompletion = Extract<ZkPassportCompletion, { status:
 
 export const A1_UNAVAILABLE_MESSAGE = "A1 wrapper issuance is not available yet.";
 export const PILOT_CREDENTIAL_UNUSABLE_MESSAGE =
-  "Pilot passport credentials cannot be used for relying-party verification, renewal, or recovery until A1/v2 presentation support is enabled.";
+  "Pilot or rediscovered passport credentials cannot be used for relying-party verification, renewal, or recovery until A1/v2 presentation support is enabled. Re-issue with A1/v2 support before using this credential.";
 
 const PILOT_SCHEMA = "passport-pii-blind-v0";
 const PILOT_VALIDITY_WINDOW_SECONDS = 30 * 24 * 60 * 60;
@@ -93,9 +93,21 @@ export function proofModeForPassportIssuanceKind(kind: PassportIssuanceKind): Pr
 }
 
 export function passportPilotCredentialUsageBlock(
-  credential: { issuanceKind?: PassportIssuanceKind } | null | undefined,
+  credential:
+    | {
+        issuanceKind?: PassportIssuanceKind;
+        normalizedClaims?: unknown;
+      }
+    | null
+    | undefined,
 ): string | undefined {
-  return credential?.issuanceKind === "pilot" ? PILOT_CREDENTIAL_UNUSABLE_MESSAGE : undefined;
+  if (!credential) return undefined;
+  if (credential.issuanceKind === "legacy") return undefined;
+  if (credential.issuanceKind === "pilot" || credential.issuanceKind === "a1") {
+    return PILOT_CREDENTIAL_UNUSABLE_MESSAGE;
+  }
+  if (credential.normalizedClaims) return undefined;
+  return PILOT_CREDENTIAL_UNUSABLE_MESSAGE;
 }
 
 function readPath(value: unknown, path: Array<string | number>): unknown {
