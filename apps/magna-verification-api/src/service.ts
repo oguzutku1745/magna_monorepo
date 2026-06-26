@@ -32,6 +32,7 @@ import { proveInstagramEmail, type InstagramProofArtifact } from "@magna/instagr
 export type VerificationMode = "passport" | "rooted";
 
 export const PASSPORT_PII_BLIND_PILOT_SCHEMA = "passport-pii-blind-v0" as const;
+export const PASSPORT_PII_BLIND_PILOT_MAX_VALIDITY_SECONDS = 30 * 24 * 60 * 60;
 
 export type VerificationApiConfig = {
   port: number;
@@ -64,6 +65,10 @@ export type VerifyAndIssuePassportPilotRequest = {
   credentialValidUntil: string;
   mode?: VerificationMode;
   ghostDerivationVersion?: GhostDerivationVersion;
+};
+
+type VerifyAndIssuePassportPilotDependencies = {
+  nowMs?: () => number;
 };
 
 export type VerifyAndIssueInstagramRequest = {
@@ -818,6 +823,16 @@ function requirePositiveUnixTimestampString(value: unknown, fieldName: string): 
   return normalized;
 }
 
+function parsePassportPilotCredentialValidUntil(value: string, nowMs: () => number): bigint {
+  const credentialValidUntil = BigInt(value);
+  const nowSeconds = BigInt(Math.floor(nowMs() / 1000));
+  const maxCredentialValidUntil = nowSeconds + BigInt(PASSPORT_PII_BLIND_PILOT_MAX_VALIDITY_SECONDS);
+  if (credentialValidUntil > maxCredentialValidUntil) {
+    throw new Error("credentialValidUntil cannot exceed 30 days from server time.");
+  }
+  return credentialValidUntil;
+}
+
 function requireOptionalPilotMode(value: unknown): VerificationMode | undefined {
   if (value === undefined) {
     return undefined;
@@ -968,15 +983,19 @@ export async function verifyAndIssuePassportPilot(
   config: VerificationApiConfig,
   input: VerifyAndIssuePassportPilotRequest,
   contextLoader: () => Promise<IssuanceContext>,
+  dependencies: VerifyAndIssuePassportPilotDependencies = {},
 ): Promise<VerifyAndIssueResponse> {
   const validated = validatePassportPilotRequest(input);
   const mode = resolveVerificationMode(validated.mode);
   const ghostDerivationVersion = resolveGhostDerivationVersion(validated.ghostDerivationVersion, mode);
+  const credentialValidUntil = parsePassportPilotCredentialValidUntil(
+    validated.credentialValidUntil,
+    dependencies.nowMs ?? Date.now,
+  );
   const context = await contextLoader();
   const activeOwnerAddress = AztecAddress.fromString(validated.activeOwner);
   const ghostOwnerAddress = AztecAddress.fromString(validated.ghostOwner);
   const claimsHash = new Fr(BigInt(validated.claimsHash));
-  const credentialValidUntil = BigInt(validated.credentialValidUntil);
 
   const interaction =
     mode === "rooted"

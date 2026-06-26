@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   A1_UNAVAILABLE_MESSAGE,
   issuePassportThroughConfiguredBackend,
+  passportPilotCredentialUsageBlock,
+  PILOT_CREDENTIAL_UNUSABLE_MESSAGE,
   proofModeForPassportIssuanceKind,
   type VerifiedPassportCompletion,
 } from "./passport-issuance";
@@ -173,5 +175,11 @@ describe("passport issuance routing", () => {
     expect(proofModeForPassportIssuanceKind("legacy")).toBeUndefined();
     expect(proofModeForPassportIssuanceKind("pilot")).toBe("compressed-evm");
     expect(() => proofModeForPassportIssuanceKind("a1")).toThrow(A1_UNAVAILABLE_MESSAGE);
+  });
+
+  it("blocks pilot credentials from relying-party verification, renewal, and recovery paths", () => {
+    expect(passportPilotCredentialUsageBlock({ issuanceKind: "pilot" })).toBe(PILOT_CREDENTIAL_UNUSABLE_MESSAGE);
+    expect(passportPilotCredentialUsageBlock({ issuanceKind: "legacy" })).toBeUndefined();
+    expect(passportPilotCredentialUsageBlock(null)).toBeUndefined();
   });
 });

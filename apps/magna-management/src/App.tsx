@@ -41,6 +41,7 @@ import {
 } from "./lib/zkpassport";
 import {
   issuePassportThroughConfiguredBackend,
+  passportPilotCredentialUsageBlock,
   proofModeForPassportIssuanceKind,
 } from "./lib/passport-issuance";
 
@@ -350,6 +351,14 @@ export function App() {
     const client = new MagnaBrowserClient(nextSession.wallet, env, nextSession.activeAccount.address);
     await client.syncOrchestratorSender();
     for (const ref of passportRefs) {
+      const pilotBlock = passportPilotCredentialUsageBlock(ref);
+      if (pilotBlock) {
+        setCredentialHints(current => ({
+          ...current,
+          [ref.id]: { status: "error", message: pilotBlock },
+        }));
+        continue;
+      }
       setCredentialHints(current => ({
         ...current,
         [ref.id]: { status: "loading", message: "Fetching hinted notes" },
@@ -823,6 +832,11 @@ export function App() {
   async function startRootedRenewal(ref: StoredCredentialRef) {
     const activeSession = requireDeployedWallet("renewal");
     if (!activeSession) return;
+    const pilotBlock = passportPilotCredentialUsageBlock(ref);
+    if (pilotBlock) {
+      setNotice({ tone: "danger", text: pilotBlock });
+      return;
+    }
     if (!env.verificationApiUrl) {
       setNotice({ tone: "danger", text: "VITE_MAGNA_VERIFICATION_API_URL is required for rooted renewal." });
       return;
@@ -906,6 +920,11 @@ export function App() {
   async function startRootRecovery(ref: StoredCredentialRef) {
     const activeSession = requireDeployedWallet("recovery");
     if (!activeSession) return;
+    const pilotBlock = passportPilotCredentialUsageBlock(ref);
+    if (pilotBlock) {
+      setNotice({ tone: "danger", text: pilotBlock });
+      return;
+    }
     if (!recoveryTarget) {
       setNotice({ tone: "danger", text: "Create or open the new passkey target before recovering root lineage." });
       return;

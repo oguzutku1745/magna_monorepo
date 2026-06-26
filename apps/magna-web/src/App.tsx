@@ -56,6 +56,7 @@ import {
 } from "./lib/zkpassport";
 import {
   issuePassportThroughConfiguredBackend,
+  passportPilotCredentialUsageBlock,
   proofModeForPassportIssuanceKind,
   type PassportIssuanceKind,
 } from "./lib/passport-issuance";
@@ -581,6 +582,30 @@ export function App() {
       return claimsFormFromNormalizedClaims(lastIssuedPassportRef.normalizedClaims);
     }
     return claimsForm;
+  };
+
+  const blockPilotCredentialUsage = (
+    credential: { issuanceKind?: PassportIssuanceKind } | null | undefined,
+  ): boolean => {
+    const message = passportPilotCredentialUsageBlock(credential);
+    if (!message) {
+      return false;
+    }
+    setError(message);
+    setStatusMessage(message);
+    return true;
+  };
+
+  const issuedCredentialForHints = (
+    currentHints: PassportHints | RootedPassportHints,
+  ): { issuanceKind?: PassportIssuanceKind } | null => {
+    if (lastIssuedPassportRef?.claimsHash === currentHints.claimsHash) {
+      return lastIssuedPassportRef;
+    }
+    if (zkPassportLastIssue?.claimsHash === currentHints.claimsHash) {
+      return zkPassportLastIssue;
+    }
+    return null;
   };
 
   const runAction = async <T,>(label: string, work: () => Promise<T>): Promise<T | undefined> => {
@@ -1222,11 +1247,14 @@ export function App() {
       setError("Wait for the current zkPassport request to finish before fetching hinted notes.");
       return;
     }
+    const issuedRef =
+      lastIssuedPassportRef && lastIssuedPassportRef.ownerAddress === activeAccount.address ? lastIssuedPassportRef : null;
+    if (blockPilotCredentialUsage(issuedRef)) {
+      return;
+    }
     const result = await runAction("Fetch Magna hinted notes", async () => {
       const client = requireUserClient();
       await client.syncOrchestratorSender();
-      const issuedRef =
-        lastIssuedPassportRef && lastIssuedPassportRef.ownerAddress === activeAccount.address ? lastIssuedPassportRef : null;
       const rootedIssue =
         issuedRef?.mode === "rooted" && issuedRef.rootCommitment
           ? { ...issuedRef, rootCommitment: issuedRef.rootCommitment }
@@ -1267,6 +1295,9 @@ export function App() {
       setError("Fetch hinted notes before calling verify.");
       return;
     }
+    if (blockPilotCredentialUsage(issuedCredentialForHints(hints))) {
+      return;
+    }
     const result = await runAction("Run Magna verify", async () => {
       const client = requireUserClient();
       const verificationClaimsForm = resolveCanonicalClaimsForm(hints);
@@ -1287,6 +1318,9 @@ export function App() {
     }
     if (!selectedSponsorAddress) {
       setError("Select a configured sponsor gateway before calling sponsored verify.");
+      return;
+    }
+    if (blockPilotCredentialUsage(issuedCredentialForHints(hints))) {
       return;
     }
     const result = await runRetriedTxAction("Run Magna sponsored verify", async () => {
@@ -1323,6 +1357,9 @@ export function App() {
     }
     if (!hints || !isRootedPassportHints(hints)) {
       setError("Fetch rooted hinted notes before renewing passport authority under the existing root.");
+      return;
+    }
+    if (blockPilotCredentialUsage(issuedCredentialForHints(hints))) {
       return;
     }
     const ghostOwnerAddress = zkPassportLastIssue?.ghostOwner ?? lastIssuedPassportRef?.ghostOwner ?? ghostLifecycle?.address;
@@ -1439,6 +1476,7 @@ export function App() {
             ownerAddress: activeAccount.address,
             claimsHash: renewed.claimsHash,
             mode: "rooted",
+            issuanceKind: "legacy",
             rootCommitment: renewed.rootCommitment,
             ghostOwner: renewed.ghostOwner,
             ghostDerivationVersion:
@@ -1484,6 +1522,9 @@ export function App() {
     }
     if (!hints || !isRootedPassportHints(hints)) {
       setError("Fetch rooted hinted notes before starting rooted recovery.");
+      return;
+    }
+    if (blockPilotCredentialUsage(issuedCredentialForHints(hints))) {
       return;
     }
     const ghostOwnerAddress =

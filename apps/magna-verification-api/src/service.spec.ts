@@ -255,6 +255,9 @@ describe("verifyAndIssuePassportPilot", () => {
         ghostDerivationVersion: "v2_scoped",
       },
       async () => context as never,
+      {
+        nowMs: () => Date.UTC(2029, 11, 2, 0, 0, 0),
+      },
     );
 
     expect(result.claimsHash).toBe("123");
@@ -266,6 +269,43 @@ describe("verifyAndIssuePassportPilot", () => {
     });
     expect("normalizedClaims" in result).toBe(false);
     expect(context.issuer.methods.register_rooted_passport_v2).toHaveBeenCalled();
+  });
+
+  it("rejects pilot credential validity beyond the server maximum window", async () => {
+    const contextLoader = vi.fn(async () => {
+      throw new Error("context should not be loaded for invalid validity");
+    });
+    const { verifyAndIssuePassportPilot } = await import("./service.js");
+
+    await expect(
+      verifyAndIssuePassportPilot(
+        {
+          port: 4310,
+          allowedOrigin: "*",
+          zkPassportDomain: "localhost",
+          zkPassportScope: "magna-passport-onboarding",
+          zkPassportDevMode: true,
+          aztecNodeUrl: "http://localhost:8080",
+          issuerAddress: "0xissuer",
+          localTestAccountIndex: 0,
+        },
+        {
+          pilotSchema: PASSPORT_PII_BLIND_PILOT_SCHEMA,
+          activeOwner: "0x1111111111111111111111111111111111111111111111111111111111111111",
+          claimsHash: "123",
+          ghostOwner: "0x2222222222222222222222222222222222222222222222222222222222222222",
+          rootCommitment: "456",
+          credentialValidUntil: String(30 * 24 * 60 * 60 + 1),
+          mode: "rooted",
+          ghostDerivationVersion: "v2_scoped",
+        },
+        contextLoader as never,
+        {
+          nowMs: () => 0,
+        },
+      ),
+    ).rejects.toThrow("credentialValidUntil cannot exceed 30 days from server time");
+    expect(contextLoader).not.toHaveBeenCalled();
   });
 });
 
