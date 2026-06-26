@@ -100,6 +100,21 @@ describe("passportCredentialAuthenticityLabel", () => {
     expect(passportCredentialAuthenticityLabel({ kind: "passport", issuanceKind: "pilot" })).toBe(
       "PII-blind pilot (non-production; not passport-authentic)",
     );
+    expect(
+      passportCredentialAuthenticityLabel({
+        kind: "passport",
+        issuanceKind: "a1",
+        passportCommittedClaimsV2Witness: {
+          schema: "passport-committed-claims-v2",
+          credentialAuthenticity: "passport-a1",
+          minAgeProven: 21,
+          nationalityAlpha3Packed: "5526610",
+          nationalityBlind: "111",
+          expiryTs: "1942358399",
+          expiryBlind: "222",
+        },
+      }),
+    ).toBe("passport A1 wrapper proof (PII-blind)");
     expect(passportCredentialAuthenticityLabel({ kind: "passport", issuanceKind: "legacy" })).toBe(
       "legacy zkPassport backend verification",
     );

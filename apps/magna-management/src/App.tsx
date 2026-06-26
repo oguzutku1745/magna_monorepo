@@ -7,6 +7,7 @@ import {
   loadStoredWebAuthnAccounts,
   MagnaBrowserClient,
   isRootedPassportHints,
+  packAlpha3,
   type DiscoveredMagnaCredentialRef,
   type PassportClaimsForm,
   type PassportHints,
@@ -26,6 +27,7 @@ import {
   saveWalletProfile,
   saveCredentialRefs,
   upsertCredentialRef,
+  type PassportCommittedClaimsV2LocalWitness,
   type StoredCredentialRef,
   type WalletProfile,
 } from "./lib/storage";
@@ -211,7 +213,7 @@ function claimsFormFromRef(ref: StoredCredentialRef): PassportClaimsForm {
 }
 
 export function passportCredentialAuthenticityLabel(
-  ref: Pick<StoredCredentialRef, "kind" | "issuanceKind" | "normalizedClaims">,
+  ref: Pick<StoredCredentialRef, "kind" | "issuanceKind" | "normalizedClaims" | "passportCommittedClaimsV2Witness">,
 ): string | undefined {
   if (ref.kind !== "passport") {
     return undefined;
@@ -226,6 +228,20 @@ export function passportCredentialAuthenticityLabel(
     return "legacy zkPassport backend verification";
   }
   return "unsupported passport credential (re-issue with A1/v2 support)";
+}
+
+function committedClaimsV2WitnessFromA1LocalWitness(
+  localWitness: PassportA1LocalWitness,
+): PassportCommittedClaimsV2LocalWitness {
+  return {
+    schema: "passport-committed-claims-v2",
+    credentialAuthenticity: "passport-a1",
+    minAgeProven: localWitness.witness.minAgeProven,
+    nationalityAlpha3Packed: packAlpha3(localWitness.witness.nationalityAlpha3).toString(),
+    nationalityBlind: BigInt(localWitness.witness.nationalityBlind).toString(),
+    expiryTs: BigInt(localWitness.witness.expiryTs).toString(),
+    expiryBlind: BigInt(localWitness.witness.expiryBlind).toString(),
+  };
 }
 
 function readFileAsBase64(file: File): Promise<string> {
@@ -771,6 +787,10 @@ export function App() {
           setPassportA1LocalWitness(issueResult.localWitness);
         }
         const issued = issueResult.response;
+        const passportCommittedClaimsV2Witness =
+          issueResult.issuanceKind === "a1"
+            ? committedClaimsV2WitnessFromA1LocalWitness(issueResult.localWitness)
+            : undefined;
         const normalizedClaims =
           issueResult.issuanceKind === "legacy" ? issueResult.response.normalizedClaims : undefined;
         const ref: StoredCredentialRef = {
@@ -795,6 +815,7 @@ export function App() {
           rootCommitment: issued.rootCommitment,
           ghostOwner: issued.ghostOwner,
           ghostDerivationVersion: issued.ghostDerivationVersion,
+          passportCommittedClaimsV2Witness,
           normalizedClaims,
         };
         setCredentials(upsertCredentialRef(ref));
@@ -803,7 +824,7 @@ export function App() {
           tone: "success",
           text:
             issueResult.issuanceKind === "a1"
-              ? "Passport A1 credential issued and stored for this wallet. Local witness is held in memory only."
+              ? "Passport A1 credential issued and stored for this wallet. A1 witness is available locally on this device."
               : issueResult.issuanceKind === "pilot"
               ? "PII-blind pilot credential issued and stored for this wallet (non-production; not passport-authentic)."
               : "zkPassport credential issued and stored for this wallet.",
@@ -811,7 +832,7 @@ export function App() {
         setZkStage("issued");
         appendLog(
           issueResult.issuanceKind === "a1"
-            ? `Passport A1 credential issued. Local witness retained in memory only. Claims hash: ${issued.claimsHash}`
+            ? `Passport A1 credential issued. A1 witness available locally. Claims hash: ${issued.claimsHash}`
             : issueResult.issuanceKind === "pilot"
             ? `PII-blind pilot credential issued (non-production; not passport-authentic). Claims hash: ${issued.claimsHash}`
             : `zkPassport credential issued. Claims hash: ${issued.claimsHash}`,
@@ -1633,6 +1654,7 @@ function CredentialCard(props: { refData: StoredCredentialRef; hintState?: Crede
       {ref.mode ? <KeyValue label="Mode" value={ref.mode} /> : null}
       {ref.rootCommitment ? <KeyValue label="Root commitment" value={ref.rootCommitment} /> : null}
       {ref.ghostOwner ? <KeyValue label="Ghost owner" value={ref.ghostOwner} /> : null}
+      {ref.passportCommittedClaimsV2Witness ? <KeyValue label="A1 witness" value="available locally" /> : null}
       {ref.normalizedClaims ? (
         <>
           <KeyValue label="Nationality" value={ref.normalizedClaims.nationalityAlpha3} />
@@ -1704,7 +1726,7 @@ function Issuance(props: {
             {props.zkPassportIssuanceKind === "a1" ? (
               <KeyValue
                 label="A1 local witness"
-                value={props.passportA1LocalWitnessAvailable ? "available in memory only" : "not retained"}
+                value={props.passportA1LocalWitnessAvailable ? "available locally" : "not retained"}
               />
             ) : null}
             <p>{zkStatusMessage(status)}</p>

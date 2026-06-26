@@ -31,6 +31,8 @@ export type VerifiedPassportCompletion = Extract<ZkPassportCompletion, { status:
 
 export const A1_UNAVAILABLE_MESSAGE =
   "A1 wrapper proof generation is not production-enabled in this frontend build. Recursive zkPassport verification is not available yet, so passport A1 issuance is fail-closed.";
+export const A1_LOCAL_WITNESS_MISSING_MESSAGE =
+  "Passport A1 credential is missing its local v2 witness. Re-issue this passport credential on this device to restore A1/v2 presentation.";
 export const PILOT_CREDENTIAL_UNUSABLE_MESSAGE =
   "Pilot or rediscovered passport credentials cannot be used for relying-party verification, renewal, or recovery until A1/v2 presentation support is enabled. Re-issue with A1/v2 support before using this credential.";
 
@@ -146,6 +148,7 @@ export function passportPilotCredentialUsageBlock(
   credential:
     | {
         issuanceKind?: PassportIssuanceKind;
+        passportCommittedClaimsV2Witness?: unknown;
         normalizedClaims?: unknown;
       }
     | null
@@ -153,6 +156,9 @@ export function passportPilotCredentialUsageBlock(
 ): string | undefined {
   if (!credential) return undefined;
   if (credential.issuanceKind === "legacy") return undefined;
+  if (credential.issuanceKind === "a1" && !credential.passportCommittedClaimsV2Witness) {
+    return A1_LOCAL_WITNESS_MISSING_MESSAGE;
+  }
   if (credential.issuanceKind === "pilot" || credential.issuanceKind === "a1") {
     return PILOT_CREDENTIAL_UNUSABLE_MESSAGE;
   }

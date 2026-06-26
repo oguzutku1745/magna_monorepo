@@ -164,7 +164,10 @@ describe("runWalletLoginForRequest", () => {
         claimsHash: "123",
         mode: "rooted",
         rootCommitment: "99",
-        committedClaimsWitness: {
+        issuanceKind: "a1",
+        passportCommittedClaimsV2Witness: {
+          schema: "passport-committed-claims-v2",
+          credentialAuthenticity: "passport-a1",
           minAgeProven: 18,
           nationalityAlpha3Packed: "5925714",
           nationalityBlind: "111",
@@ -198,5 +201,42 @@ describe("runWalletLoginForRequest", () => {
     });
     expect(testState.packAlpha3).not.toHaveBeenCalled();
     expect(testState.disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("fails clearly instead of falling back when an A1 ref lacks the local v2 witness", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    localStorage.setItem(
+      LAST_ISSUED_PASSPORT_STORAGE_KEY,
+      JSON.stringify({
+        ownerAddress: testState.activeAddress,
+        claimsHash: "123",
+        mode: "rooted",
+        rootCommitment: "99",
+        issuanceKind: "a1",
+        normalizedClaims: {
+          nationalityAlpha3: "ZKR",
+          minAgeProven: 18,
+        },
+      }),
+    );
+
+    const outcome = await runWalletLoginForRequest({
+      policy,
+      consumerGatewayAddress: "0xconsumer",
+    });
+
+    expect(outcome).toEqual({
+      verified: false,
+      receipt: null,
+      error:
+        "Passport A1 credential is missing its local v2 witness. Re-issue this passport credential on this device to restore A1/v2 presentation.",
+    });
+    expect(testState.linkedLogin).not.toHaveBeenCalled();
+    expect(testState.legacyLogin).not.toHaveBeenCalled();
+    expect(testState.linkedLoginV2).not.toHaveBeenCalled();
+    expect(testState.legacyLoginV2).not.toHaveBeenCalled();
+    expect(testState.packAlpha3).not.toHaveBeenCalled();
+    expect(testState.disconnect).toHaveBeenCalledOnce();
+    warn.mockRestore();
   });
 });

@@ -57,6 +57,7 @@ import {
   type ZkPassportLifecycleEvent,
 } from "./lib/zkpassport";
 import {
+  A1_LOCAL_WITNESS_MISSING_MESSAGE,
   issuePassportThroughConfiguredBackend,
   passportA1BindCustomData,
   passportPilotCredentialUsageBlock,
@@ -176,11 +177,14 @@ type LastIssuedPassportRef = {
   rootCommitment?: string;
   ghostOwner?: string;
   ghostDerivationVersion?: string;
-  committedClaimsWitness?: LastIssuedPassportCommittedClaimsWitness;
+  passportCommittedClaimsV2Witness?: LastIssuedPassportCommittedClaimsV2Witness;
+  localWitnessError?: string;
   normalizedClaims?: ZkPassportIssueResponse["normalizedClaims"];
 };
 
-type LastIssuedPassportCommittedClaimsWitness = {
+type LastIssuedPassportCommittedClaimsV2Witness = {
+  schema: "passport-committed-claims-v2";
+  credentialAuthenticity: "passport-a1";
   minAgeProven: number;
   nationalityAlpha3Packed: string;
   nationalityBlind: string;
@@ -257,21 +261,27 @@ function loadStoredLastIssuedPassportRef(): LastIssuedPassportRef | null {
     ) {
       return null;
     }
+    const issuanceKind =
+      parsed.issuanceKind === "legacy" || parsed.issuanceKind === "pilot" || parsed.issuanceKind === "a1"
+        ? parsed.issuanceKind
+        : undefined;
+    const passportCommittedClaimsV2Witness = isLastIssuedPassportCommittedClaimsV2Witness(
+      parsed.passportCommittedClaimsV2Witness,
+    )
+      ? parsed.passportCommittedClaimsV2Witness
+      : undefined;
     return {
       ownerAddress: parsed.ownerAddress,
       claimsHash: parsed.claimsHash,
       mode: parsed.mode,
-      issuanceKind:
-        parsed.issuanceKind === "legacy" || parsed.issuanceKind === "pilot" || parsed.issuanceKind === "a1"
-          ? parsed.issuanceKind
-          : undefined,
+      issuanceKind,
       rootCommitment: typeof parsed.rootCommitment === "string" ? parsed.rootCommitment : undefined,
       ghostOwner: typeof parsed.ghostOwner === "string" ? parsed.ghostOwner : undefined,
       ghostDerivationVersion:
         typeof parsed.ghostDerivationVersion === "string" ? parsed.ghostDerivationVersion : undefined,
-      committedClaimsWitness: isLastIssuedCommittedClaimsWitness(parsed.committedClaimsWitness)
-        ? parsed.committedClaimsWitness
-        : undefined,
+      passportCommittedClaimsV2Witness,
+      localWitnessError:
+        issuanceKind === "a1" && !passportCommittedClaimsV2Witness ? A1_LOCAL_WITNESS_MISSING_MESSAGE : undefined,
       normalizedClaims:
         parsed.normalizedClaims &&
         typeof parsed.normalizedClaims === "object" &&
@@ -287,10 +297,14 @@ function loadStoredLastIssuedPassportRef(): LastIssuedPassportRef | null {
   }
 }
 
-function isLastIssuedCommittedClaimsWitness(value: unknown): value is LastIssuedPassportCommittedClaimsWitness {
-  const witness = value as Partial<LastIssuedPassportCommittedClaimsWitness> | undefined;
+function isLastIssuedPassportCommittedClaimsV2Witness(
+  value: unknown,
+): value is LastIssuedPassportCommittedClaimsV2Witness {
+  const witness = value as Partial<LastIssuedPassportCommittedClaimsV2Witness> | undefined;
   return Boolean(
     witness &&
+      witness.schema === "passport-committed-claims-v2" &&
+      witness.credentialAuthenticity === "passport-a1" &&
       typeof witness.minAgeProven === "number" &&
       typeof witness.nationalityAlpha3Packed === "string" &&
       typeof witness.nationalityBlind === "string" &&
@@ -300,7 +314,7 @@ function isLastIssuedCommittedClaimsWitness(value: unknown): value is LastIssued
 }
 
 function normalizeLastIssuedCommittedClaimsWitness(
-  witness: LastIssuedPassportCommittedClaimsWitness | undefined,
+  witness: LastIssuedPassportCommittedClaimsV2Witness | undefined,
 ): PassportCommittedClaimsWitness | undefined {
   if (!witness) return undefined;
   return {
@@ -315,14 +329,16 @@ function normalizeLastIssuedCommittedClaimsWitness(
 function committedClaimsWitnessFromIssuedCredential(
   credential: LastIssuedPassportRef | ZkPassportIssueState | null | undefined,
 ): PassportCommittedClaimsWitness | undefined {
-  if (!credential || !("committedClaimsWitness" in credential)) return undefined;
-  return normalizeLastIssuedCommittedClaimsWitness(credential.committedClaimsWitness);
+  if (!credential || !("passportCommittedClaimsV2Witness" in credential)) return undefined;
+  return normalizeLastIssuedCommittedClaimsWitness(credential.passportCommittedClaimsV2Witness);
 }
 
 function committedClaimsWitnessFromA1LocalWitness(
   localWitness: PassportA1LocalWitness,
-): LastIssuedPassportCommittedClaimsWitness {
+): LastIssuedPassportCommittedClaimsV2Witness {
   return {
+    schema: "passport-committed-claims-v2",
+    credentialAuthenticity: "passport-a1",
     minAgeProven: localWitness.witness.minAgeProven,
     nationalityAlpha3Packed: packAlpha3(localWitness.witness.nationalityAlpha3).toString(),
     nationalityBlind: BigInt(localWitness.witness.nationalityBlind).toString(),
@@ -498,6 +514,14 @@ export function App() {
   }, [lastIssuedPassportRef]);
 
   useEffect(() => {
+    if (!lastIssuedPassportRef?.localWitnessError) {
+      return;
+    }
+    setError(lastIssuedPassportRef.localWitnessError);
+    setStatusMessage(lastIssuedPassportRef.localWitnessError);
+  }, [lastIssuedPassportRef?.localWitnessError]);
+
+  useEffect(() => {
     if (!chainResetNotice || !session || session.kind === "external") {
       return;
     }
@@ -651,7 +675,7 @@ export function App() {
     credential:
       | {
           issuanceKind?: PassportIssuanceKind;
-          committedClaimsWitness?: unknown;
+          passportCommittedClaimsV2Witness?: unknown;
           normalizedClaims?: unknown;
         }
       | null
@@ -1230,7 +1254,7 @@ export function App() {
           } else {
             if (issueResult.issuanceKind === "a1") {
               const issued = issueResult.response;
-              const committedClaimsWitness = committedClaimsWitnessFromA1LocalWitness(issueResult.localWitness);
+              const passportCommittedClaimsV2Witness = committedClaimsWitnessFromA1LocalWitness(issueResult.localWitness);
               setZkPassportLastIssue({ ...issued, issuanceKind: "a1" });
               setPassportA1LocalWitness(issueResult.localWitness);
               setLastIssuedPassportRef({
@@ -1241,11 +1265,13 @@ export function App() {
                 rootCommitment: issued.mode === "rooted" ? issued.rootCommitment : undefined,
                 ghostOwner: issued.ghostOwner,
                 ghostDerivationVersion: issued.ghostDerivationVersion,
-                committedClaimsWitness,
+                passportCommittedClaimsV2Witness,
               });
               setGhostOwner(issued.ghostOwner);
-              setStatusMessage(`Passport A1 credential issued. Local witness is held in memory only. Claims hash: ${issued.claimsHash}`);
-              appendLog(`Passport A1 issuance completed. Local witness retained in memory only. Claims hash: ${issued.claimsHash}`);
+              setStatusMessage(
+                `Passport A1 credential issued. A1 witness is available locally on this device. Claims hash: ${issued.claimsHash}`,
+              );
+              appendLog(`Passport A1 issuance completed. A1 witness available locally. Claims hash: ${issued.claimsHash}`);
               if (preparedGhost && preparedGhost.address !== issued.ghostOwner) {
                 throw new Error(
                   `Ghost derivation mismatch: backend=${issued.ghostOwner} frontend=${preparedGhost.address}`,
@@ -2534,7 +2560,7 @@ export function App() {
               {zkPassportLastIssue.issuanceKind === "a1" ? (
                 <KeyValue
                   label="A1 local witness"
-                  value={passportA1LocalWitness ? "available in memory only" : "not retained"}
+                  value={passportA1LocalWitness ? "available locally" : "not retained"}
                 />
               ) : null}
             </div>
@@ -3217,7 +3243,7 @@ function ZkPassportRequestEditor(props: {
         <div className="sub-card">
           <p className="label">Latest passport A1 credential</p>
           <p className="muted-text">
-            A1 submission used wrapper public outputs only. Local witness secrets are kept in memory for this session and
+            A1 submission used wrapper public outputs only. Local witness secrets are kept locally for this device and
             are not sent to the orchestrator.
           </p>
         </div>

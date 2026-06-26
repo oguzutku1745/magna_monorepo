@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  A1_LOCAL_WITNESS_MISSING_MESSAGE,
   A1_UNAVAILABLE_MESSAGE,
   issuePassportThroughConfiguredBackend,
   passportPilotCredentialUsageBlock,
@@ -155,14 +156,24 @@ describe("passport issuance routing", () => {
       ghostDerivationVersion: "v2_scoped",
     });
     expect(payload.claimsHash).toMatch(/^[0-9]+$/);
-    expect(payload.queryResult).toBeUndefined();
-    expect(payload.originalQuery).toBeUndefined();
-    expect(payload.proofs).toBeUndefined();
-    expect(payload.committedInputs).toBeUndefined();
-    expect(payload.outerProof).toBeUndefined();
-    expect(payload.expiryTs).toBeUndefined();
-    expect(payload.uniqueIdentifier).toBeUndefined();
-    expect(payload.nationality).toBeUndefined();
+    for (const forbidden of [
+      "queryResult",
+      "originalQuery",
+      "proofs",
+      "committedInputs",
+      "outerProof",
+      "expiryTs",
+      "uniqueIdentifier",
+      "nationality",
+      "nationalityBlind",
+      "expiryBlind",
+      "localWitness",
+      "passportCommittedClaimsV2Witness",
+    ]) {
+      expect(JSON.stringify(payload)).not.toContain(`"${forbidden}"`);
+    }
+    expect(JSON.stringify(payload)).not.toContain("TUR");
+    expect(JSON.stringify(payload)).not.toContain("2031-07-20");
   });
 
   it("routes a1 mode through the wrapper-proof payload without raw zkPassport artifacts", async () => {
@@ -249,9 +260,15 @@ describe("passport issuance routing", () => {
       "expiryTs",
       "nationality",
       "uniqueIdentifier",
+      "nationalityBlind",
+      "expiryBlind",
+      "localWitness",
+      "passportCommittedClaimsV2Witness",
     ]) {
       expect(JSON.stringify(payload)).not.toContain(`"${forbidden}"`);
     }
+    expect(JSON.stringify(payload)).not.toContain("TUR");
+    expect(JSON.stringify(payload)).not.toContain("2031-07-20");
     if (result.issuanceKind !== "a1") {
       throw new Error("expected a1 issuance result");
     }
@@ -297,8 +314,21 @@ describe("passport issuance routing", () => {
 
   it("blocks pilot credentials from relying-party verification, renewal, and recovery paths", () => {
     expect(passportPilotCredentialUsageBlock({ issuanceKind: "pilot" })).toBe(PILOT_CREDENTIAL_UNUSABLE_MESSAGE);
-    expect(passportPilotCredentialUsageBlock({ issuanceKind: "a1" })).toBe(PILOT_CREDENTIAL_UNUSABLE_MESSAGE);
-    expect(passportPilotCredentialUsageBlock({ issuanceKind: "a1", committedClaimsWitness: { minAgeProven: 21 } })).toBeUndefined();
+    expect(passportPilotCredentialUsageBlock({ issuanceKind: "a1" })).toBe(A1_LOCAL_WITNESS_MISSING_MESSAGE);
+    expect(
+      passportPilotCredentialUsageBlock({
+        issuanceKind: "a1",
+        passportCommittedClaimsV2Witness: {
+          schema: "passport-committed-claims-v2",
+          credentialAuthenticity: "passport-a1",
+          minAgeProven: 21,
+          nationalityAlpha3Packed: "5526610",
+          nationalityBlind: "111",
+          expiryTs: "1942358399",
+          expiryBlind: "222",
+        },
+      }),
+    ).toBeUndefined();
     expect(passportPilotCredentialUsageBlock({ issuanceKind: "legacy" })).toBeUndefined();
     expect(passportPilotCredentialUsageBlock(null)).toBeUndefined();
   });

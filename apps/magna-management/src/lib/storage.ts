@@ -4,6 +4,16 @@ export type CredentialKind = "passport" | "instagram";
 export type CredentialStatus = "active" | "pending_attestation" | "recovery_pending" | "unknown";
 export type CredentialIssuanceKind = "legacy" | "pilot" | "a1";
 
+export type PassportCommittedClaimsV2LocalWitness = {
+  schema: "passport-committed-claims-v2";
+  credentialAuthenticity: "passport-a1";
+  minAgeProven: number;
+  nationalityAlpha3Packed: string;
+  nationalityBlind: string;
+  expiryTs: string;
+  expiryBlind: string;
+};
+
 export type StoredCredentialRef = {
   id: string;
   ownerAddress: string;
@@ -21,6 +31,7 @@ export type StoredCredentialRef = {
   rootCommitment?: string;
   ghostOwner?: string;
   ghostDerivationVersion?: GhostDerivationVersion;
+  passportCommittedClaimsV2Witness?: PassportCommittedClaimsV2LocalWitness;
   normalizedClaims?: {
     nationalityAlpha3: string;
     minAgeProven: number;
