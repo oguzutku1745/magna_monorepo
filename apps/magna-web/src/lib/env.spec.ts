@@ -102,4 +102,23 @@ describe("getAppEnv", () => {
   it("accepts explicit a1 issuance config so the app can fail clearly at runtime", () => {
     expect(getAppEnv({ VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "a1" }).zkPassportIssuanceKind).toBe("a1");
   });
+
+  it("defaults production passport issuance to a1", () => {
+    expect(getAppEnv({ PROD: true }).zkPassportIssuanceKind).toBe("a1");
+  });
+
+  it("rejects legacy and pilot passport issuance in production builds", () => {
+    expect(() => getAppEnv({ PROD: true, VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "legacy" })).toThrow(
+      "must be a1 in production builds",
+    );
+    expect(() => getAppEnv({ PROD: true, VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "pilot" })).toThrow(
+      "must be a1 in production builds",
+    );
+  });
+
+  it("rejects unknown passport issuance modes", () => {
+    expect(() => getAppEnv({ VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "unsafe" })).toThrow(
+      "must be one of legacy, pilot, or a1",
+    );
+  });
 });

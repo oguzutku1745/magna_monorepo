@@ -22,8 +22,30 @@ describe("getManagementEnv", () => {
   });
 
   it("parses explicit passport issuance kind configuration", () => {
+    expect(getManagementEnv({ VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "legacy" }).zkPassportIssuanceKind).toBe(
+      "legacy",
+    );
     expect(getManagementEnv({ VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "pilot" }).zkPassportIssuanceKind).toBe("pilot");
     expect(getManagementEnv({ VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "a1" }).zkPassportIssuanceKind).toBe("a1");
+  });
+
+  it("defaults production passport issuance to a1", () => {
+    expect(getManagementEnv({ PROD: true }).zkPassportIssuanceKind).toBe("a1");
+  });
+
+  it("rejects legacy and pilot passport issuance in production builds", () => {
+    expect(() => getManagementEnv({ PROD: true, VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "legacy" })).toThrow(
+      "must be a1 in production builds",
+    );
+    expect(() => getManagementEnv({ PROD: true, VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "pilot" })).toThrow(
+      "must be a1 in production builds",
+    );
+  });
+
+  it("rejects unknown passport issuance modes", () => {
+    expect(() => getManagementEnv({ VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "unsafe" })).toThrow(
+      "must be one of legacy, pilot, or a1",
+    );
   });
 
   it("hydrates local contract addresses from the deployment manifest when env omits them", () => {

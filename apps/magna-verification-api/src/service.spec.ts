@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   applyHydratedEnvEntries,
   buildStaleIssuerDeploymentMessage,
+  dispatchVerifyAndIssuePassportRequest,
   deploymentManifestEnvEntries,
   isPassportA1Request,
   isPassportPilotRequest,
@@ -139,6 +140,7 @@ describe("loadVerificationApiConfigFromEnv", () => {
     expect(config.zkPassportDomain).toBe("localhost");
     expect(config.zkPassportScope).toBe("magna-passport-onboarding");
     expect(config.zkPassportDevMode).toBe(false);
+    expect(config.enablePassportPilot).toBe(false);
     expect(config.issuerAddress).toBe("0xissuer");
     expect(config.aztecNodeUrl).toBe("http://localhost:8080");
     expect(config.orchestratorAddress).toBe("0xorchestrator");
@@ -156,6 +158,18 @@ describe("loadVerificationApiConfigFromEnv", () => {
     const config = loadVerificationApiConfigFromEnv();
     expect(config.zkPassportDevMode).toBe(true);
   });
+
+  it("enables passport pilot only with the explicit API flag", () => {
+    process.env = {
+      ...originalEnv,
+      MAGNA_ZKPASSPORT_DOMAIN: "localhost",
+      MAGNA_ENABLE_PASSPORT_PILOT: "true",
+      MAGNA_ISSUER_ADDRESS: "0xissuer",
+    };
+
+    const config = loadVerificationApiConfigFromEnv();
+    expect(config.enablePassportPilot).toBe(true);
+  });
 });
 
 describe("passport PII-blind pilot request validation", () => {
@@ -165,7 +179,7 @@ describe("passport PII-blind pilot request validation", () => {
     claimsHash: "123",
     ghostOwner: "0x2222222222222222222222222222222222222222222222222222222222222222",
     rootCommitment: "456",
-    credentialValidUntil: "1893456000",
+    credentialValidUntil: String(Math.floor(Date.now() / 1000) + 60),
     mode: "rooted" as const,
     ghostDerivationVersion: "v2_scoped" as const,
   };
@@ -278,6 +292,66 @@ describe("passport A1 request validation and dispatch", () => {
   });
 });
 
+describe("dispatchVerifyAndIssuePassportRequest", () => {
+  const config = {
+    port: 4310,
+    allowedOrigin: "*",
+    zkPassportDomain: "localhost",
+    zkPassportScope: "magna-passport-onboarding",
+    zkPassportDevMode: true,
+    enablePassportPilot: false,
+    aztecNodeUrl: "http://localhost:8080",
+    issuerAddress: "0xissuer",
+    localTestAccountIndex: 0,
+  };
+  const pilotPayload = {
+    pilotSchema: PASSPORT_PII_BLIND_PILOT_SCHEMA,
+    activeOwner: "0x1111111111111111111111111111111111111111111111111111111111111111",
+    claimsHash: "123",
+    ghostOwner: "0x2222222222222222222222222222222222222222222222222222222222222222",
+    rootCommitment: "456",
+    credentialValidUntil: String(Math.floor(Date.now() / 1000) + 60),
+    mode: "rooted" as const,
+    ghostDerivationVersion: "v2_scoped" as const,
+  };
+
+  it("rejects pilot payloads when the explicit pilot flag is disabled", async () => {
+    const contextLoader = vi.fn();
+
+    await expect(
+      dispatchVerifyAndIssuePassportRequest(config, pilotPayload, contextLoader as never),
+    ).rejects.toThrow("Passport PII-blind pilot issuance is disabled");
+    expect(contextLoader).not.toHaveBeenCalled();
+  });
+
+  it("allows pilot payload dispatch only when MAGNA_ENABLE_PASSPORT_PILOT-style config is enabled", async () => {
+    const send = vi.fn(async () => ({ txHash: "0xpilot" }));
+    const contextLoader = vi.fn(async () => ({
+      orchestratorAddress: {
+        toString: () => "0xorchestrator",
+      },
+      issuer: {
+        methods: {
+          register_rooted_passport_v2: vi.fn(() => ({ send })),
+        },
+      },
+    }));
+
+    const result = await dispatchVerifyAndIssuePassportRequest(
+      { ...config, enablePassportPilot: true },
+      pilotPayload,
+      contextLoader as never,
+    );
+
+    expect(result.verificationSummary).toEqual({
+      verified: true,
+      pilot: true,
+      piiBlind: true,
+    });
+    expect(contextLoader).toHaveBeenCalledOnce();
+  });
+});
+
 describe("verifyAndIssuePassportPilot", () => {
   it("registers using v2 contract methods and never returns normalized passport PII", async () => {
     const send = vi.fn(async () => ({ txHash: "0xpilot" }));
@@ -300,6 +374,7 @@ describe("verifyAndIssuePassportPilot", () => {
         zkPassportDomain: "localhost",
         zkPassportScope: "magna-passport-onboarding",
         zkPassportDevMode: true,
+        enablePassportPilot: true,
         aztecNodeUrl: "http://localhost:8080",
         issuerAddress: "0xissuer",
         localTestAccountIndex: 0,
@@ -345,6 +420,7 @@ describe("verifyAndIssuePassportPilot", () => {
           zkPassportDomain: "localhost",
           zkPassportScope: "magna-passport-onboarding",
           zkPassportDevMode: true,
+          enablePassportPilot: true,
           aztecNodeUrl: "http://localhost:8080",
           issuerAddress: "0xissuer",
           localTestAccountIndex: 0,
@@ -376,6 +452,7 @@ describe("verifyAndIssuePassportA1", () => {
     zkPassportDomain: "localhost",
     zkPassportScope: "magna-passport-onboarding",
     zkPassportDevMode: false,
+    enablePassportPilot: false,
     aztecNodeUrl: "http://localhost:8080",
     issuerAddress: "0xissuer",
     localTestAccountIndex: 0,
@@ -654,6 +731,7 @@ describe("verifyRootRecoveryPreflight", () => {
     zkPassportDomain: "localhost",
     zkPassportScope: "magna-passport-onboarding",
     zkPassportDevMode: true,
+    enablePassportPilot: false,
     aztecNodeUrl: "http://localhost:8080",
     issuerAddress: "0xissuer",
     localTestAccountIndex: 0,
@@ -764,6 +842,7 @@ describe("verifyAndIssueInstagram", () => {
     zkPassportDomain: "localhost",
     zkPassportScope: "magna-passport-onboarding",
     zkPassportDevMode: true,
+    enablePassportPilot: false,
     aztecNodeUrl: "http://localhost:8080",
     issuerAddress: "0xissuer",
     localTestAccountIndex: 0,

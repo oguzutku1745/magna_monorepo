@@ -90,14 +90,25 @@ function parseIssuanceMode(value: string | boolean | number | undefined): "roote
   return "rooted";
 }
 
-function parsePassportIssuanceKind(value: string | boolean | number | undefined): "legacy" | "pilot" | "a1" {
+function parsePassportIssuanceKind(
+  value: string | boolean | number | undefined,
+  isProduction: boolean,
+): "legacy" | "pilot" | "a1" {
   if (typeof value === "string") {
     const normalized = value.trim().toLowerCase();
-    if (normalized === "pilot" || normalized === "a1") {
+    if (normalized === "legacy" || normalized === "pilot" || normalized === "a1") {
+      if (isProduction && normalized !== "a1") {
+        throw new Error(
+          "VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND must be a1 in production builds. legacy and pilot are development/test modes.",
+        );
+      }
       return normalized;
     }
+    if (normalized) {
+      throw new Error("VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND must be one of legacy, pilot, or a1.");
+    }
   }
-  return "legacy";
+  return isProduction ? "a1" : "legacy";
 }
 
 function parseGhostDerivationVersion(
@@ -126,6 +137,7 @@ function buildSponsorCatalog(
 }
 
 export function getAppEnv(source: EnvSource = import.meta.env): MagnaAppEnv {
+  const isProduction = parseBoolean(source.PROD, false);
   const legacyCompanySponsorAddress = parseOptionalString(source.VITE_MAGNA_COMPANY_SPONSOR_ADDRESS);
   const configuredSponsorAddresses = parseStringList(source.VITE_MAGNA_COMPANY_SPONSOR_ADDRESSES);
   const sponsorAddressSet = new Set(configuredSponsorAddresses);
@@ -162,7 +174,7 @@ export function getAppEnv(source: EnvSource = import.meta.env): MagnaAppEnv {
     zkPassportRequestScope:
       parseOptionalString(source.VITE_MAGNA_ZKPASSPORT_REQUEST_SCOPE) ?? "magna-passport-onboarding",
     zkPassportDevMode: parseBoolean(source.VITE_MAGNA_ZKPASSPORT_DEV_MODE, false),
-    zkPassportIssuanceKind: parsePassportIssuanceKind(source.VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND),
+    zkPassportIssuanceKind: parsePassportIssuanceKind(source.VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND, isProduction),
     zkPassportPrimaryIssuanceMode: parseIssuanceMode(source.VITE_MAGNA_ZKPASSPORT_PRIMARY_ISSUANCE_MODE),
     zkPassportGhostDerivationVersion: parseGhostDerivationVersion(
       source.VITE_MAGNA_ZKPASSPORT_GHOST_DERIVATION_VERSION,

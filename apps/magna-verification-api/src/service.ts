@@ -46,6 +46,7 @@ export type VerificationApiConfig = {
   zkPassportDomain: string;
   zkPassportScope: string;
   zkPassportDevMode: boolean;
+  enablePassportPilot: boolean;
   aztecNodeUrl: string;
   issuerAddress: string;
   localTestAccountIndex: number;
@@ -454,6 +455,7 @@ export function loadVerificationApiConfigFromEnv(): VerificationApiConfig {
       readFirstEnv(["MAGNA_ZKPASSPORT_DEV_MODE", "VITE_MAGNA_ZKPASSPORT_DEV_MODE"]),
       false,
     ),
+    enablePassportPilot: parseBoolean(readFirstEnv(["MAGNA_ENABLE_PASSPORT_PILOT"]), false),
     aztecNodeUrl: readFirstEnv(["MAGNA_AZTEC_NODE_URL", "VITE_AZTEC_NODE_URL"]) ?? "http://localhost:8080",
     issuerAddress: requiredEnv(["MAGNA_ISSUER_ADDRESS", "VITE_MAGNA_ISSUER_ADDRESS"]),
     localTestAccountIndex: parseNumber(
@@ -1339,6 +1341,11 @@ export async function dispatchVerifyAndIssuePassportRequest(
     case "passport-a1":
       return verifyAndIssuePassportA1(config, input as VerifyAndIssuePassportA1Request, contextLoader);
     case "passport-pii-blind-pilot":
+      if (!config.enablePassportPilot) {
+        throw new Error(
+          "Passport PII-blind pilot issuance is disabled. Set MAGNA_ENABLE_PASSPORT_PILOT=true only in development/test to enable it.",
+        );
+      }
       return verifyAndIssuePassportPilot(config, input as VerifyAndIssuePassportPilotRequest, contextLoader);
     case "passport-legacy":
       return verifyAndIssuePassport(config, input as VerifyAndIssueRequest, contextLoader);
