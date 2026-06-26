@@ -230,8 +230,11 @@ describe("passport A1 request validation and dispatch", () => {
     ghostOwner: "0x2222222222222222222222222222222222222222222222222222222222222222",
     rootCommitment: "456",
     credentialValidUntil: "1893456000",
-    wrapperProof: { proof: "wrapper-proof" },
     wrapperPublicInputs: ["123", "789", "101112", "18", "1893456000", "999"],
+    wrapperProof: {
+      proof: "wrapper-proof",
+      publicInputs: ["123", "789", "101112", "18", "1893456000", "999"],
+    },
     claimsHash: "123",
     mode: "rooted" as const,
     ghostDerivationVersion: "v2_scoped" as const,
@@ -383,8 +386,11 @@ describe("verifyAndIssuePassportA1", () => {
     ghostOwner: "0x2222222222222222222222222222222222222222222222222222222222222222",
     rootCommitment: "456",
     credentialValidUntil: "1893456000",
-    wrapperProof: { proof: "wrapper-proof" },
     wrapperPublicInputs: ["123", "789", "101112", "18", "1893456000", "999"],
+    wrapperProof: {
+      proof: "wrapper-proof",
+      publicInputs: ["123", "789", "101112", "18", "1893456000", "999"],
+    },
     mode: "rooted" as const,
     ghostDerivationVersion: "v2_scoped" as const,
   };
@@ -435,12 +441,16 @@ describe("verifyAndIssuePassportA1", () => {
 
   it("verifies wrapper proof and registers passport-mode A1 issuance with v2 values", async () => {
     const { context, registerRootedPassportV2, registerCredentialV2 } = contextWithV2Issuer();
-    const verifyWrapperProof = vi.fn(async () => true);
+    const verifyWrapperProof = vi.fn(async () => ({
+      verified: true,
+      publicInputs: cleanA1Payload.wrapperPublicInputs,
+    }));
 
     const result = await verifyAndIssuePassportA1(
       config,
       {
         ...cleanA1Payload,
+        wrapperProof: { proof: "wrapper-proof-without-public-inputs" },
         mode: "passport",
         ghostDerivationVersion: undefined,
       },
@@ -455,6 +465,29 @@ describe("verifyAndIssuePassportA1", () => {
     expect("normalizedClaims" in result).toBe(false);
   });
 
+  it("rejects mismatched proof-bound public inputs before verification or issuance", async () => {
+    const { context } = contextWithV2Issuer();
+    const verifyWrapperProof = vi.fn(async () => true);
+    const contextLoader = vi.fn(async () => context as never);
+
+    await expect(
+      verifyAndIssuePassportA1(
+        config,
+        {
+          ...cleanA1Payload,
+          wrapperProof: {
+            proof: "wrapper-proof",
+            publicInputs: ["321", "789", "101112", "18", "1893456000", "999"],
+          },
+        },
+        contextLoader,
+        { verifyWrapperProof },
+      ),
+    ).rejects.toThrow("wrapperProof.publicInputs must match wrapperPublicInputs");
+    expect(verifyWrapperProof).not.toHaveBeenCalled();
+    expect(contextLoader).not.toHaveBeenCalled();
+  });
+
   it("rejects invalid wrapper proofs before loading contract context", async () => {
     const contextLoader = vi.fn(async () => {
       throw new Error("context should not be loaded for invalid wrapper proofs");
@@ -465,6 +498,25 @@ describe("verifyAndIssuePassportA1", () => {
         verifyWrapperProof: async () => false,
       }),
     ).rejects.toThrow("Passport A1 wrapper proof verification failed");
+    expect(contextLoader).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when public inputs are only supplied by the request", async () => {
+    const contextLoader = vi.fn(async () => {
+      throw new Error("context should not be loaded for unbound request public inputs");
+    });
+
+    await expect(
+      verifyAndIssuePassportA1(
+        config,
+        {
+          ...cleanA1Payload,
+          wrapperProof: { proof: "wrapper-proof-without-public-inputs" },
+        },
+        contextLoader as never,
+        { verifyWrapperProof: async () => true },
+      ),
+    ).rejects.toThrow("public inputs must be proof-bound or verifier-attested");
     expect(contextLoader).not.toHaveBeenCalled();
   });
 

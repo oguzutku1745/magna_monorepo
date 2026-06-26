@@ -90,8 +90,15 @@ type VerifyAndIssuePassportPilotDependencies = {
   nowMs?: () => number;
 };
 
+type PassportA1WrapperVerificationResult =
+  | boolean
+  | {
+      verified: boolean;
+      publicInputs?: readonly unknown[];
+    };
+
 type VerifyAndIssuePassportA1Dependencies = {
-  verifyWrapperProof?: (proof: unknown) => Promise<boolean>;
+  verifyWrapperProof?: (proof: unknown) => Promise<PassportA1WrapperVerificationResult>;
   parseWrapperPublicInputs?: typeof parsePassportWrapperPublicInputs;
 };
 
@@ -963,6 +970,50 @@ function requireWrapperPublicInputs(value: unknown): string[] {
   return value.map((entry, index) => requireString(entry, `wrapperPublicInputs[${index}]`));
 }
 
+function normalizeBoundWrapperPublicInputs(value: unknown, fieldName: string): string[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`${fieldName} must be an array.`);
+  }
+  return value.map((entry, index) => requireFieldLikeString(entry, `${fieldName}[${index}]`));
+}
+
+function readProofBoundWrapperPublicInputs(proof: unknown): string[] | undefined {
+  if (!proof || typeof proof !== "object") {
+    return undefined;
+  }
+  const publicInputs = Reflect.get(proof, "publicInputs");
+  return publicInputs === undefined
+    ? undefined
+    : normalizeBoundWrapperPublicInputs(publicInputs, "wrapperProof.publicInputs");
+}
+
+function normalizeWrapperVerificationResult(
+  result: PassportA1WrapperVerificationResult,
+): {
+  verified: boolean;
+  publicInputs?: string[];
+} {
+  if (typeof result === "boolean") {
+    return { verified: result };
+  }
+  if (!result || typeof result !== "object") {
+    throw new Error("Unexpected Passport A1 wrapper verifier result.");
+  }
+  return {
+    verified: result.verified === true,
+    publicInputs:
+      result.publicInputs === undefined
+        ? undefined
+        : normalizeBoundWrapperPublicInputs(result.publicInputs, "wrapper verifier publicInputs"),
+  };
+}
+
+function assertSameWrapperPublicInputs(actual: readonly string[], expected: readonly string[], message: string): void {
+  if (actual.length !== expected.length || actual.some((entry, index) => entry !== expected[index])) {
+    throw new Error(message);
+  }
+}
+
 function validatePassportA1WrapperOutputs(outputs: PassportWrapperPublicOutputs): PassportWrapperPublicOutputs {
   return {
     claimsHash: requireDecimalString(outputs.claimsHash, "wrapperPublicInputs.claimsHash"),
@@ -978,6 +1029,18 @@ function validatePassportA1WrapperOutputs(outputs: PassportWrapperPublicOutputs)
     ),
     scopedNullifier: requireDecimalString(outputs.scopedNullifier, "wrapperPublicInputs.scopedNullifier"),
   };
+}
+
+function assertPassportA1PayloadMatchesWrapperOutputs(
+  input: VerifyAndIssuePassportA1Request,
+  outputs: PassportWrapperPublicOutputs,
+): void {
+  if (input.credentialValidUntil !== outputs.credentialValidUntil) {
+    throw new Error("credentialValidUntil must match wrapper public outputs.");
+  }
+  if (input.claimsHash !== undefined && input.claimsHash !== outputs.claimsHash) {
+    throw new Error("claimsHash must match wrapper public outputs.");
+  }
 }
 
 export function validatePassportA1Request(input: VerifyAndIssuePassportA1Request): VerifyAndIssuePassportA1Request {
@@ -1153,7 +1216,7 @@ export async function verifyAndIssuePassportPilot(
   };
 }
 
-async function defaultVerifyPassportWrapperProof(proof: unknown): Promise<boolean> {
+async function defaultVerifyPassportWrapperProof(proof: unknown): Promise<PassportA1WrapperVerificationResult> {
   return verifyPassportWrapperProof(proof as never);
 }
 
@@ -1165,18 +1228,51 @@ export async function verifyAndIssuePassportA1(
 ): Promise<VerifyAndIssueResponse> {
   const validated = validatePassportA1Request(input);
   const parseWrapperPublicInputs = dependencies.parseWrapperPublicInputs ?? parsePassportWrapperPublicInputs;
-  const wrapperOutputs = validatePassportA1WrapperOutputs(parseWrapperPublicInputs(validated.wrapperPublicInputs));
-  if (validated.credentialValidUntil !== wrapperOutputs.credentialValidUntil) {
-    throw new Error("credentialValidUntil must match wrapper public outputs.");
+  const proofBoundPublicInputs = readProofBoundWrapperPublicInputs(validated.wrapperProof);
+  if (proofBoundPublicInputs) {
+    assertSameWrapperPublicInputs(
+      proofBoundPublicInputs,
+      validated.wrapperPublicInputs,
+      "wrapperProof.publicInputs must match wrapperPublicInputs.",
+    );
   }
-  if (validated.claimsHash !== undefined && validated.claimsHash !== wrapperOutputs.claimsHash) {
-    throw new Error("claimsHash must match wrapper public outputs.");
+  let wrapperOutputs = proofBoundPublicInputs
+    ? validatePassportA1WrapperOutputs(parseWrapperPublicInputs(proofBoundPublicInputs))
+    : undefined;
+  if (wrapperOutputs) {
+    assertPassportA1PayloadMatchesWrapperOutputs(validated, wrapperOutputs);
   }
 
   const verifyWrapperProof = dependencies.verifyWrapperProof ?? defaultVerifyPassportWrapperProof;
-  const verified = await verifyWrapperProof(validated.wrapperProof);
-  if (!verified) {
+  const verification = normalizeWrapperVerificationResult(await verifyWrapperProof(validated.wrapperProof));
+  if (!verification.verified) {
     throw new Error("Passport A1 wrapper proof verification failed.");
+  }
+
+  let boundPublicInputs = proofBoundPublicInputs;
+  if (verification.publicInputs) {
+    if (boundPublicInputs) {
+      assertSameWrapperPublicInputs(
+        verification.publicInputs,
+        boundPublicInputs,
+        "Verifier-attested public inputs must match wrapperProof.publicInputs.",
+      );
+    } else {
+      assertSameWrapperPublicInputs(
+        verification.publicInputs,
+        validated.wrapperPublicInputs,
+        "Verifier-attested public inputs must match wrapperPublicInputs.",
+      );
+      boundPublicInputs = verification.publicInputs;
+    }
+  }
+  if (!boundPublicInputs) {
+    throw new Error("Passport A1 wrapper proof public inputs must be proof-bound or verifier-attested.");
+  }
+
+  if (!wrapperOutputs) {
+    wrapperOutputs = validatePassportA1WrapperOutputs(parseWrapperPublicInputs(boundPublicInputs));
+    assertPassportA1PayloadMatchesWrapperOutputs(validated, wrapperOutputs);
   }
 
   const mode = resolveVerificationMode(validated.mode);
