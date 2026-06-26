@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GasFees } from "@aztec/stdlib/gas";
 import {
   CONTRACT_COMPATIBILITY_REQUIREMENTS,
+  buildPassportCommittedClaimsWitness,
   MagnaBrowserClient,
   buildPassportClaimsWitness,
   buildPassportPolicy,
@@ -122,8 +123,14 @@ describe("magna app helpers", () => {
       address: { toString: () => "0xissuer" },
       methods: {
         verify: vi.fn(),
+        verify_v2: vi.fn(() => ({
+          send: vi.fn(async () => ({ txHash: "0xverify-v2" })),
+        })),
         verify_linked: vi.fn(() => ({
           send: vi.fn(async () => ({ txHash: "0xverify-linked" })),
+        })),
+        verify_linked_v2: vi.fn(() => ({
+          send: vi.fn(async () => ({ txHash: "0xverify-linked-v2" })),
         })),
         get_credential_hinted: vi.fn(() => ({
           simulate: vi.fn(async () => ({ result: { note: { claims_hash: 1n } } })),
@@ -223,6 +230,26 @@ describe("magna app helpers", () => {
 
     expect(witness.minAgeProven).toBe(claims.minAgeProven);
     expect(witness.nationalityAlpha3Packed).toBe(claims.nationalityAlpha3Packed);
+  });
+
+  it("builds a committed passport witness with local blinds", () => {
+    const claims = passportClaimsFromForm({
+      nationalityAlpha3: "can",
+      ageThreshold: "21",
+      passportExpiryDate: "2030-01-02",
+    });
+    const witness = buildPassportCommittedClaimsWitness(claims, {
+      nationalityBlind: "111",
+      expiryBlind: 222n,
+    });
+
+    expect(witness).toEqual({
+      minAgeProven: 21,
+      nationalityAlpha3Packed: packAlpha3("CAN"),
+      nationalityBlind: 111n,
+      expiryTs: 1893628799n,
+      expiryBlind: 222n,
+    });
   });
 
   it("maps the zkPassport-style UI form into contract claim fields", () => {
@@ -339,6 +366,8 @@ describe("magna app helpers", () => {
 
   it("declares required contract compatibility surface", () => {
     expect(CONTRACT_COMPATIBILITY_REQUIREMENTS.issuer).toContain("verify");
+    expect(CONTRACT_COMPATIBILITY_REQUIREMENTS.issuer).toContain("verify_v2");
+    expect(CONTRACT_COMPATIBILITY_REQUIREMENTS.issuer).toContain("verify_linked_v2");
     expect(CONTRACT_COMPATIBILITY_REQUIREMENTS.sponsor).toContain("sponsored_verify");
     expect(CONTRACT_COMPATIBILITY_REQUIREMENTS.rightsRegistry).toContain("get_remaining_verifies");
     expect(CONTRACT_COMPATIBILITY_REQUIREMENTS.rightsPurchase).toContain("purchase_rights_public");
@@ -503,6 +532,51 @@ describe("magna app helpers", () => {
       expect.anything(),
     );
     expect(issuerContractMock.methods.get_linked_recovery_hinted).not.toHaveBeenCalled();
+  });
+
+  it("sends rooted v2 passport verify with committed witness fields", async () => {
+    const verifyLinkedV2Send = vi.fn(async () => ({ txHash: "0xverify-linked-v2" }));
+    issuerContractMock.methods.verify_linked_v2 = vi.fn(() => ({
+      send: verifyLinkedV2Send,
+    }));
+    const env = getAppEnv({
+      VITE_MAGNA_ISSUER_ADDRESS: "0xissuer",
+      VITE_MAGNA_REQUIRE_REAL_SENDS: "true",
+    });
+    const client = new MagnaBrowserClient(buildReadyWalletMock() as any, env, "0xuser");
+
+    await client.verifyRootedPassportV2(
+      {
+        minAgeProven: 21,
+        nationalityAlpha3Packed: packAlpha3("CAN"),
+        nationalityBlind: 111n,
+        expiryTs: 1_893_456_000n,
+        expiryBlind: 222n,
+      },
+      createDefaultPolicyForm(),
+      {
+        claimsHash: "1",
+        rootCommitment: "99",
+        hintedCredentialNote: {},
+        hintedStatusNote: {},
+        hintedRootStatusNote: {},
+        hintedRootAuthorityNote: {},
+      },
+    );
+
+    expect(issuerContractMock.methods.verify_linked_v2).toHaveBeenCalledWith(
+      expect.objectContaining({ credential_type: 1 }),
+      {},
+      {},
+      {},
+      {},
+      expect.objectContaining({
+        min_age_proven: 21,
+        expiry_ts: 1_893_456_000n,
+      }),
+      0,
+    );
+    expect(verifyLinkedV2Send).toHaveBeenCalledWith({ from: "0xuser" });
   });
 
   it("retries root recovery hint lookup while PXE catches up to the ghost account", async () => {

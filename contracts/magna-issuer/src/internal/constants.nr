@@ -1,9 +1,12 @@
 pub(crate) global SCHEMA_VERSION_V1: u8 = 1;
+pub(crate) global SCHEMA_VERSION_V2: u8 = 2;
 pub(crate) global MAGNA_CLAIMS_DS: u32 = 0x4D414743; // "MAGC"
 pub(crate) global MAGNA_REVOCATION_DS: u32 = 0x4D415247; // "MARG"
 pub(crate) global MAGNA_ROOT_REVOCATION_DS: u32 = 0x4D41524F; // "MARO"
 pub(crate) global MAGNA_ROOT_AUTHORITY_REVOCATION_DS: u32 = 0x4D415241; // "MARA"
 pub(crate) global MAGNA_GHOST_DS: u32 = 0x4D414748; // "MAGH"
+pub(crate) global MAGNA_PASSPORT_NATIONALITY_COMMITMENT_DS: u32 = 0x4D414E43; // "MANC"
+pub(crate) global MAGNA_PASSPORT_EXPIRY_COMMITMENT_DS: u32 = 0x4D414558; // "MAEX"
 pub(crate) global MAGNA_SPONSOR_RL_DS: u32 = 0x4D414752; // "MAGR" (Magna rate-limit)
 pub(crate) global MAGNA_SPONSOR_RL_WINDOW_SECONDS: u64 = 86400;
 pub(crate) global MAGNA_SPONSOR_RL_MAX_SLOTS_PER_WINDOW: u8 = 5;

@@ -30,7 +30,9 @@ import type {
   VerifyInstagramInput,
   VerifyLinkedInstagramInput,
   VerifyLinkedPassportInput,
+  VerifyLinkedPassportV2Input,
   VerifyPassportInput,
+  VerifyPassportV2Input,
 } from "./types.js";
 
 type ContractCall = {
@@ -97,6 +99,16 @@ function toContractPolicy(policy: VerifyPassportInput["policy"]) {
       op: constraint.op,
       value: constraint.value,
     })),
+  };
+}
+
+function toContractPassportCommittedClaimsWitness(witness: VerifyPassportV2Input["claimsWitness"]) {
+  return {
+    min_age_proven: witness.minAgeProven,
+    nationality_alpha3_packed: witness.nationalityAlpha3Packed,
+    nationality_blind: witness.nationalityBlind,
+    expiry_ts: witness.expiryTs,
+    expiry_blind: witness.expiryBlind,
   };
 }
 
@@ -399,6 +411,63 @@ export class MagnaVerificationEngine {
     });
   }
 
+  async loginWithMagnaV2ThroughConsumer(input: {
+    policy: VerifyPassportInput["policy"];
+    consumerGatewayAddress: string;
+    claimsHash: bigint | string;
+    claimsWitness: VerifyPassportV2Input["claimsWitness"];
+    from: string;
+    sponsorSlot?: number;
+  }) {
+    if (!this.consumerContractFactory) {
+      throw new Error("consumerContractFactory is required for consumer-gateway login");
+    }
+    const hints = await this.findCredentialHints(input.from, input.claimsHash);
+    const policy = toContractPolicy(input.policy);
+    return sendWithTransientLocalNetworkRetry(() => {
+      const consumer = this.consumerContractFactory!(input.consumerGatewayAddress);
+      return consumer.methods
+        .login_with_magna_v2(
+          policy,
+          hints.hintedCredentialNote,
+          hints.hintedStatusNote,
+          toContractPassportCommittedClaimsWitness(input.claimsWitness),
+          input.sponsorSlot ?? 0,
+        )
+        .send({ from: input.from });
+    });
+  }
+
+  async loginWithLinkedMagnaV2ThroughConsumer(input: {
+    policy: VerifyPassportInput["policy"];
+    consumerGatewayAddress: string;
+    rootCommitment: bigint | string;
+    claimsHash: bigint | string;
+    claimsWitness: VerifyPassportV2Input["claimsWitness"];
+    from: string;
+    sponsorSlot?: number;
+  }) {
+    if (!this.consumerContractFactory) {
+      throw new Error("consumerContractFactory is required for consumer-gateway login");
+    }
+    const hints = await this.findLinkedCredentialHints(input.from, input.rootCommitment, input.claimsHash);
+    const policy = toContractPolicy(input.policy);
+    return sendWithTransientLocalNetworkRetry(() => {
+      const consumer = this.consumerContractFactory!(input.consumerGatewayAddress);
+      return consumer.methods
+        .login_with_linked_magna_v2(
+          policy,
+          hints.hintedRootStatusNote,
+          hints.hintedRootAuthorityNote,
+          hints.hintedCredentialNote,
+          hints.hintedStatusNote,
+          toContractPassportCommittedClaimsWitness(input.claimsWitness),
+          input.sponsorSlot ?? 0,
+        )
+        .send({ from: input.from });
+    });
+  }
+
   async registerPassport(input: RegisterPassportInput) {
     const claimsHash = computePassportClaimsHash(input.claims, this.hasher);
     return this.issuerContract.methods
@@ -526,6 +595,34 @@ export class MagnaVerificationEngine {
         input.hintedStatusNote,
         input.claimsWitness.minAgeProven,
         input.claimsWitness.nationalityAlpha3Packed,
+        input.sponsorSlot ?? 0,
+      )
+      .send({ from });
+  }
+
+  async loginWithMagnaV2(input: VerifyPassportV2Input, from: string) {
+    const policy = toContractPolicy(input.policy);
+    return this.issuerContract.methods
+      .verify_v2(
+        policy,
+        input.hintedCredentialNote,
+        input.hintedStatusNote,
+        toContractPassportCommittedClaimsWitness(input.claimsWitness),
+        input.sponsorSlot ?? 0,
+      )
+      .send({ from });
+  }
+
+  async loginWithLinkedMagnaV2(input: VerifyLinkedPassportV2Input, from: string) {
+    const policy = toContractPolicy(input.policy);
+    return this.issuerContract.methods
+      .verify_linked_v2(
+        policy,
+        input.hintedRootStatusNote,
+        input.hintedRootAuthorityNote,
+        input.hintedCredentialNote,
+        input.hintedStatusNote,
+        toContractPassportCommittedClaimsWitness(input.claimsWitness),
         input.sponsorSlot ?? 0,
       )
       .send({ from });

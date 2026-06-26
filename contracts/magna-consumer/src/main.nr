@@ -22,7 +22,7 @@ pub contract MagnaConsumer {
             status_note::StatusNote,
         },
     };
-    use magna_lib::Policy;
+    use magna_lib::{PassportCommittedClaimsWitness, Policy};
 
     #[storage]
     struct Storage<Context> {
@@ -64,6 +64,28 @@ pub contract MagnaConsumer {
     }
 
     #[external("private")]
+    fn login_with_magna_v2(
+        policy: Policy,
+        hinted_credential: HintedNote<CredentialNote>,
+        hinted_status: HintedNote<StatusNote>,
+        claims_witness: PassportCommittedClaimsWitness,
+        sponsor_slot: u8,
+    ) {
+        let caller = self.msg_sender();
+        MagnaIssuer::at(self.storage.issuer.read())
+            .verify_consumer_v2(
+                caller,
+                policy,
+                hinted_credential,
+                hinted_status,
+                claims_witness,
+                sponsor_slot,
+            )
+            .call(self.context);
+        self.enqueue_self._increment_login_count();
+    }
+
+    #[external("private")]
     fn login_with_linked_magna(
         policy: Policy,
         hinted_root_status: HintedNote<RootStatusNote>,
@@ -87,6 +109,32 @@ pub contract MagnaConsumer {
                 hinted_status,
                 min_age_proven,
                 nationality_alpha3_packed,
+                sponsor_slot,
+            )
+            .call(self.context);
+        self.enqueue_self._increment_login_count();
+    }
+
+    #[external("private")]
+    fn login_with_linked_magna_v2(
+        policy: Policy,
+        hinted_root_status: HintedNote<RootStatusNote>,
+        hinted_root_authority: HintedNote<RootAuthorityNote>,
+        hinted_credential: HintedNote<LinkedCredentialNote>,
+        hinted_status: HintedNote<LinkedStatusNote>,
+        claims_witness: PassportCommittedClaimsWitness,
+        sponsor_slot: u8,
+    ) {
+        let caller = self.msg_sender();
+        MagnaIssuer::at(self.storage.issuer.read())
+            .verify_linked_consumer_v2(
+                caller,
+                policy,
+                hinted_root_status,
+                hinted_root_authority,
+                hinted_credential,
+                hinted_status,
+                claims_witness,
                 sponsor_slot,
             )
             .call(self.context);

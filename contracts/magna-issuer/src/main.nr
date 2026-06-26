@@ -27,9 +27,17 @@ pub contract MagnaIssuer {
         utils::comparison::Comparator,
     };
     use crate::internal::{
-        claims::{compute_instagram_claims_hash, compute_passport_claims_hash},
+        claims::{
+            compute_instagram_claims_hash,
+            compute_passport_claims_hash,
+            compute_passport_claims_hash_v2,
+            compute_passport_expiry_commitment,
+            compute_passport_nationality_commitment,
+        },
         constants::{
             MAGNA_CLAIMS_DS,
+            MAGNA_PASSPORT_EXPIRY_COMMITMENT_DS,
+            MAGNA_PASSPORT_NATIONALITY_COMMITMENT_DS,
             MAGNA_REVOCATION_DS,
             MAGNA_ROOT_AUTHORITY_REVOCATION_DS,
             MAGNA_ROOT_REVOCATION_DS,
@@ -40,6 +48,7 @@ pub contract MagnaIssuer {
             MAGNA_SPONSOR_RL_MAX_SLOTS_PER_WINDOW,
             MAGNA_SPONSOR_RL_WINDOW_SECONDS,
             SCHEMA_VERSION_V1,
+            SCHEMA_VERSION_V2,
         },
         errors::{assert_orchestrator_sender, assert_owners_match_sender},
         metering::increment_counter,
@@ -54,6 +63,7 @@ pub contract MagnaIssuer {
 
     use magna_lib::{
         InstagramClaims,
+        PassportCommittedClaimsWitness,
         PassportClaims,
         Policy,
         require_policy_matches_instagram,
@@ -443,6 +453,25 @@ pub contract MagnaIssuer {
     }
 
     #[external("private")]
+    fn verify_v2(
+        policy: Policy,
+        hinted_credential: HintedNote<CredentialNote>,
+        hinted_status: HintedNote<StatusNote>,
+        claims_witness: PassportCommittedClaimsWitness,
+        sponsor_slot: u8,
+    ) {
+        self.internal.verify_for_caller_v2(
+            self.msg_sender(),
+            policy,
+            hinted_credential,
+            hinted_status,
+            claims_witness,
+            sponsor_slot,
+            false,
+        );
+    }
+
+    #[external("private")]
     fn verify_instagram(
         policy: Policy,
         hinted_credential: HintedNote<CredentialNote>,
@@ -483,6 +512,31 @@ pub contract MagnaIssuer {
             hinted_status,
             min_age_proven,
             nationality_alpha3_packed,
+            sponsor_slot,
+            true,
+        );
+    }
+
+    #[external("private")]
+    fn verify_sponsored_v2(
+        caller: AztecAddress,
+        policy: Policy,
+        hinted_credential: HintedNote<CredentialNote>,
+        hinted_status: HintedNote<StatusNote>,
+        claims_witness: PassportCommittedClaimsWitness,
+        sponsor_slot: u8,
+    ) {
+        assert(caller != AztecAddress::zero(), "caller must be non-zero");
+        let sender = self.msg_sender();
+        let allowlisted = self.storage.company_sponsor_gateways.at(sender).read();
+        let disabled = self.storage.disabled_company_sponsor_gateways.at(sender).get_current_value();
+        assert(allowlisted & !disabled, "company sponsor only");
+        self.internal.verify_for_caller_v2(
+            caller,
+            policy,
+            hinted_credential,
+            hinted_status,
+            claims_witness,
             sponsor_slot,
             true,
         );
@@ -541,6 +595,31 @@ pub contract MagnaIssuer {
     }
 
     #[external("private")]
+    fn verify_consumer_v2(
+        caller: AztecAddress,
+        policy: Policy,
+        hinted_credential: HintedNote<CredentialNote>,
+        hinted_status: HintedNote<StatusNote>,
+        claims_witness: PassportCommittedClaimsWitness,
+        sponsor_slot: u8,
+    ) {
+        assert(caller != AztecAddress::zero(), "caller must be non-zero");
+        let sender = self.msg_sender();
+        let allowlisted = self.storage.consumer_gateways.at(sender).get_current_value();
+        let disabled = self.storage.disabled_consumer_gateways.at(sender).get_current_value();
+        assert(allowlisted & !disabled, "consumer only");
+        self.internal.verify_for_caller_v2(
+            caller,
+            policy,
+            hinted_credential,
+            hinted_status,
+            claims_witness,
+            sponsor_slot,
+            false,
+        );
+    }
+
+    #[external("private")]
     fn verify_linked_consumer(
         caller: AztecAddress,
         policy: Policy,
@@ -572,6 +651,35 @@ pub contract MagnaIssuer {
     }
 
     #[external("private")]
+    fn verify_linked_consumer_v2(
+        caller: AztecAddress,
+        policy: Policy,
+        hinted_root_status: HintedNote<RootStatusNote>,
+        hinted_root_authority: HintedNote<RootAuthorityNote>,
+        hinted_credential: HintedNote<LinkedCredentialNote>,
+        hinted_status: HintedNote<LinkedStatusNote>,
+        claims_witness: PassportCommittedClaimsWitness,
+        sponsor_slot: u8,
+    ) {
+        assert(caller != AztecAddress::zero(), "caller must be non-zero");
+        let sender = self.msg_sender();
+        let allowlisted = self.storage.consumer_gateways.at(sender).get_current_value();
+        let disabled = self.storage.disabled_consumer_gateways.at(sender).get_current_value();
+        assert(allowlisted & !disabled, "consumer only");
+        self.internal.verify_linked_for_caller_v2(
+            caller,
+            policy,
+            hinted_root_status,
+            hinted_root_authority,
+            hinted_credential,
+            hinted_status,
+            claims_witness,
+            sponsor_slot,
+            false,
+        );
+    }
+
+    #[external("private")]
     fn verify_linked(
         policy: Policy,
         hinted_root_status: HintedNote<RootStatusNote>,
@@ -591,6 +699,29 @@ pub contract MagnaIssuer {
             hinted_status,
             min_age_proven,
             nationality_alpha3_packed,
+            sponsor_slot,
+            false,
+        );
+    }
+
+    #[external("private")]
+    fn verify_linked_v2(
+        policy: Policy,
+        hinted_root_status: HintedNote<RootStatusNote>,
+        hinted_root_authority: HintedNote<RootAuthorityNote>,
+        hinted_credential: HintedNote<LinkedCredentialNote>,
+        hinted_status: HintedNote<LinkedStatusNote>,
+        claims_witness: PassportCommittedClaimsWitness,
+        sponsor_slot: u8,
+    ) {
+        self.internal.verify_linked_for_caller_v2(
+            self.msg_sender(),
+            policy,
+            hinted_root_status,
+            hinted_root_authority,
+            hinted_credential,
+            hinted_status,
+            claims_witness,
             sponsor_slot,
             false,
         );
@@ -645,6 +776,35 @@ pub contract MagnaIssuer {
             hinted_status,
             min_age_proven,
             nationality_alpha3_packed,
+            sponsor_slot,
+            true,
+        );
+    }
+
+    #[external("private")]
+    fn verify_linked_sponsored_v2(
+        caller: AztecAddress,
+        policy: Policy,
+        hinted_root_status: HintedNote<RootStatusNote>,
+        hinted_root_authority: HintedNote<RootAuthorityNote>,
+        hinted_credential: HintedNote<LinkedCredentialNote>,
+        hinted_status: HintedNote<LinkedStatusNote>,
+        claims_witness: PassportCommittedClaimsWitness,
+        sponsor_slot: u8,
+    ) {
+        assert(caller != AztecAddress::zero(), "caller must be non-zero");
+        let sender = self.msg_sender();
+        let allowlisted = self.storage.company_sponsor_gateways.at(sender).read();
+        let disabled = self.storage.disabled_company_sponsor_gateways.at(sender).get_current_value();
+        assert(allowlisted & !disabled, "company sponsor only");
+        self.internal.verify_linked_for_caller_v2(
+            caller,
+            policy,
+            hinted_root_status,
+            hinted_root_authority,
+            hinted_credential,
+            hinted_status,
+            claims_witness,
             sponsor_slot,
             true,
         );
@@ -1019,6 +1179,117 @@ pub contract MagnaIssuer {
     }
 
     #[internal("private")]
+    fn claims_from_committed_passport_witness(
+        credential_type: u8,
+        expected_claims_hash: Field,
+        claims_witness: PassportCommittedClaimsWitness,
+    ) -> PassportClaims {
+        let nationality_commitment = compute_passport_nationality_commitment(
+            claims_witness.nationality_alpha3_packed,
+            claims_witness.nationality_blind,
+            MAGNA_PASSPORT_NATIONALITY_COMMITMENT_DS,
+        );
+        let expiry_commitment = compute_passport_expiry_commitment(
+            claims_witness.expiry_ts,
+            claims_witness.expiry_blind,
+            MAGNA_PASSPORT_EXPIRY_COMMITMENT_DS,
+        );
+        let claims_hash = compute_passport_claims_hash_v2(
+            SCHEMA_VERSION_V2,
+            credential_type,
+            nationality_commitment,
+            claims_witness.min_age_proven,
+            expiry_commitment,
+            MAGNA_CLAIMS_DS,
+        );
+        assert(claims_hash == expected_claims_hash, "claims hash mismatch");
+
+        PassportClaims {
+            min_age_proven: claims_witness.min_age_proven,
+            nationality_alpha3_packed: claims_witness.nationality_alpha3_packed,
+            expiry_ts: claims_witness.expiry_ts,
+        }
+    }
+
+    #[internal("private")]
+    fn verify_for_caller_v2(
+        caller: AztecAddress,
+        policy: Policy,
+        hinted_credential: HintedNote<CredentialNote>,
+        hinted_status: HintedNote<StatusNote>,
+        claims_witness: PassportCommittedClaimsWitness,
+        sponsor_slot: u8,
+        force_sponsored: bool,
+    ) {
+        assert_owners_match_sender(hinted_credential.owner, hinted_status.owner, caller);
+
+        let header = self.context.get_anchor_block_header();
+        let _ = aztec::history::note::assert_note_existed_by(header, hinted_credential);
+        let _ = aztec::history::note::assert_note_existed_by(header, hinted_status);
+
+        assert(
+            hinted_credential.note.credential_type == hinted_status.note.credential_type,
+            "credential/status type mismatch",
+        );
+        assert(hinted_credential.note.claims_hash == hinted_status.note.claims_hash, "claims mismatch");
+
+        let claims = self.internal.claims_from_committed_passport_witness(
+            hinted_credential.note.credential_type,
+            hinted_credential.note.claims_hash,
+            claims_witness,
+        );
+        require_policy_matches_passport(policy, hinted_credential.note.credential_type, claims);
+
+        let verify_meter_hook = self.storage.verify_meter_hook.read();
+        let sponsored_mode = force_sponsored | (verify_meter_hook != AztecAddress::zero());
+        let mut inclusion_deadline = hinted_credential.note.expiry_ts;
+        if sponsored_mode {
+            let mask = self.storage.sponsored_credential_type_mask.get_current_value();
+            if mask != 0 {
+                let bit = 1 as u64 << (hinted_credential.note.credential_type as u64);
+                assert((mask & bit) == bit, "credential type not sponsored");
+            }
+
+            assert(sponsor_slot < MAGNA_SPONSOR_RL_MAX_SLOTS_PER_WINDOW, "invalid sponsor slot");
+            let anchor_ts = header.global_variables.timestamp;
+            let window_id = anchor_ts / MAGNA_SPONSOR_RL_WINDOW_SECONDS;
+
+            let rl_nullifier = compute_sponsor_rate_limit_nullifier(
+                hinted_status.note.revocation_secret,
+                hinted_status.note.credential_type,
+                hinted_status.note.claims_hash,
+                window_id,
+                sponsor_slot,
+                MAGNA_SPONSOR_RL_DS,
+            );
+            self.context.push_nullifier_unsafe(rl_nullifier);
+
+            let window_end = (window_id + 1) * MAGNA_SPONSOR_RL_WINDOW_SECONDS;
+            if window_end < hinted_credential.note.expiry_ts {
+                inclusion_deadline = window_end;
+            }
+        }
+        self.context.set_expiration_timestamp(inclusion_deadline);
+
+        let revocation_nullifier = compute_revocation_nullifier(
+            hinted_status.note.revocation_secret,
+            hinted_status.note.credential_type,
+            hinted_status.note.claims_hash,
+            MAGNA_REVOCATION_DS,
+        );
+        let siloed_revocation_nullifier = compute_siloed_nullifier(self.address, revocation_nullifier);
+        assert_nullifier_did_not_exist_by(header, siloed_revocation_nullifier);
+
+        self.enqueue_self._meter_verify();
+
+        if verify_meter_hook != AztecAddress::zero() {
+            MagnaVerifyMeterHook::at(verify_meter_hook)
+                .meter_verify_or_revert(hinted_credential.note.credential_type)
+                .enqueue(self.context);
+        }
+    }
+
+    #[internal("private")]
     fn verify_instagram_for_caller(
         caller: AztecAddress,
         policy: Policy,
@@ -1161,6 +1432,135 @@ pub contract MagnaIssuer {
             nationality_alpha3_packed,
             expiry_ts: hinted_credential.note.expiry_ts,
         };
+        require_policy_matches_passport(policy, hinted_credential.note.credential_type, claims);
+
+        let verify_meter_hook = self.storage.verify_meter_hook.read();
+        let sponsored_mode = force_sponsored | (verify_meter_hook != AztecAddress::zero());
+        let mut inclusion_deadline = hinted_credential.note.expiry_ts;
+        if hinted_root_authority.note.authority_expiry_ts < inclusion_deadline {
+            inclusion_deadline = hinted_root_authority.note.authority_expiry_ts;
+        }
+        if sponsored_mode {
+            let mask = self.storage.sponsored_credential_type_mask.get_current_value();
+            if mask != 0 {
+                let bit = 1 as u64 << (hinted_credential.note.credential_type as u64);
+                assert((mask & bit) == bit, "credential type not sponsored");
+            }
+
+            assert(sponsor_slot < MAGNA_SPONSOR_RL_MAX_SLOTS_PER_WINDOW, "invalid sponsor slot");
+            let anchor_ts = header.global_variables.timestamp;
+            let window_id = anchor_ts / MAGNA_SPONSOR_RL_WINDOW_SECONDS;
+            let rl_nullifier = compute_sponsor_rate_limit_nullifier(
+                hinted_status.note.revocation_secret,
+                hinted_status.note.credential_type,
+                hinted_status.note.claims_hash,
+                window_id,
+                sponsor_slot,
+                MAGNA_SPONSOR_RL_DS,
+            );
+            self.context.push_nullifier_unsafe(rl_nullifier);
+
+            let window_end = (window_id + 1) * MAGNA_SPONSOR_RL_WINDOW_SECONDS;
+            if window_end < hinted_credential.note.expiry_ts {
+                inclusion_deadline = window_end;
+            }
+        }
+        self.context.set_expiration_timestamp(inclusion_deadline);
+
+        let linked_revocation_nullifier = compute_revocation_nullifier(
+            hinted_status.note.revocation_secret,
+            hinted_status.note.credential_type,
+            hinted_status.note.claims_hash,
+            MAGNA_REVOCATION_DS,
+        );
+        let siloed_linked_revocation_nullifier = compute_siloed_nullifier(
+            self.address,
+            linked_revocation_nullifier,
+        );
+        assert_nullifier_did_not_exist_by(header, siloed_linked_revocation_nullifier);
+
+        let root_revocation_nullifier = compute_root_revocation_nullifier(
+            hinted_root_status.note.revocation_secret,
+            hinted_root_status.note.root_commitment,
+            MAGNA_ROOT_REVOCATION_DS,
+        );
+        let siloed_root_revocation_nullifier = compute_siloed_nullifier(
+            self.address,
+            root_revocation_nullifier,
+        );
+        assert_nullifier_did_not_exist_by(header, siloed_root_revocation_nullifier);
+
+        let root_authority_revocation_nullifier = compute_root_authority_revocation_nullifier(
+            hinted_root_authority.note.revocation_secret,
+            hinted_root_authority.note.root_commitment,
+            hinted_root_authority.note.claims_hash,
+            MAGNA_ROOT_AUTHORITY_REVOCATION_DS,
+        );
+        let siloed_root_authority_revocation_nullifier = compute_siloed_nullifier(
+            self.address,
+            root_authority_revocation_nullifier,
+        );
+        assert_nullifier_did_not_exist_by(header, siloed_root_authority_revocation_nullifier);
+
+        self.enqueue_self._meter_verify();
+
+        if verify_meter_hook != AztecAddress::zero() {
+            MagnaVerifyMeterHook::at(verify_meter_hook)
+                .meter_verify_or_revert(hinted_credential.note.credential_type)
+                .enqueue(self.context);
+        }
+    }
+
+    #[internal("private")]
+    fn verify_linked_for_caller_v2(
+        caller: AztecAddress,
+        policy: Policy,
+        hinted_root_status: HintedNote<RootStatusNote>,
+        hinted_root_authority: HintedNote<RootAuthorityNote>,
+        hinted_credential: HintedNote<LinkedCredentialNote>,
+        hinted_status: HintedNote<LinkedStatusNote>,
+        claims_witness: PassportCommittedClaimsWitness,
+        sponsor_slot: u8,
+        force_sponsored: bool,
+    ) {
+        assert(hinted_root_status.owner == caller, "root status owner mismatch");
+        assert(hinted_root_authority.owner == caller, "root authority owner mismatch");
+        assert(hinted_credential.owner == caller, "linked credential owner mismatch");
+        assert(hinted_status.owner == caller, "linked status owner mismatch");
+
+        let header = self.context.get_anchor_block_header();
+        let _ = aztec::history::note::assert_note_existed_by(header, hinted_root_status);
+        let _ = aztec::history::note::assert_note_existed_by(header, hinted_root_authority);
+        let _ = aztec::history::note::assert_note_existed_by(header, hinted_credential);
+        let _ = aztec::history::note::assert_note_existed_by(header, hinted_status);
+
+        assert(
+            hinted_credential.note.root_commitment == hinted_status.note.root_commitment,
+            "linked root mismatch",
+        );
+        assert(
+            hinted_credential.note.root_commitment == hinted_root_status.note.root_commitment,
+            "root status mismatch",
+        );
+        assert(
+            hinted_root_authority.note.root_commitment == hinted_root_status.note.root_commitment,
+            "root authority mismatch",
+        );
+        assert(
+            hinted_credential.note.credential_type == hinted_status.note.credential_type,
+            "linked credential/status type mismatch",
+        );
+        assert(hinted_credential.note.claims_hash == hinted_status.note.claims_hash, "linked claims mismatch");
+        assert(
+            hinted_root_authority.note.claims_hash == hinted_credential.note.claims_hash,
+            "root authority claims mismatch",
+        );
+
+        let claims = self.internal.claims_from_committed_passport_witness(
+            hinted_credential.note.credential_type,
+            hinted_credential.note.claims_hash,
+            claims_witness,
+        );
         require_policy_matches_passport(policy, hinted_credential.note.credential_type, claims);
 
         let verify_meter_hook = self.storage.verify_meter_hook.read();

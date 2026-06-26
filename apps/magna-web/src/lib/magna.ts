@@ -20,6 +20,7 @@ import {
   type GhostDerivationVersion,
   type GhostKeyMaterial,
   type PassportCanonicalClaims,
+  type PassportCommittedClaimsWitness,
 } from "@magna/wallet";
 import { deriveRootCommitment } from "@magna/wallet";
 import type { Policy } from "@magna/core";
@@ -43,6 +44,8 @@ import { createPublicClient, createWalletClient, http, pad, parseAbiItem, type H
 import { privateKeyToAccount } from "viem/accounts";
 
 const MAGNA_CLAIMS_DS = 0x4d414743n;
+const MAGNA_PASSPORT_NATIONALITY_COMMITMENT_DS = 0x4d414e43n;
+const MAGNA_PASSPORT_EXPIRY_COMMITMENT_DS = 0x4d414558n;
 const HINT_SYNC_ATTEMPTS = 12;
 const HINT_SYNC_DELAY_MS = 1_000;
 const RIGHTS_SNAPSHOT_SYNC_ATTEMPTS = 20;
@@ -169,7 +172,9 @@ export const CONTRACT_COMPATIBILITY_REQUIREMENTS = {
     "register_credential",
     "register_rooted_passport",
     "verify",
+    "verify_v2",
     "verify_linked",
+    "verify_linked_v2",
     "add_company_sponsor_gateway",
     "remove_company_sponsor_gateway",
     "is_company_sponsor_gateway",
@@ -441,6 +446,28 @@ async function computePassportClaimsHashAsync(claims: PassportCanonicalClaims): 
   return result.toBigInt();
 }
 
+async function computePassportCommittedClaimsHashAsync(witness: PassportCommittedClaimsWitness): Promise<bigint> {
+  const nationalityCommitment = await poseidon2HashWithSeparator(
+    [witness.nationalityAlpha3Packed, witness.nationalityBlind],
+    Number(MAGNA_PASSPORT_NATIONALITY_COMMITMENT_DS),
+  );
+  const expiryCommitment = await poseidon2HashWithSeparator(
+    [witness.expiryTs, witness.expiryBlind],
+    Number(MAGNA_PASSPORT_EXPIRY_COMMITMENT_DS),
+  );
+  const result = await poseidon2HashWithSeparator(
+    [
+      2n,
+      BigInt(CredentialType.Passport),
+      nationalityCommitment.toBigInt(),
+      BigInt(witness.minAgeProven),
+      expiryCommitment.toBigInt(),
+    ],
+    Number(MAGNA_CLAIMS_DS),
+  );
+  return result.toBigInt();
+}
+
 export function passportClaimsFromForm(form: PassportClaimsForm): PassportCanonicalClaims {
   return {
     schemaVersion: 1,
@@ -479,6 +506,29 @@ export function buildPassportClaimsWitness(claims: PassportCanonicalClaims) {
   return {
     minAgeProven: claims.minAgeProven,
     nationalityAlpha3Packed: claims.nationalityAlpha3Packed,
+  };
+}
+
+export function buildPassportCommittedClaimsWitness(
+  claims: PassportCanonicalClaims,
+  input: { nationalityBlind: bigint | string; expiryBlind: bigint | string },
+): PassportCommittedClaimsWitness {
+  return {
+    minAgeProven: claims.minAgeProven,
+    nationalityAlpha3Packed: claims.nationalityAlpha3Packed,
+    nationalityBlind: typeof input.nationalityBlind === "bigint" ? input.nationalityBlind : BigInt(input.nationalityBlind),
+    expiryTs: claims.expiryTs,
+    expiryBlind: typeof input.expiryBlind === "bigint" ? input.expiryBlind : BigInt(input.expiryBlind),
+  };
+}
+
+function toContractPassportCommittedClaimsWitness(witness: PassportCommittedClaimsWitness) {
+  return {
+    min_age_proven: witness.minAgeProven,
+    nationality_alpha3_packed: toField(witness.nationalityAlpha3Packed),
+    nationality_blind: toField(witness.nationalityBlind),
+    expiry_ts: witness.expiryTs,
+    expiry_blind: toField(witness.expiryBlind),
   };
 }
 
@@ -828,6 +878,11 @@ export class MagnaBrowserClient {
     return await this.fetchPassportHintsByClaimsHash(ownerAddress, claimsHash);
   }
 
+  async fetchPassportV2Hints(ownerAddress: string, claimsWitness: PassportCommittedClaimsWitness): Promise<PassportHints> {
+    const claimsHash = await computePassportCommittedClaimsHashAsync(claimsWitness);
+    return await this.fetchPassportHintsByClaimsHash(ownerAddress, claimsHash);
+  }
+
   async fetchRootedPassportHintsByClaimsHash(
     ownerAddress: string,
     rootCommitment: bigint | string,
@@ -868,6 +923,15 @@ export class MagnaBrowserClient {
     return await this.fetchRootedPassportHintsByClaimsHash(ownerAddress, rootCommitment, claimsHash);
   }
 
+  async fetchRootedPassportV2Hints(
+    ownerAddress: string,
+    rootCommitment: bigint | string,
+    claimsWitness: PassportCommittedClaimsWitness,
+  ): Promise<RootedPassportHints> {
+    const claimsHash = await computePassportCommittedClaimsHashAsync(claimsWitness);
+    return await this.fetchRootedPassportHintsByClaimsHash(ownerAddress, rootCommitment, claimsHash);
+  }
+
   async verifyPassport(claimsForm: PassportClaimsForm, policyForm: PolicyForm, hints: PassportHints): Promise<TxOutcome> {
     this.assertRealTransactionMode("verifyPassport");
     await this.ensureContractsRegistered();
@@ -890,6 +954,39 @@ export class MagnaBrowserClient {
         hints.hintedStatusNote as never,
         witness.minAgeProven,
         toField(witness.nationalityAlpha3Packed),
+        readSponsorSlot(policyForm),
+      )
+      .send({ from: toAddress(this.userAddress) });
+
+    return {
+      txHash: readTxHash(receipt),
+      receipt,
+    };
+  }
+
+  async verifyPassportV2(
+    claimsWitness: PassportCommittedClaimsWitness,
+    policyForm: PolicyForm,
+    hints: PassportHints,
+  ): Promise<TxOutcome> {
+    this.assertRealTransactionMode("verifyPassportV2");
+    await this.ensureContractsRegistered();
+    await this.ensureUserAccountIsDeployed();
+    const policy = buildPassportPolicy(policyForm);
+    const normalizedPolicy = normalizePolicy(policy);
+    const receipt = await this.issuer.methods
+      .verify_v2(
+        {
+          credential_type: normalizedPolicy.credentialType,
+          constraints: normalizedPolicy.constraints.map(constraint => ({
+            claim_id: constraint.claimId,
+            op: constraint.op,
+            value: constraint.value,
+          })),
+        },
+        hints.hintedCredentialNote as never,
+        hints.hintedStatusNote as never,
+        toContractPassportCommittedClaimsWitness(claimsWitness),
         readSponsorSlot(policyForm),
       )
       .send({ from: toAddress(this.userAddress) });
@@ -980,6 +1077,41 @@ export class MagnaBrowserClient {
         hints.hintedStatusNote as never,
         witness.minAgeProven,
         toField(witness.nationalityAlpha3Packed),
+        readSponsorSlot(policyForm),
+      )
+      .send({ from: toAddress(this.userAddress) });
+
+    return {
+      txHash: readTxHash(receipt),
+      receipt,
+    };
+  }
+
+  async verifyRootedPassportV2(
+    claimsWitness: PassportCommittedClaimsWitness,
+    policyForm: PolicyForm,
+    hints: RootedPassportHints,
+  ): Promise<TxOutcome> {
+    this.assertRealTransactionMode("verifyRootedPassportV2");
+    await this.ensureContractsRegistered();
+    await this.ensureUserAccountIsDeployed();
+    const policy = buildPassportPolicy(policyForm);
+    const normalizedPolicy = normalizePolicy(policy);
+    const receipt = await this.issuer.methods
+      .verify_linked_v2(
+        {
+          credential_type: normalizedPolicy.credentialType,
+          constraints: normalizedPolicy.constraints.map(constraint => ({
+            claim_id: constraint.claimId,
+            op: constraint.op,
+            value: constraint.value,
+          })),
+        },
+        hints.hintedRootStatusNote as never,
+        hints.hintedRootAuthorityNote as never,
+        hints.hintedCredentialNote as never,
+        hints.hintedStatusNote as never,
+        toContractPassportCommittedClaimsWitness(claimsWitness),
         readSponsorSlot(policyForm),
       )
       .send({ from: toAddress(this.userAddress) });

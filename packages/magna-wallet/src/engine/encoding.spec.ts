@@ -1,10 +1,12 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
 import {
+  buildPassportCommittedClaimsWitness,
   computeInstagramClaimsHash,
   computeInstagramHandleHash,
   computePassportClaimsHash,
   computePassportCommittedClaimsHash,
+  computePassportCommittedClaimsHashFromWitness,
   computePassportExpiryCommitment,
   computePassportNationalityCommitment,
   packAlpha3,
@@ -84,6 +86,48 @@ describe("passport v2 hidden claims hashing", () => {
     );
 
     assert.notEqual(v2, v1);
+  });
+
+  it("builds a v2 witness and hashes it with the same commitment formula", () => {
+    const claims = {
+      schemaVersion: 1,
+      credentialType: CredentialType.Passport as const,
+      nationalityAlpha3Packed: packAlpha3("CAN"),
+      minAgeProven: 21,
+      expiryTs: 1_893_456_000n,
+    };
+    const witness = buildPassportCommittedClaimsWitness({
+      claims,
+      nationalityBlind: 111n,
+      expiryBlind: 222n,
+    });
+
+    const fromWitness = computePassportCommittedClaimsHashFromWitness(
+      witness,
+      poseidon2FieldHasher,
+    );
+    const manuallyComposed = computePassportCommittedClaimsHash(
+      {
+        schemaVersion: 2,
+        credentialType: CredentialType.Passport,
+        nationalityCommitment: poseidon2FieldHasher(
+          0x4d414e43n,
+          [packAlpha3("CAN"), 111n],
+        ),
+        minAgeProven: 21,
+        expiryCommitment: poseidon2FieldHasher(0x4d414558n, [1_893_456_000n, 222n]),
+      },
+      poseidon2FieldHasher,
+    );
+
+    assert.deepEqual(witness, {
+      minAgeProven: 21,
+      nationalityAlpha3Packed: packAlpha3("CAN"),
+      nationalityBlind: 111n,
+      expiryTs: 1_893_456_000n,
+      expiryBlind: 222n,
+    });
+    assert.equal(fromWitness, manuallyComposed);
   });
 });
 

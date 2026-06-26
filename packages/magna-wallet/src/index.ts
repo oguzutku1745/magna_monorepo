@@ -36,6 +36,7 @@ export type {
   TxOutcome,
 } from "./browser/client.js";
 export {
+  buildPassportCommittedClaimsWitness,
   buildPassportClaimsWitness,
   buildPassportPolicy,
   CONTRACT_COMPATIBILITY_REQUIREMENTS,

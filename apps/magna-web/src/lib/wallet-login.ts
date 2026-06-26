@@ -6,6 +6,7 @@ import {
   registerKnownIssuerSender,
   MagnaVerificationEngine,
   packAlpha3,
+  type PassportCommittedClaimsWitness,
 } from "@magna/wallet";
 import { getAppEnv } from "./env";
 import { readTxHash } from "./aztec";
@@ -19,6 +20,13 @@ type StoredPassportRef = {
   claimsHash: string;
   mode: "passport" | "rooted";
   rootCommitment?: string;
+  committedClaimsWitness?: {
+    minAgeProven: number;
+    nationalityAlpha3Packed: string | bigint;
+    nationalityBlind: string | bigint;
+    expiryTs: string | bigint;
+    expiryBlind: string | bigint;
+  };
   normalizedClaims?: {
     nationalityAlpha3: string;
     minAgeProven: number;
@@ -27,6 +35,31 @@ type StoredPassportRef = {
 
 function toAddress(value: string): AztecAddress {
   return AztecAddress.fromString(value);
+}
+
+function isStoredCommittedWitness(value: unknown): value is NonNullable<StoredPassportRef["committedClaimsWitness"]> {
+  const witness = value as StoredPassportRef["committedClaimsWitness"];
+  return Boolean(
+    witness &&
+      typeof witness.minAgeProven === "number" &&
+      (typeof witness.nationalityAlpha3Packed === "string" || typeof witness.nationalityAlpha3Packed === "bigint") &&
+      (typeof witness.nationalityBlind === "string" || typeof witness.nationalityBlind === "bigint") &&
+      (typeof witness.expiryTs === "string" || typeof witness.expiryTs === "bigint") &&
+      (typeof witness.expiryBlind === "string" || typeof witness.expiryBlind === "bigint")
+  );
+}
+
+function normalizeCommittedWitness(
+  witness: StoredPassportRef["committedClaimsWitness"] | undefined,
+): PassportCommittedClaimsWitness | undefined {
+  if (!witness) return undefined;
+  return {
+    minAgeProven: witness.minAgeProven,
+    nationalityAlpha3Packed: BigInt(witness.nationalityAlpha3Packed),
+    nationalityBlind: BigInt(witness.nationalityBlind),
+    expiryTs: BigInt(witness.expiryTs),
+    expiryBlind: BigInt(witness.expiryBlind),
+  };
 }
 
 function loadStoredPassportRef(): StoredPassportRef {
@@ -40,10 +73,15 @@ function loadStoredPassportRef(): StoredPassportRef {
     !parsed.ownerAddress ||
     typeof parsed.claimsHash !== "string" ||
     !parsed.claimsHash ||
-    (parsed.mode !== "passport" && parsed.mode !== "rooted") ||
-    !parsed.normalizedClaims ||
-    typeof parsed.normalizedClaims.nationalityAlpha3 !== "string" ||
-    typeof parsed.normalizedClaims.minAgeProven !== "number"
+    (parsed.mode !== "passport" && parsed.mode !== "rooted")
+  ) {
+    throw new Error("Stored Magna credential reference is incomplete");
+  }
+  if (
+    !isStoredCommittedWitness(parsed.committedClaimsWitness) &&
+    (!parsed.normalizedClaims ||
+      typeof parsed.normalizedClaims.nationalityAlpha3 !== "string" ||
+      typeof parsed.normalizedClaims.minAgeProven !== "number")
   ) {
     throw new Error("Stored Magna credential reference is incomplete");
   }
@@ -88,6 +126,27 @@ export async function runWalletLoginForRequest(input: {
       issuerContract: issuer,
       consumerContractFactory: (address: string) => MagnaConsumerContract.at(toAddress(address), session.wallet),
     });
+    const committedClaimsWitness = normalizeCommittedWitness(credential.committedClaimsWitness);
+    if (committedClaimsWitness) {
+      const receipt =
+        credential.mode === "rooted"
+          ? await engine.loginWithLinkedMagnaV2ThroughConsumer({
+              policy: input.policy,
+              consumerGatewayAddress: input.consumerGatewayAddress,
+              rootCommitment: credential.rootCommitment!,
+              claimsHash: credential.claimsHash,
+              claimsWitness: committedClaimsWitness,
+              from: session.activeAccount.address,
+            })
+          : await engine.loginWithMagnaV2ThroughConsumer({
+              policy: input.policy,
+              consumerGatewayAddress: input.consumerGatewayAddress,
+              claimsHash: credential.claimsHash,
+              claimsWitness: committedClaimsWitness,
+              from: session.activeAccount.address,
+            });
+      return { verified: true, receipt: readTxHash(receipt) ?? null };
+    }
     const claimsWitness = {
       minAgeProven: credential.normalizedClaims!.minAgeProven,
       nationalityAlpha3Packed: packAlpha3(credential.normalizedClaims!.nationalityAlpha3),

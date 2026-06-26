@@ -5,6 +5,8 @@ import type {
   InstagramCanonicalClaims,
   PassportCanonicalClaims,
   PassportCommittedClaims,
+  PassportCommittedClaimsWitness,
+  PassportCommittedClaimsWitnessInput,
 } from "./types.js";
 
 export const MAGNA_CLAIMS_DS = 0x4d414743n; // "MAGC"
@@ -79,6 +81,40 @@ export function computePassportCommittedClaimsHash(
     BigInt(claims.minAgeProven),
     claims.expiryCommitment,
   ]);
+}
+
+export function buildPassportCommittedClaimsWitness(
+  input: PassportCommittedClaimsWitnessInput,
+): PassportCommittedClaimsWitness {
+  return {
+    minAgeProven: input.claims.minAgeProven,
+    nationalityAlpha3Packed: input.claims.nationalityAlpha3Packed,
+    nationalityBlind: input.nationalityBlind,
+    expiryTs: input.claims.expiryTs,
+    expiryBlind: input.expiryBlind,
+  };
+}
+
+export function computePassportCommittedClaimsHashFromWitness(
+  witness: PassportCommittedClaimsWitness,
+  hasher: Hasher,
+): bigint {
+  return computePassportCommittedClaimsHash(
+    {
+      schemaVersion: 2,
+      credentialType: CredentialType.Passport,
+      nationalityCommitment: hasher(MAGNA_PASSPORT_NATIONALITY_COMMITMENT_DS, [
+        witness.nationalityAlpha3Packed,
+        witness.nationalityBlind,
+      ]),
+      minAgeProven: witness.minAgeProven,
+      expiryCommitment: hasher(MAGNA_PASSPORT_EXPIRY_COMMITMENT_DS, [
+        witness.expiryTs,
+        witness.expiryBlind,
+      ]),
+    },
+    hasher,
+  );
 }
 
 export function computeInstagramHandleHash(handle: string): bigint {

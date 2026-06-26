@@ -28,6 +28,12 @@ export type PassportCommittedClaimsWitness = {
   expiryBlind: bigint;
 };
 
+export type PassportCommittedClaimsWitnessInput = {
+  claims: PassportCanonicalClaims;
+  nationalityBlind: bigint;
+  expiryBlind: bigint;
+};
+
 export type InstagramCanonicalClaims = {
   schemaVersion: number;
   credentialType: CredentialType.Instagram;
@@ -91,7 +97,16 @@ export type VerifyPassportInput = {
   sponsorSlot?: number;
 };
 
+export type VerifyPassportV2Input = Omit<VerifyPassportInput, "claimsWitness"> & {
+  claimsWitness: PassportCommittedClaimsWitness;
+};
+
 export type VerifyLinkedPassportInput = VerifyPassportInput & {
+  hintedRootStatusNote: unknown;
+  hintedRootAuthorityNote: unknown;
+};
+
+export type VerifyLinkedPassportV2Input = VerifyPassportV2Input & {
   hintedRootStatusNote: unknown;
   hintedRootAuthorityNote: unknown;
 };
