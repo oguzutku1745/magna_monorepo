@@ -146,6 +146,7 @@ export function passportPilotCredentialUsageBlock(
   credential:
     | {
         issuanceKind?: PassportIssuanceKind;
+        committedClaimsWitness?: unknown;
         normalizedClaims?: unknown;
       }
     | null
@@ -153,6 +154,7 @@ export function passportPilotCredentialUsageBlock(
 ): string | undefined {
   if (!credential) return undefined;
   if (credential.issuanceKind === "legacy") return undefined;
+  if (credential.issuanceKind === "a1" && credential.committedClaimsWitness) return undefined;
   if (credential.issuanceKind === "pilot" || credential.issuanceKind === "a1") {
     return PILOT_CREDENTIAL_UNUSABLE_MESSAGE;
   }

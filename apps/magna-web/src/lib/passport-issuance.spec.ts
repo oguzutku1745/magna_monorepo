@@ -298,6 +298,7 @@ describe("passport issuance routing", () => {
   it("blocks pilot credentials from relying-party verification, renewal, and recovery paths", () => {
     expect(passportPilotCredentialUsageBlock({ issuanceKind: "pilot" })).toBe(PILOT_CREDENTIAL_UNUSABLE_MESSAGE);
     expect(passportPilotCredentialUsageBlock({ issuanceKind: "a1" })).toBe(PILOT_CREDENTIAL_UNUSABLE_MESSAGE);
+    expect(passportPilotCredentialUsageBlock({ issuanceKind: "a1", committedClaimsWitness: { minAgeProven: 21 } })).toBeUndefined();
     expect(passportPilotCredentialUsageBlock({ issuanceKind: "legacy" })).toBeUndefined();
     expect(passportPilotCredentialUsageBlock(null)).toBeUndefined();
   });

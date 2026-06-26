@@ -64,6 +64,7 @@ import {
   type PassportA1LocalWitness,
   type PassportIssuanceKind,
 } from "./lib/passport-issuance";
+import { packAlpha3, type PassportCommittedClaimsWitness } from "@magna/wallet";
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -175,7 +176,16 @@ type LastIssuedPassportRef = {
   rootCommitment?: string;
   ghostOwner?: string;
   ghostDerivationVersion?: string;
+  committedClaimsWitness?: LastIssuedPassportCommittedClaimsWitness;
   normalizedClaims?: ZkPassportIssueResponse["normalizedClaims"];
+};
+
+type LastIssuedPassportCommittedClaimsWitness = {
+  minAgeProven: number;
+  nationalityAlpha3Packed: string;
+  nationalityBlind: string;
+  expiryTs: string;
+  expiryBlind: string;
 };
 
 type ZkPassportIssueState =
@@ -259,6 +269,9 @@ function loadStoredLastIssuedPassportRef(): LastIssuedPassportRef | null {
       ghostOwner: typeof parsed.ghostOwner === "string" ? parsed.ghostOwner : undefined,
       ghostDerivationVersion:
         typeof parsed.ghostDerivationVersion === "string" ? parsed.ghostDerivationVersion : undefined,
+      committedClaimsWitness: isLastIssuedCommittedClaimsWitness(parsed.committedClaimsWitness)
+        ? parsed.committedClaimsWitness
+        : undefined,
       normalizedClaims:
         parsed.normalizedClaims &&
         typeof parsed.normalizedClaims === "object" &&
@@ -272,6 +285,50 @@ function loadStoredLastIssuedPassportRef(): LastIssuedPassportRef | null {
   } catch {
     return null;
   }
+}
+
+function isLastIssuedCommittedClaimsWitness(value: unknown): value is LastIssuedPassportCommittedClaimsWitness {
+  const witness = value as Partial<LastIssuedPassportCommittedClaimsWitness> | undefined;
+  return Boolean(
+    witness &&
+      typeof witness.minAgeProven === "number" &&
+      typeof witness.nationalityAlpha3Packed === "string" &&
+      typeof witness.nationalityBlind === "string" &&
+      typeof witness.expiryTs === "string" &&
+      typeof witness.expiryBlind === "string",
+  );
+}
+
+function normalizeLastIssuedCommittedClaimsWitness(
+  witness: LastIssuedPassportCommittedClaimsWitness | undefined,
+): PassportCommittedClaimsWitness | undefined {
+  if (!witness) return undefined;
+  return {
+    minAgeProven: witness.minAgeProven,
+    nationalityAlpha3Packed: BigInt(witness.nationalityAlpha3Packed),
+    nationalityBlind: BigInt(witness.nationalityBlind),
+    expiryTs: BigInt(witness.expiryTs),
+    expiryBlind: BigInt(witness.expiryBlind),
+  };
+}
+
+function committedClaimsWitnessFromIssuedCredential(
+  credential: LastIssuedPassportRef | ZkPassportIssueState | null | undefined,
+): PassportCommittedClaimsWitness | undefined {
+  if (!credential || !("committedClaimsWitness" in credential)) return undefined;
+  return normalizeLastIssuedCommittedClaimsWitness(credential.committedClaimsWitness);
+}
+
+function committedClaimsWitnessFromA1LocalWitness(
+  localWitness: PassportA1LocalWitness,
+): LastIssuedPassportCommittedClaimsWitness {
+  return {
+    minAgeProven: localWitness.witness.minAgeProven,
+    nationalityAlpha3Packed: packAlpha3(localWitness.witness.nationalityAlpha3).toString(),
+    nationalityBlind: BigInt(localWitness.witness.nationalityBlind).toString(),
+    expiryTs: BigInt(localWitness.witness.expiryTs).toString(),
+    expiryBlind: BigInt(localWitness.witness.expiryBlind).toString(),
+  };
 }
 
 function claimsFormFromNormalizedClaims(normalizedClaims: ZkPassportIssueResponse["normalizedClaims"]): PassportClaimsForm {
@@ -591,7 +648,14 @@ export function App() {
   };
 
   const blockPilotCredentialUsage = (
-    credential: { issuanceKind?: PassportIssuanceKind } | null | undefined,
+    credential:
+      | {
+          issuanceKind?: PassportIssuanceKind;
+          committedClaimsWitness?: unknown;
+          normalizedClaims?: unknown;
+        }
+      | null
+      | undefined,
   ): boolean => {
     const message = passportPilotCredentialUsageBlock(credential);
     if (!message) {
@@ -604,7 +668,7 @@ export function App() {
 
   const issuedCredentialForHints = (
     currentHints: PassportHints | RootedPassportHints,
-  ): { issuanceKind?: PassportIssuanceKind } | null => {
+  ): LastIssuedPassportRef | ZkPassportIssueState | null => {
     if (lastIssuedPassportRef?.claimsHash === currentHints.claimsHash) {
       return lastIssuedPassportRef;
     }
@@ -1166,6 +1230,7 @@ export function App() {
           } else {
             if (issueResult.issuanceKind === "a1") {
               const issued = issueResult.response;
+              const committedClaimsWitness = committedClaimsWitnessFromA1LocalWitness(issueResult.localWitness);
               setZkPassportLastIssue({ ...issued, issuanceKind: "a1" });
               setPassportA1LocalWitness(issueResult.localWitness);
               setLastIssuedPassportRef({
@@ -1176,6 +1241,7 @@ export function App() {
                 rootCommitment: issued.mode === "rooted" ? issued.rootCommitment : undefined,
                 ghostOwner: issued.ghostOwner,
                 ghostDerivationVersion: issued.ghostDerivationVersion,
+                committedClaimsWitness,
               });
               setGhostOwner(issued.ghostOwner);
               setStatusMessage(`Passport A1 credential issued. Local witness is held in memory only. Claims hash: ${issued.claimsHash}`);
@@ -1351,11 +1417,19 @@ export function App() {
       setError("Fetch hinted notes before calling verify.");
       return;
     }
-    if (blockPilotCredentialUsage(issuedCredentialForHints(hints))) {
+    const issuedCredential = issuedCredentialForHints(hints);
+    if (blockPilotCredentialUsage(issuedCredential)) {
       return;
     }
     const result = await runAction("Run Magna verify", async () => {
       const client = requireUserClient();
+      const committedClaimsWitness = committedClaimsWitnessFromIssuedCredential(issuedCredential);
+      if (committedClaimsWitness) {
+        if (isRootedPassportHints(hints)) {
+          return await client.verifyRootedPassportV2(committedClaimsWitness, policyForm, hints);
+        }
+        return await client.verifyPassportV2(committedClaimsWitness, policyForm, hints);
+      }
       const verificationClaimsForm = resolveCanonicalClaimsForm(hints);
       if (isRootedPassportHints(hints)) {
         return await client.verifyRootedPassport(verificationClaimsForm, policyForm, hints);
@@ -1376,7 +1450,15 @@ export function App() {
       setError("Select a configured sponsor gateway before calling sponsored verify.");
       return;
     }
-    if (blockPilotCredentialUsage(issuedCredentialForHints(hints))) {
+    const issuedCredential = issuedCredentialForHints(hints);
+    const committedClaimsWitness = committedClaimsWitnessFromIssuedCredential(issuedCredential);
+    if (committedClaimsWitness) {
+      const message = "Sponsored verify for passport A1 credentials is not available yet. Use standard verify.";
+      setError(message);
+      setStatusMessage(message);
+      return;
+    }
+    if (blockPilotCredentialUsage(issuedCredential)) {
       return;
     }
     const result = await runRetriedTxAction("Run Magna sponsored verify", async () => {
@@ -1415,7 +1497,14 @@ export function App() {
       setError("Fetch rooted hinted notes before renewing passport authority under the existing root.");
       return;
     }
-    if (blockPilotCredentialUsage(issuedCredentialForHints(hints))) {
+    const issuedCredential = issuedCredentialForHints(hints);
+    if (committedClaimsWitnessFromIssuedCredential(issuedCredential)) {
+      const message = "Passport A1 renewal is not available yet. Re-issue with a fresh A1 proof when renewal is needed.";
+      setError(message);
+      setStatusMessage(message);
+      return;
+    }
+    if (blockPilotCredentialUsage(issuedCredential)) {
       return;
     }
     const ghostOwnerAddress = zkPassportLastIssue?.ghostOwner ?? lastIssuedPassportRef?.ghostOwner ?? ghostLifecycle?.address;
@@ -1580,7 +1669,14 @@ export function App() {
       setError("Fetch rooted hinted notes before starting rooted recovery.");
       return;
     }
-    if (blockPilotCredentialUsage(issuedCredentialForHints(hints))) {
+    const issuedCredential = issuedCredentialForHints(hints);
+    if (committedClaimsWitnessFromIssuedCredential(issuedCredential)) {
+      const message = "Passport A1 root recovery is not available yet. Use A1 re-issuance for the recovered wallet.";
+      setError(message);
+      setStatusMessage(message);
+      return;
+    }
+    if (blockPilotCredentialUsage(issuedCredential)) {
       return;
     }
     const ghostOwnerAddress =
