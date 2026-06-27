@@ -5,6 +5,7 @@ import {
   poseidon2FieldHasher,
 } from "../../../../packages/magna-wallet/src/engine/encoding";
 import {
+  assertNoPassportA1OrchestratorArtifacts,
   assertNoZkPassportPrivateArtifacts,
   buildPassportWrapperWitnessFromZkPassportResult,
   extractZkPassportOuterProofArtifacts,
@@ -140,7 +141,8 @@ type ProvePassportWrapperFn = (witness: WalletPassportWrapperLocalWitness) => Pr
 
 export function proofModeForPassportIssuanceKind(kind: PassportIssuanceKind): ProofMode | undefined {
   if (kind === "legacy") return undefined;
-  if (kind === "pilot" || kind === "a1") return "compressed-evm";
+  if (kind === "pilot") return "compressed-evm";
+  if (kind === "a1") return "compressed-evm";
   return undefined;
 }
 
@@ -407,28 +409,16 @@ async function unavailablePassportWrapperProver(): Promise<never> {
   throw new Error(A1_UNAVAILABLE_MESSAGE);
 }
 
-function omitWrapperProofPublicInputs(value: unknown): unknown {
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return value.map(omitWrapperProofPublicInputs);
-  }
-  const sanitized: Record<string, unknown> = {};
-  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    if (key !== "publicInputs") {
-      sanitized[key] = omitWrapperProofPublicInputs(child);
-    }
-  }
-  return sanitized;
+function assertNoPassportA1PrivateArtifacts(payload: VerifyAndIssuePassportA1Payload): void {
+  assertNoPassportA1OrchestratorArtifacts(payload);
 }
 
-function assertNoPassportA1PrivateArtifacts(payload: VerifyAndIssuePassportA1Payload): void {
-  const guardedPayload: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(payload as Record<string, unknown>)) {
-    guardedPayload[key] = key === "wrapperProof" ? omitWrapperProofPublicInputs(value) : value;
+function proofArtifactWithoutLocalMetadata(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return value;
   }
-  assertNoZkPassportPrivateArtifacts(guardedPayload);
+  const { metadata: _metadata, ...rest } = value as Record<string, unknown>;
+  return rest;
 }
 
 async function buildPassportA1Issuance(
@@ -482,6 +472,8 @@ async function buildPassportA1Issuance(
     credentialValidUntil: wrapperProof.outputs.credentialValidUntil,
     wrapperProof: wrapperProof.proof,
     wrapperPublicInputs: wrapperProof.publicInputs.map(String),
+    zkPassportOuterProof: proofArtifactWithoutLocalMetadata(outerArtifacts.outerProof),
+    zkPassportOuterPublicInputs: outerArtifacts.outerPublicInputs.map(String),
     claimsHash: wrapperProof.outputs.claimsHash,
     mode: input.mode,
     ghostDerivationVersion: input.ghostDerivationVersion,

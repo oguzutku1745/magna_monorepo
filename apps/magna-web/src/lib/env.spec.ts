@@ -99,20 +99,31 @@ describe("getAppEnv", () => {
     expect(env.companySponsorAddress).toBe("0xactive");
   });
 
-  it("accepts explicit a1 issuance config so the app can fail clearly at runtime", () => {
+  it("accepts explicit a1 issuance config outside production so the app can fail clearly before proof requests", () => {
     expect(getAppEnv({ VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "a1" }).zkPassportIssuanceKind).toBe("a1");
   });
 
-  it("defaults production passport issuance to a1", () => {
-    expect(getAppEnv({ PROD: true }).zkPassportIssuanceKind).toBe("a1");
+  it("defaults production passport issuance to A1 with dev-only paths disabled", () => {
+    const env = getAppEnv({ PROD: true });
+
+    expect(env.zkPassportIssuanceKind).toBe("a1");
+    expect(env.zkPassportDevMode).toBe(false);
+    expect(env.enableDevOrchestrator).toBe(false);
+    expect(env.enableLocalTestBootstrap).toBe(false);
   });
 
-  it("rejects legacy and pilot passport issuance in production builds", () => {
+  it("rejects legacy, pilot, and dev flags in production builds", () => {
     expect(() => getAppEnv({ PROD: true, VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "legacy" })).toThrow(
-      "must be a1 in production builds",
+      "Production passport issuance supports only A1",
     );
     expect(() => getAppEnv({ PROD: true, VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "pilot" })).toThrow(
-      "must be a1 in production builds",
+      "Production passport issuance supports only A1",
+    );
+    expect(getAppEnv({ PROD: true, VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "a1" }).zkPassportIssuanceKind).toBe(
+      "a1",
+    );
+    expect(() => getAppEnv({ PROD: true, VITE_MAGNA_ZKPASSPORT_DEV_MODE: "true" })).toThrow(
+      "VITE_MAGNA_ZKPASSPORT_DEV_MODE must be disabled in production",
     );
   });
 

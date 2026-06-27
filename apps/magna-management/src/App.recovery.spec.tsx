@@ -1,6 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { Recovery, buildRecoveryGhostDeploymentAttempts, passportCredentialAuthenticityLabel } from "./App";
+import {
+  Recovery,
+  buildRecoveryGhostDeploymentAttempts,
+  canonicalInstagramHandle,
+  isInstagramHandleInputValid,
+  passportCredentialAuthenticityLabel,
+} from "./App";
 import type { ActiveZkPassportRequest } from "./lib/zkpassport";
 
 vi.mock("@magna/wallet", () => ({
@@ -86,6 +92,16 @@ describe("Recovery", () => {
 
     expect(html).toContain("https://zkpassport.test/request-1");
     expect(html).toContain("Open request link");
+  });
+});
+
+describe("Instagram handle input", () => {
+  it("requires a visible @ prefix before issuing", () => {
+    expect(isInstagramHandleInputValid("@akinspur")).toBe(true);
+    expect(isInstagramHandleInputValid("@AkinSpur")).toBe(true);
+    expect(isInstagramHandleInputValid("akinspur")).toBe(false);
+    expect(isInstagramHandleInputValid("@bad handle")).toBe(false);
+    expect(canonicalInstagramHandle("@AkinSpur")).toBe("akinspur");
   });
 });
 

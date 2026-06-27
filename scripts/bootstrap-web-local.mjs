@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
-import { getInitialTestAccountsData } from "@aztec/accounts/testing";
+import { getInitialTestAccountsData, INITIAL_TEST_SIGNING_KEYS } from "@aztec/accounts/testing";
 import { SetPublicAuthwitContractInteraction } from "@aztec/aztec.js/authorization";
 import { AztecAddress } from "@aztec/aztec.js/addresses";
 import { createAztecNodeClient } from "@aztec/aztec.js/node";
@@ -209,6 +209,21 @@ async function sleep(ms) {
 function isTransientLocalNetworkTxError(error) {
   const details = errorDetails(error);
   return TRANSIENT_LOCAL_NETWORK_TX_ERROR_MARKERS.some(marker => details.includes(marker));
+}
+
+function manifestHasRightsStack(path) {
+  try {
+    const manifest = readJson(path, "Deployment manifest");
+    return Boolean(
+      manifest?.l2?.adminAddress &&
+        manifest?.l2?.rightsRegistryAddress &&
+        manifest?.l2?.purchaseAdapterAddress &&
+        manifest?.l2?.paymentTokenAddress &&
+        manifest?.l1?.portalAddress,
+    );
+  } catch {
+    return false;
+  }
 }
 
 async function runRetriedStep(label, work) {
@@ -428,6 +443,26 @@ function runNodeScript(scriptPath, args, description) {
   }
 }
 
+function runRightsDeployScript(scriptPath, args, description, manifestPath) {
+  console.info(`[web-bootstrap] ${description}`);
+  const result = spawnSync(process.execPath, [scriptPath, ...args], {
+    cwd: resolve(dirname(scriptPath), ".."),
+    stdio: "inherit",
+    shell: false,
+  });
+  if ((result.status ?? 1) === 0) {
+    return;
+  }
+  if (manifestHasRightsStack(manifestPath)) {
+    const exitDescription = result.signal ? `signal ${result.signal}` : `exit code ${result.status ?? 1}`;
+    console.info(
+      `[web-bootstrap] ${description} ended with ${exitDescription} after writing a complete manifest; continuing.`,
+    );
+    return;
+  }
+  throw new Error(`${description} failed with exit code ${result.status ?? 1}`);
+}
+
 function syncWebBootstrapOutputs({
   repoRoot,
   networkName,
@@ -507,10 +542,10 @@ async function loadInitialLocalNetworkAccountsInWallet(wallet) {
   for (let i = 0; i < testAccounts.length; i += 1) {
     const account = testAccounts[i];
     const alias = `local-test-${i}`;
-    const manager = await wallet.createSchnorrAccount(
+    const manager = await wallet.createSchnorrInitializerlessAccount(
       account.secret,
       account.salt,
-      account.signingKey,
+      INITIAL_TEST_SIGNING_KEYS[i] ?? account.signingKey,
       alias,
     );
     addresses.push(manager.address);
@@ -573,6 +608,7 @@ async function main() {
     const l1Client = createExtendedL1Client(l1RpcUrls, l1Mnemonic);
     const initialAccounts = await getInitialTestAccountsData();
     const adminAccount = initialAccounts[localTestAccountIndex];
+    const adminSigningKey = INITIAL_TEST_SIGNING_KEYS[localTestAccountIndex] ?? adminAccount?.signingKey;
     if (!adminAccount) {
       throw new Error(`Local test account index ${localTestAccountIndex} is not available.`);
     }
@@ -586,7 +622,7 @@ async function main() {
       l1Client,
     });
 
-    runNodeScript(
+    runRightsDeployScript(
       resolve(repoRoot, "scripts/magna-testnet-validate.mjs"),
       [
         "deploy",
@@ -609,15 +645,14 @@ async function main() {
         "--aztec-admin-salt",
         adminAccount.salt.toString(),
         "--aztec-admin-signing-key",
-        adminAccount.signingKey.toString(),
+        adminSigningKey.toString(),
         "--aztec-admin-alias",
         `local-test-${localTestAccountIndex}`,
-        "--aztec-admin-address",
-        adminAccount.address.toString(),
         "--wallet-ephemeral",
         "true",
       ],
       "deploy rights stack via magna:testnet deploy",
+      manifestPath,
     );
   }
 
@@ -828,7 +863,11 @@ async function main() {
       ),
     );
   } finally {
-    await wallet.stop().catch(() => undefined);
+    // Aztec 5.0.0-rc.1 can double-free native resources during explicit wallet shutdown on macOS.
+    // This one-shot local bootstrap exits immediately, so OS process cleanup is safer by default.
+    if (process.env.MAGNA_EXPLICIT_WALLET_STOP === "true") {
+      await wallet.stop().catch(() => undefined);
+    }
   }
 }
 

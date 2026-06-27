@@ -42,6 +42,9 @@ export type MagnaAppEnv = {
 
 type EnvSource = Record<string, string | boolean | number | undefined>;
 
+const PRODUCTION_PASSPORT_ISSUANCE_MESSAGE =
+  "Production passport issuance supports only A1. legacy sends passport PII to the orchestrator and pilot is non-authentic.";
+
 function parseBoolean(value: string | boolean | number | undefined, fallback: boolean): boolean {
   if (typeof value === "boolean") return value;
   if (typeof value === "number") return value !== 0;
@@ -98,9 +101,7 @@ function parsePassportIssuanceKind(
     const normalized = value.trim().toLowerCase();
     if (normalized === "legacy" || normalized === "pilot" || normalized === "a1") {
       if (isProduction && normalized !== "a1") {
-        throw new Error(
-          "VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND must be a1 in production builds. legacy and pilot are development/test modes.",
-        );
+        throw new Error(PRODUCTION_PASSPORT_ISSUANCE_MESSAGE);
       }
       return normalized;
     }
@@ -109,6 +110,13 @@ function parsePassportIssuanceKind(
     }
   }
   return isProduction ? "a1" : "legacy";
+}
+
+function rejectProductionDevFlag(value: boolean, label: string): boolean {
+  if (value) {
+    throw new Error(`${label} must be disabled in production.`);
+  }
+  return false;
 }
 
 function parseGhostDerivationVersion(
@@ -155,6 +163,10 @@ export function getAppEnv(source: EnvSource = import.meta.env): MagnaAppEnv {
   const normalizedSponsorAddresses = Array.from(sponsorAddressSet);
   const companySponsors = buildSponsorCatalog(normalizedSponsorAddresses, activeCompanySponsorAddress);
 
+  const zkPassportDevMode = parseBoolean(source.VITE_MAGNA_ZKPASSPORT_DEV_MODE, false);
+  const enableDevOrchestrator = parseBoolean(source.VITE_MAGNA_ENABLE_DEV_ORCHESTRATOR, !isProduction);
+  const enableLocalTestBootstrap = parseBoolean(source.VITE_MAGNA_ENABLE_LOCAL_TEST_BOOTSTRAP, !isProduction);
+
   return {
     aztecNodeUrl: parseOptionalString(source.VITE_AZTEC_NODE_URL) ?? "http://localhost:8080",
     l1RpcUrl: parseOptionalString(source.VITE_MAGNA_L1_RPC_URL),
@@ -173,7 +185,9 @@ export function getAppEnv(source: EnvSource = import.meta.env): MagnaAppEnv {
       "Issue a Magna passport credential using zkPassport verification.",
     zkPassportRequestScope:
       parseOptionalString(source.VITE_MAGNA_ZKPASSPORT_REQUEST_SCOPE) ?? "magna-passport-onboarding",
-    zkPassportDevMode: parseBoolean(source.VITE_MAGNA_ZKPASSPORT_DEV_MODE, false),
+    zkPassportDevMode: isProduction
+      ? rejectProductionDevFlag(zkPassportDevMode, "VITE_MAGNA_ZKPASSPORT_DEV_MODE")
+      : zkPassportDevMode,
     zkPassportIssuanceKind: parsePassportIssuanceKind(source.VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND, isProduction),
     zkPassportPrimaryIssuanceMode: parseIssuanceMode(source.VITE_MAGNA_ZKPASSPORT_PRIMARY_ISSUANCE_MODE),
     zkPassportGhostDerivationVersion: parseGhostDerivationVersion(
@@ -194,8 +208,12 @@ export function getAppEnv(source: EnvSource = import.meta.env): MagnaAppEnv {
     walletExtensionBlockList: parseStringList(source.VITE_MAGNA_WALLET_EXTENSION_BLOCK_LIST),
     requireRealSends: parseBoolean(source.VITE_MAGNA_REQUIRE_REAL_SENDS, true),
     enableManagedWallets: parseBoolean(source.VITE_MAGNA_ENABLE_MANAGED_WALLETS, true),
-    enableDevOrchestrator: parseBoolean(source.VITE_MAGNA_ENABLE_DEV_ORCHESTRATOR, true),
-    enableLocalTestBootstrap: parseBoolean(source.VITE_MAGNA_ENABLE_LOCAL_TEST_BOOTSTRAP, true),
+    enableDevOrchestrator: isProduction
+      ? rejectProductionDevFlag(enableDevOrchestrator, "VITE_MAGNA_ENABLE_DEV_ORCHESTRATOR")
+      : enableDevOrchestrator,
+    enableLocalTestBootstrap: isProduction
+      ? rejectProductionDevFlag(enableLocalTestBootstrap, "VITE_MAGNA_ENABLE_LOCAL_TEST_BOOTSTRAP")
+      : enableLocalTestBootstrap,
     localTestAccountIndex: parseNumber(source.VITE_MAGNA_LOCAL_TEST_ACCOUNT_INDEX, 0),
   };
 }

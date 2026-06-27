@@ -15,24 +15,33 @@ type CircuitOptions = {
 };
 
 export type UltraHonkBackendInstance = {
-  instantiate(): Promise<void>;
+  instantiate?: () => Promise<void>;
   generateProof(compressedWitness: Uint8Array): Promise<ProofData>;
   verifyProof(proof: ProofData): Promise<boolean>;
-  destroy(): Promise<void>;
+  destroy?: () => Promise<void>;
 };
 
 type UltraHonkBackendConstructor = new (
   acirBytecode: string,
-  backendOptions?: BackendOptions,
+  api?: unknown,
   circuitOptions?: CircuitOptions,
 ) => UltraHonkBackendInstance;
 
 const require = createRequire(import.meta.url);
 
-export function createUltraHonkBackend(acirBytecode: string): UltraHonkBackendInstance {
+export async function createUltraHonkBackend(acirBytecode: string): Promise<UltraHonkBackendInstance> {
   // Match the Instagram proof package's CJS load path so bb.js resolves its WASM asset.
-  const { UltraHonkBackend } = require("@aztec/bb.js") as {
+  const { Barretenberg, UltraHonkBackend } = require("@aztec/bb.js") as {
+    Barretenberg: {
+      "new": (options?: BackendOptions) => Promise<{ destroy(): Promise<void> }>;
+    };
     UltraHonkBackend: UltraHonkBackendConstructor;
   };
-  return new UltraHonkBackend(acirBytecode);
+  const api = await Barretenberg.new({ threads: 1 });
+  const backend = new UltraHonkBackend(acirBytecode, api);
+  return {
+    generateProof: backend.generateProof.bind(backend),
+    verifyProof: backend.verifyProof.bind(backend),
+    destroy: () => api.destroy(),
+  };
 }

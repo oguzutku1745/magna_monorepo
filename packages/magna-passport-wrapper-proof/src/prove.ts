@@ -5,24 +5,18 @@ import { Noir, type CompiledCircuit } from "@noir-lang/noir_js";
 import { createUltraHonkBackend } from "./bb.js";
 import { buildPassportWrapperInputs } from "./inputs.js";
 import {
-  PASSPORT_WRAPPER_PUBLIC_INPUT_COUNT,
+  normalizePublicFieldString,
+  parsePassportWrapperPublicInputs,
+} from "./public-inputs.js";
+import {
   type PassportWrapperLocalWitness,
   type PassportWrapperProofArtifact,
-  type PassportWrapperPublicOutputs,
-  type Task2UnverifiedOuterProofOptions,
 } from "./types.js";
+
+export { parsePassportWrapperPublicInputs } from "./public-inputs.js";
 
 function packageRoot(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), "..");
-}
-
-function assertTask2Mode(options: Task2UnverifiedOuterProofOptions): void {
-  if (!options.allowUnverifiedOuterProofForTask2) {
-    throw new Error(
-      "Passport wrapper proving is blocked until Task 3 wires recursive zkPassport outer proof verification. " +
-        "Pass allowUnverifiedOuterProofForTask2 only for Task 2 constraint-only development tests.",
-    );
-  }
 }
 
 export function defaultPassportWrapperCircuitArtifactPath(): string {
@@ -41,60 +35,27 @@ export function loadPassportWrapperCircuitArtifact(
   return JSON.parse(readFileSync(path, "utf8")) as CompiledCircuit;
 }
 
-export function parsePassportWrapperPublicInputs(
-  publicInputs: readonly string[],
-): PassportWrapperPublicOutputs {
-  if (publicInputs.length !== PASSPORT_WRAPPER_PUBLIC_INPUT_COUNT) {
-    throw new Error(
-      `Passport wrapper proof must expose exactly ${PASSPORT_WRAPPER_PUBLIC_INPUT_COUNT} public inputs.`,
-    );
-  }
-  const minAgeProven = parsePublicU8(publicInputs[3], "minAgeProven");
-  return {
-    claimsHash: publicInputs[0],
-    nationalityCommitment: publicInputs[1],
-    expiryCommitment: publicInputs[2],
-    minAgeProven,
-    credentialValidUntil: publicInputs[4],
-    scopedNullifier: publicInputs[5],
-  };
-}
-
-function parsePublicU8(value: string, label: string): number {
-  if (!/^(0|[1-9][0-9]*)$/.test(value)) {
-    throw new Error(`${label} public input must be a non-negative integer string.`);
-  }
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed)) {
-    throw new Error(`${label} public input must be a safe integer.`);
-  }
-  if (parsed > 255) {
-    throw new Error(`${label} public input must fit in u8.`);
-  }
-  return parsed;
-}
-
 export async function provePassportWrapper(
   witness: PassportWrapperLocalWitness,
-  options: Task2UnverifiedOuterProofOptions & {
+  options: {
     circuit?: CompiledCircuit;
   } = {},
 ): Promise<PassportWrapperProofArtifact> {
-  assertTask2Mode(options);
-
   const circuit = options.circuit ?? loadPassportWrapperCircuitArtifact();
   const { inputs, metadata } = await buildPassportWrapperInputs(witness);
   const noir = new Noir(circuit);
-  const backend = createUltraHonkBackend(circuit.bytecode);
+  const backend = await createUltraHonkBackend(circuit.bytecode);
   const { witness: compressedWitness } = await noir.execute(inputs);
   try {
-    await backend.instantiate();
+    await backend.instantiate?.();
     const proof = await backend.generateProof(compressedWitness);
     const verified = await backend.verifyProof(proof);
     if (!verified) {
       throw new Error("Generated passport wrapper proof did not verify.");
     }
-    const publicInputs = proof.publicInputs.map(String);
+    const publicInputs = proof.publicInputs.map((entry, index) =>
+      normalizePublicFieldString(String(entry), `publicInputs[${index}]`),
+    );
     return {
       proof,
       publicInputs,
@@ -102,6 +63,6 @@ export async function provePassportWrapper(
       metadata,
     };
   } finally {
-    await backend.destroy();
+    await backend.destroy?.();
   }
 }

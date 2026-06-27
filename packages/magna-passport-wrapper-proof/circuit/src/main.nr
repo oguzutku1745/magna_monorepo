@@ -56,7 +56,11 @@ fn main(
     expected_min_age_proven: Field,
     expected_credential_valid_until: Field,
     expected_scoped_nullifier: Field,
-) -> pub [Field; 6] {
+    expected_nationality_disclosure_commitment: Field,
+    expected_expiry_disclosure_commitment: Field,
+    expected_age_predicate_commitment: Field,
+    expected_bind_commitment: Field,
+) -> pub [Field; 10] {
     assert(age_max_bound >= age_min_bound, "Invalid age predicate bounds");
     assert(min_age_proven >= age_min_bound, "Age predicate minimum not proven");
     assert(min_age_proven <= age_max_bound, "Age predicate maximum not proven");
@@ -92,5 +96,9 @@ fn main(
         expected_min_age_proven,
         expected_credential_valid_until,
         expected_scoped_nullifier,
+        expected_nationality_disclosure_commitment,
+        expected_expiry_disclosure_commitment,
+        expected_age_predicate_commitment,
+        expected_bind_commitment,
     ]
 }

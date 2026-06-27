@@ -73,7 +73,9 @@ export type VerifyAndIssuePassportA1Payload = {
   credentialValidUntil: string;
   wrapperProof: unknown;
   wrapperPublicInputs: string[];
-  claimsHash?: string;
+  zkPassportOuterProof: unknown;
+  zkPassportOuterPublicInputs: string[];
+  claimsHash: string;
   mode?: "passport" | "rooted";
   ghostDerivationVersion?: GhostDerivationVersion;
 };

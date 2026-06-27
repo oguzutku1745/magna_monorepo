@@ -104,11 +104,11 @@ export type BuildPassportWrapperWitnessFromZkPassportResultInput =
 
 const FORBIDDEN_ZKPASSPORT_KEYS = new Set([
   "proofs",
+  "outerProof",
+  "outerPublicInputs",
   "originalQuery",
   "queryResult",
   "committedInputs",
-  "outerProof",
-  "outerPublicInputs",
   "publicInputs",
   "paramCommitments",
   "parameterCommitments",
@@ -123,6 +123,32 @@ const FORBIDDEN_ZKPASSPORT_KEYS = new Set([
   "expiryTs",
   "expiry_date",
   "uniqueIdentifier",
+]);
+
+const PASSPORT_A1_FORBIDDEN_ORCHESTRATOR_KEYS = new Set([
+  "proofs",
+  "outerProof",
+  "outerPublicInputs",
+  "originalQuery",
+  "queryResult",
+  "committedInputs",
+  "paramCommitments",
+  "parameterCommitments",
+  "parameterCommitmentManifest",
+  "nationalityDisclosureCommitment",
+  "expiryDisclosureCommitment",
+  "agePredicateCommitment",
+  "bindCommitment",
+  "nationality",
+  "nationalityAlpha3",
+  "passportExpiryDate",
+  "expiryTs",
+  "expiry_date",
+  "uniqueIdentifier",
+  "nationalityBlind",
+  "expiryBlind",
+  "localWitness",
+  "minimalZkPassportWitness",
 ]);
 
 const MAX_U8 = 255;
@@ -542,6 +568,26 @@ export function assertNoZkPassportPrivateArtifacts(value: unknown): void {
     }
     for (const [key, child] of Object.entries(current as Record<string, unknown>)) {
       if (FORBIDDEN_ZKPASSPORT_KEYS.has(key)) {
+        throw new Error(`PII-bearing zkPassport artifact is forbidden in orchestrator payload: ${key}`);
+      }
+      stack.push(child);
+    }
+  }
+}
+
+export function assertNoPassportA1OrchestratorArtifacts(value: unknown): void {
+  const stack: unknown[] = [value];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current || typeof current !== "object") {
+      continue;
+    }
+    if (Array.isArray(current)) {
+      stack.push(...current);
+      continue;
+    }
+    for (const [key, child] of Object.entries(current as Record<string, unknown>)) {
+      if (PASSPORT_A1_FORBIDDEN_ORCHESTRATOR_KEYS.has(key)) {
         throw new Error(`PII-bearing zkPassport artifact is forbidden in orchestrator payload: ${key}`);
       }
       stack.push(child);

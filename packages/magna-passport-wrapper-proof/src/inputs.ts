@@ -161,6 +161,10 @@ function normalizeDeclaredOutputs(
     minAgeProven: number;
     credentialValidUntil: bigint;
     scopedNullifier: bigint;
+    nationalityDisclosureCommitment: bigint;
+    expiryDisclosureCommitment: bigint;
+    agePredicateCommitment: bigint;
+    bindCommitment: bigint;
   },
 ): PassportWrapperPublicOutputs {
   if (declared) {
@@ -186,6 +190,22 @@ function normalizeDeclaredOutputs(
       declared.scopedNullifier ?? 0n,
       "scopedNullifier",
     );
+    assertMatchingField(
+      computed.nationalityDisclosureCommitment,
+      declared.nationalityDisclosureCommitment,
+      "nationalityDisclosureCommitment",
+    );
+    assertMatchingField(
+      computed.expiryDisclosureCommitment,
+      declared.expiryDisclosureCommitment,
+      "expiryDisclosureCommitment",
+    );
+    assertMatchingField(
+      computed.agePredicateCommitment,
+      declared.agePredicateCommitment,
+      "agePredicateCommitment",
+    );
+    assertMatchingField(computed.bindCommitment, declared.bindCommitment, "bindCommitment");
   }
 
   return {
@@ -195,6 +215,10 @@ function normalizeDeclaredOutputs(
     minAgeProven: computed.minAgeProven,
     credentialValidUntil: computed.credentialValidUntil.toString(),
     scopedNullifier: computed.scopedNullifier.toString(),
+    nationalityDisclosureCommitment: computed.nationalityDisclosureCommitment.toString(),
+    expiryDisclosureCommitment: computed.expiryDisclosureCommitment.toString(),
+    agePredicateCommitment: computed.agePredicateCommitment.toString(),
+    bindCommitment: computed.bindCommitment.toString(),
   };
 }
 
@@ -291,6 +315,10 @@ export async function buildPassportWrapperInputs(
     minAgeProven,
     credentialValidUntil,
     scopedNullifier,
+    nationalityDisclosureCommitment: BigInt(parameterCommitmentManifest.nationalityDisclosureCommitment),
+    expiryDisclosureCommitment: BigInt(parameterCommitmentManifest.expiryDisclosureCommitment),
+    agePredicateCommitment: BigInt(parameterCommitmentManifest.agePredicateCommitment),
+    bindCommitment: BigInt(parameterCommitmentManifest.bindCommitment),
   });
   const publicInputs = [
     outputs.claimsHash,
@@ -299,6 +327,10 @@ export async function buildPassportWrapperInputs(
     String(outputs.minAgeProven),
     outputs.credentialValidUntil,
     outputs.scopedNullifier,
+    outputs.nationalityDisclosureCommitment,
+    outputs.expiryDisclosureCommitment,
+    outputs.agePredicateCommitment,
+    outputs.bindCommitment,
   ];
 
   return {
@@ -318,6 +350,10 @@ export async function buildPassportWrapperInputs(
       expected_min_age_proven: String(outputs.minAgeProven),
       expected_credential_valid_until: outputs.credentialValidUntil,
       expected_scoped_nullifier: outputs.scopedNullifier,
+      expected_nationality_disclosure_commitment: outputs.nationalityDisclosureCommitment,
+      expected_expiry_disclosure_commitment: outputs.expiryDisclosureCommitment,
+      expected_age_predicate_commitment: outputs.agePredicateCommitment,
+      expected_bind_commitment: outputs.bindCommitment,
     },
     publicInputs,
     outputs,

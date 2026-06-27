@@ -5,7 +5,7 @@ import type {
   ZkPassportParameterCommitmentManifest,
 } from "@magna/wallet";
 
-export const PASSPORT_WRAPPER_PUBLIC_INPUT_COUNT = 6;
+export const PASSPORT_WRAPPER_PUBLIC_INPUT_COUNT = 10;
 
 export type BigintLike = bigint | number | string;
 
@@ -47,6 +47,10 @@ export type PassportWrapperDeclaredPublicOutputs = {
   minAgeProven: BigintLike;
   credentialValidUntil: BigintLike;
   scopedNullifier?: BigintLike | null;
+  nationalityDisclosureCommitment: BigintLike;
+  expiryDisclosureCommitment: BigintLike;
+  agePredicateCommitment: BigintLike;
+  bindCommitment: BigintLike;
 };
 
 export type PassportWrapperPublicOutputs = {
@@ -56,6 +60,10 @@ export type PassportWrapperPublicOutputs = {
   minAgeProven: number;
   credentialValidUntil: string;
   scopedNullifier: string;
+  nationalityDisclosureCommitment: string;
+  expiryDisclosureCommitment: string;
+  agePredicateCommitment: string;
+  bindCommitment: string;
 };
 
 export type PassportWrapperInputMetadata = {
@@ -90,12 +98,4 @@ export type PassportWrapperProofArtifact = {
   publicInputs: string[];
   outputs: PassportWrapperPublicOutputs;
   metadata: PassportWrapperInputMetadata;
-};
-
-export type Task2UnverifiedOuterProofOptions = {
-  /**
-   * Task 2 constrains Magna wrapper outputs but does not recursively verify the
-   * zkPassport outer proof. Callers must opt in to this development-only mode.
-   */
-  allowUnverifiedOuterProofForTask2?: boolean;
 };

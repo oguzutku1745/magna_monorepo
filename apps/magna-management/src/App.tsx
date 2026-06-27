@@ -8,6 +8,7 @@ import {
   MagnaBrowserClient,
   isRootedPassportHints,
   packAlpha3,
+  type WalletPassportWrapperLocalWitness,
   type DiscoveredMagnaCredentialRef,
   type PassportClaimsForm,
   type PassportHints,
@@ -18,11 +19,13 @@ import {
 } from "@magna/wallet";
 import { AuthorizePage } from "./AuthorizePage";
 import { Threads } from "./components/Threads";
-import { getManagementEnv } from "./lib/env";
+import { getChainInfo } from "./lib/aztec";
+import { getManagementEnv, type ManagementEnv } from "./lib/env";
 import { navigate, useRoute } from "./lib/router";
 import {
   loadCredentialRefs,
   loadWalletProfile,
+  reconcileStoredChainFingerprint,
   refsForOwner,
   saveWalletProfile,
   saveCredentialRefs,
@@ -86,6 +89,20 @@ const DEFAULT_COMPANY_ALIAS = "magna-company";
 const WALLET_OPEN_MINIMUM_MS = 2_500;
 const ZKPASSPORT_FINAL_RESULT_TIMEOUT_MS = 120_000;
 
+function fingerprintFromChainContext(chain: { chainId: string; version: string }, env: ManagementEnv): string {
+  return JSON.stringify({
+    aztecNodeUrl: env.aztecNodeUrl,
+    chainId: chain.chainId,
+    version: chain.version,
+    issuerAddress: env.issuerAddress ?? "",
+    orchestratorAddress: env.orchestratorAddress ?? "",
+    activeCompanySponsorAddress: env.activeCompanySponsorAddress ?? "",
+    rightsRegistryAddress: env.rightsRegistryAddress ?? "",
+    rightsPurchaseL2Address: env.rightsPurchaseL2Address ?? "",
+    l2PaymentTokenAddress: env.l2PaymentTokenAddress ?? "",
+  });
+}
+
 const ISSUANCE_RAILS: CredentialRail[] = [
   {
     id: "passport",
@@ -133,6 +150,11 @@ function errorMessage(value: unknown): string {
   return value instanceof Error ? value.message : String(value);
 }
 
+async function provePassportWrapperInBrowser(witness: WalletPassportWrapperLocalWitness) {
+  const { provePassportWrapper } = await import("../../../packages/magna-passport-wrapper-proof/src/browser");
+  return provePassportWrapper(witness);
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => window.setTimeout(resolve, ms));
 }
@@ -141,8 +163,19 @@ function passkeysSupported(): boolean {
   return typeof window !== "undefined" && "PublicKeyCredential" in window;
 }
 
-function canonicalInstagramHandle(value: string): string {
-  return value.trim().replace(/^@+/, "").toLowerCase();
+const INVALID_INSTAGRAM_USERNAME_MESSAGE = "invalid username";
+
+export function canonicalInstagramHandle(value: string): string {
+  return value.trim().slice(1).toLowerCase();
+}
+
+export function isInstagramHandleInputValid(value: string): boolean {
+  return /^@[a-z0-9._]{1,30}$/i.test(value.trim());
+}
+
+function isInstagramUsernameError(value: unknown): boolean {
+  const message = errorMessage(value).toLowerCase();
+  return message.includes("instagram handle must") || message.includes("expected instagram greeting");
 }
 
 function credentialId(
@@ -319,6 +352,40 @@ export function App() {
   const appendLog = useCallback((message: string) => {
     console.info(`[magna-management] ${message}`);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getChainInfo(env.aztecNodeUrl)
+      .then(info => {
+        if (cancelled || typeof window === "undefined") return;
+        const nextFingerprint = fingerprintFromChainContext(
+          {
+            chainId: info.chainId.toString(),
+            version: info.version.toString(),
+          },
+          env,
+        );
+        if (!reconcileStoredChainFingerprint(nextFingerprint)) return;
+        setSession(null);
+        setWalletProfile(null);
+        setCredentials(loadCredentialRefs());
+        setCredentialHints({});
+        setNotice({
+          tone: "warning",
+          text: "Detected a chain/deployment change. Cleared local credential metadata; re-issue credentials for this chain.",
+        });
+        appendLog("Detected chain/deployment change; cleared local wallet metadata.");
+        if (route.path.startsWith("/user") && route.path !== "/user/login") {
+          route.go("/user/login");
+        }
+      })
+      .catch(error => {
+        appendLog(`Chain fingerprint check skipped: ${errorMessage(error)}`);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [appendLog, env, route]);
 
   useEffect(() => {
     if (
@@ -692,7 +759,7 @@ export function App() {
       appendLog("PII-blind pilot issuance enabled (non-production; not passport-authentic).");
     }
     if (env.zkPassportIssuanceKind === "a1") {
-      appendLog("Passport A1 issuance enabled. zkPassport will use compressed proof mode and local wrapper proving.");
+      appendLog("Passport A1 issuance will use local wrapper proving and backend two-proof verification.");
     }
     let finalResultTimeout: number | undefined;
     let timedOutWaitingForResult = false;
@@ -769,6 +836,7 @@ export function App() {
             verifyAndIssueThroughBackend,
             verifyAndIssuePassportPilotThroughBackend,
             verifyAndIssuePassportA1ThroughBackend,
+            provePassportWrapper: provePassportWrapperInBrowser,
             onA1Progress: event => {
               if (event.type === "building_witness") {
                 setZkStage("building_a1_witness");
@@ -862,22 +930,34 @@ export function App() {
       setNotice({ tone: "danger", text: "VITE_MAGNA_VERIFICATION_API_URL is required for Instagram issuance." });
       return;
     }
-    const handle = canonicalInstagramHandle(instagramHandle);
-    if (!/^[a-z0-9._]{1,30}$/.test(handle)) {
-      setNotice({ tone: "danger", text: "Enter a valid Instagram handle without @." });
+    if (!isInstagramHandleInputValid(instagramHandle)) {
+      setNotice({ tone: "danger", text: INVALID_INSTAGRAM_USERNAME_MESSAGE });
       return;
     }
+    const handle = canonicalInstagramHandle(instagramHandle);
     if (!instagramEmailFile) {
       setNotice({ tone: "danger", text: "Choose the Instagram security email .eml file." });
       return;
     }
     await runAction("Issuing Instagram credential", async () => {
       const emlBase64 = await readFileAsBase64(instagramEmailFile);
-      const issued = await verifyAndIssueInstagramThroughBackend(env.verificationApiUrl!, {
-        emlBase64,
-        claimedHandle: handle,
-        activeOwner: activeSession.activeAccount.address,
-      });
+      const issued = await (async () => {
+        try {
+          return await verifyAndIssueInstagramThroughBackend(env.verificationApiUrl!, {
+            emlBase64,
+            claimedHandle: handle,
+            activeOwner: activeSession.activeAccount.address,
+          });
+        } catch (error) {
+          if (isInstagramUsernameError(error)) {
+            throw new Error(INVALID_INSTAGRAM_USERNAME_MESSAGE);
+          }
+          throw error;
+        }
+      })();
+      if (issued.normalizedClaims.instagramHandle !== handle) {
+        throw new Error(INVALID_INSTAGRAM_USERNAME_MESSAGE);
+      }
       const ref: StoredCredentialRef = {
         id: credentialId({
           ownerAddress: activeSession.activeAccount.address,
@@ -1753,7 +1833,7 @@ function Issuance(props: {
             <input
               value={props.instagramHandle}
               onChange={event => props.setInstagramHandle(event.target.value)}
-              placeholder="magnasocial"
+              placeholder="@magnasocial"
             />
           </label>
           <label>

@@ -60,6 +60,16 @@ const testState = vi.hoisted(() => {
       }
       return buildAccountManager(address);
     }),
+    createSchnorrInitializerlessAccount: vi.fn(async (_secret, _salt, _signingKey, alias?: string) => {
+      const address = `0xmanaged-${alias ?? "initializerless"}`;
+      if (!storedAccounts.some(account => account.item.toString() === address)) {
+        storedAccounts.push({
+          alias: alias ?? "",
+          item: makeAddress(address),
+        });
+      }
+      return buildAccountManager(address);
+    }),
     createECDSARAccount: vi.fn(async (_secret, _salt, _signingKey, alias?: string) => {
       const address = "0xpasskey-account";
       if (!storedAccounts.some(account => account.item.toString() === address)) {
@@ -117,6 +127,7 @@ const testState = vi.hoisted(() => {
         signingKey: { kind: "local-test-signing-key" },
       },
     ]),
+    initialTestSigningKeys: [{ kind: "canonical-local-test-signing-key" }],
     computePublicKey: vi.fn(async (_input: Uint8Array | Buffer) => new Uint8Array(33).fill(3)),
     getSchnorrAccountContractAddress,
     deployedAddresses,
@@ -128,6 +139,7 @@ const testState = vi.hoisted(() => {
 
 vi.mock("@aztec/accounts/testing", () => ({
   getInitialTestAccountsData: testState.getInitialTestAccountsData,
+  INITIAL_TEST_SIGNING_KEYS: testState.initialTestSigningKeys,
 }));
 
 vi.mock("@aztec/accounts/schnorr", () => ({
@@ -175,6 +187,7 @@ describe("wallet session persistence", () => {
     testState.deployCalls.length = 0;
     testState.wallet.getAccounts.mockClear();
     testState.wallet.createSchnorrAccount.mockClear();
+    testState.wallet.createSchnorrInitializerlessAccount.mockClear();
     testState.wallet.createECDSARAccount.mockClear();
     testState.wallet.createECDSAKAccount.mockClear();
     testState.wallet.getContractMetadata.mockClear();
@@ -239,7 +252,13 @@ describe("wallet session persistence", () => {
       localTestAccountIndex: 0,
     });
 
-    expect(testState.wallet.createSchnorrAccount).toHaveBeenCalledTimes(2);
+    expect(testState.wallet.createSchnorrAccount).toHaveBeenCalledTimes(1);
+    expect(testState.wallet.createSchnorrInitializerlessAccount).toHaveBeenCalledWith(
+      { kind: "local-test-secret" },
+      { kind: "local-test-salt" },
+      { kind: "canonical-local-test-signing-key" },
+      "local-test-0",
+    );
     expect(testState.wallet.registerContract).toHaveBeenCalledTimes(1);
     expect(testState.deployCalls).toEqual([{ address: "0xmanaged-magna-user", from: "0xmanaged-local-test-0" }]);
     expect(testState.wallet.pxe.debug.sync).toHaveBeenCalledTimes(2);

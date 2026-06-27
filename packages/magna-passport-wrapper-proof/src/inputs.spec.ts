@@ -89,6 +89,10 @@ describe("buildPassportWrapperInputs", () => {
       "18",
       "1893456000",
       "0",
+      result.metadata.parameterCommitmentManifest.nationalityDisclosureCommitment,
+      result.metadata.parameterCommitmentManifest.expiryDisclosureCommitment,
+      result.metadata.parameterCommitmentManifest.agePredicateCommitment,
+      result.metadata.parameterCommitmentManifest.bindCommitment,
     ]);
     assert.equal(result.outputs.claimsHash, claimsHash.toString());
     assert.equal(result.outputs.nationalityCommitment, nationalityCommitment.toString());
@@ -96,6 +100,19 @@ describe("buildPassportWrapperInputs", () => {
     assert.equal(result.outputs.minAgeProven, 18);
     assert.equal(result.outputs.credentialValidUntil, "1893456000");
     assert.equal(result.outputs.scopedNullifier, "0");
+    assert.equal(
+      result.outputs.nationalityDisclosureCommitment,
+      result.metadata.parameterCommitmentManifest.nationalityDisclosureCommitment,
+    );
+    assert.equal(
+      result.outputs.expiryDisclosureCommitment,
+      result.metadata.parameterCommitmentManifest.expiryDisclosureCommitment,
+    );
+    assert.equal(
+      result.outputs.agePredicateCommitment,
+      result.metadata.parameterCommitmentManifest.agePredicateCommitment,
+    );
+    assert.equal(result.outputs.bindCommitment, result.metadata.parameterCommitmentManifest.bindCommitment);
     assert.equal(result.inputs.expected_claims_hash, claimsHash.toString());
     assert.equal(result.metadata.outerProofVerification, "not_implemented_task_3");
   });
@@ -132,6 +149,16 @@ describe("buildPassportWrapperInputs", () => {
           },
         }),
       /expiryCommitment does not match/,
+    );
+    await assert.rejects(
+      () =>
+        buildPassportWrapperInputs(validWitness(), {
+          declaredPublicOutputs: {
+            ...result.outputs,
+            bindCommitment: (BigInt(result.outputs.bindCommitment) + 1n).toString(),
+          },
+        }),
+      /bindCommitment does not match/,
     );
   });
 

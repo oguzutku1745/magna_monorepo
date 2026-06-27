@@ -12,11 +12,13 @@
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@aztec/bb.js": "0.84.0",
+    "@aztec/bb.js": "^5.0.0-rc.1",
     "@magna/core": "0.1.0",
     "@magna/wallet": "0.1.0",
-    "@noir-lang/noir_js": "1.0.0-beta.3",
-    "@noir-lang/types": "1.0.0-beta.3"
+    "@noir-lang/noir_js": "^1.0.0-beta.22",
+    "@noir-lang/types": "^1.0.0-beta.22",
+    "@zkpassport/sdk": "^0.15.1",
+    "viem": "^2.53.1"
   },
   "devDependencies": {
     "@types/node": "^22.5.5",

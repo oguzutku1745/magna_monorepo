@@ -3,10 +3,10 @@ import localDeployment from "../../../../deployments/local.json";
 import { getManagementEnv } from "./env";
 
 describe("getManagementEnv", () => {
-  it("enables zkPassport dev mode by default in local Vite dev", () => {
+  it("keeps zkPassport dev mode disabled by default in local Vite dev", () => {
     const env = getManagementEnv({ DEV: true });
 
-    expect(env.zkPassportDevMode).toBe(true);
+    expect(env.zkPassportDevMode).toBe(false);
   });
 
   it("keeps zkPassport dev mode disabled by default outside local dev", () => {
@@ -29,16 +29,27 @@ describe("getManagementEnv", () => {
     expect(getManagementEnv({ VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "a1" }).zkPassportIssuanceKind).toBe("a1");
   });
 
-  it("defaults production passport issuance to a1", () => {
-    expect(getManagementEnv({ PROD: true }).zkPassportIssuanceKind).toBe("a1");
+  it("defaults production passport issuance to A1 with dev-only paths disabled", () => {
+    const env = getManagementEnv({ PROD: true });
+
+    expect(env.zkPassportIssuanceKind).toBe("a1");
+    expect(env.zkPassportDevMode).toBe(false);
+    expect(env.enableDevOrchestrator).toBe(false);
+    expect(env.enableLocalTestBootstrap).toBe(false);
   });
 
-  it("rejects legacy and pilot passport issuance in production builds", () => {
+  it("rejects legacy, pilot, and dev flags in production builds", () => {
     expect(() => getManagementEnv({ PROD: true, VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "legacy" })).toThrow(
-      "must be a1 in production builds",
+      "Production passport issuance supports only A1",
     );
     expect(() => getManagementEnv({ PROD: true, VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "pilot" })).toThrow(
-      "must be a1 in production builds",
+      "Production passport issuance supports only A1",
+    );
+    expect(getManagementEnv({ PROD: true, VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "a1" }).zkPassportIssuanceKind).toBe(
+      "a1",
+    );
+    expect(() => getManagementEnv({ PROD: true, VITE_MAGNA_ZKPASSPORT_DEV_MODE: "true" })).toThrow(
+      "VITE_MAGNA_ZKPASSPORT_DEV_MODE must be disabled in production",
     );
   });
 

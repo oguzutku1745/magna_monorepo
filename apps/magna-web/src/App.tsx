@@ -65,13 +65,18 @@ import {
   type PassportA1LocalWitness,
   type PassportIssuanceKind,
 } from "./lib/passport-issuance";
-import { packAlpha3, type PassportCommittedClaimsWitness } from "@magna/wallet";
+import { packAlpha3, type PassportCommittedClaimsWitness, type WalletPassportWrapperLocalWitness } from "@magna/wallet";
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
   }
   return String(error);
+}
+
+async function provePassportWrapperInBrowser(witness: WalletPassportWrapperLocalWitness) {
+  const { provePassportWrapper } = await import("../../../packages/magna-passport-wrapper-proof/src/browser");
+  return provePassportWrapper(witness);
 }
 
 function nowStamp(): string {
@@ -1079,7 +1084,7 @@ export function App() {
       appendLog("PII-blind pilot issuance enabled (non-production; not passport-authentic).");
     }
     if (env.zkPassportIssuanceKind === "a1") {
-      appendLog("Passport A1 issuance enabled. zkPassport will use compressed proof mode and local wrapper proving.");
+      appendLog("Passport A1 issuance will use local wrapper proving and backend two-proof verification.");
     }
 
     try {
@@ -1200,6 +1205,7 @@ export function App() {
                 verifyAndIssueThroughBackend,
                 verifyAndIssuePassportPilotThroughBackend,
                 verifyAndIssuePassportA1ThroughBackend,
+                provePassportWrapper: provePassportWrapperInBrowser,
                 onA1Progress: event => {
                   if (event.type === "building_witness") {
                     setZkPassportStage("building_a1_witness");

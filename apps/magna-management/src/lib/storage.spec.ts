@@ -1,5 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { loadCredentialRefs, refsForOwner, saveCredentialRefs, upsertCredentialRef, type StoredCredentialRef } from "./storage";
+import {
+  loadCredentialRefs,
+  loadWalletProfile,
+  reconcileStoredChainFingerprint,
+  refsForOwner,
+  saveCredentialRefs,
+  saveWalletProfile,
+  upsertCredentialRef,
+  type StoredCredentialRef,
+} from "./storage";
 
 const ownerAddress = "0xowner";
 
@@ -102,5 +111,23 @@ describe("credential ref storage", () => {
       passportExpiryDate: "2030-01-01",
       expiryTs: "1893456000",
     });
+  });
+
+  it("clears wallet-local credential state when the chain fingerprint changes", () => {
+    saveCredentialRefs([passportRef({ id: "stale", issuerAddress: "0xoldissuer" })]);
+    saveWalletProfile({
+      address: ownerAddress,
+      walletKind: "webauthn",
+      createdAt: "2026-06-19T00:00:00.000Z",
+    });
+
+    expect(reconcileStoredChainFingerprint("chain-a")).toBe(false);
+    expect(loadCredentialRefs()).toHaveLength(1);
+    expect(loadWalletProfile()).not.toBeNull();
+
+    expect(reconcileStoredChainFingerprint("chain-b")).toBe(true);
+    expect(loadCredentialRefs()).toEqual([]);
+    expect(loadWalletProfile()).toBeNull();
+    expect(reconcileStoredChainFingerprint("chain-b")).toBe(false);
   });
 });

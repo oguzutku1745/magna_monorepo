@@ -23,7 +23,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { getInitialTestAccountsData } from "@aztec/accounts/testing";
+import { getInitialTestAccountsData, INITIAL_TEST_SIGNING_KEYS } from "@aztec/accounts/testing";
 import { AztecAddress } from "@aztec/aztec.js/addresses";
 import { createAztecNodeClient } from "@aztec/aztec.js/node";
 import { Fr } from "@aztec/aztec.js/fields";
@@ -145,10 +145,10 @@ async function importLocalTestAccount(wallet, index) {
   if (!account) {
     throw new Error(`Local test account index ${index} is not available.`);
   }
-  const manager = await wallet.createSchnorrAccount(
+  const manager = await wallet.createSchnorrInitializerlessAccount(
     account.secret,
     account.salt,
-    account.signingKey,
+    INITIAL_TEST_SIGNING_KEYS[index] ?? account.signingKey,
     `local-test-${index}`,
   );
   return manager.address;

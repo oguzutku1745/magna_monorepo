@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
 import {
+  assertNoPassportA1OrchestratorArtifacts,
   assertNoZkPassportPrivateArtifacts,
   buildMinimalZkPassportWitnessFromDisclosures,
   buildPassportWrapperWitnessFromZkPassportResult,
@@ -243,6 +244,54 @@ describe("assertNoZkPassportPrivateArtifacts", () => {
         credentialValidUntil: "1893456000",
       }),
     );
+  });
+});
+
+describe("assertNoPassportA1OrchestratorArtifacts", () => {
+  it("allows non-PII A1 proof artifacts and public inputs", () => {
+    assert.doesNotThrow(() =>
+      assertNoPassportA1OrchestratorArtifacts({
+        schema: "passport-a1-v1",
+        activeOwner: "0xactive",
+        ghostOwner: "0xghost",
+        rootCommitment: "456",
+        credentialValidUntil: "1893456000",
+        claimsHash: "123",
+        wrapperProof: {
+          proof: "wrapper-proof",
+          publicInputs: ["1", "2", "3", "18", "1893456000", "999", "555", "666", "777", "888"],
+        },
+        wrapperPublicInputs: ["1", "2", "3", "18", "1893456000", "999", "555", "666", "777", "888"],
+        zkPassportOuterProof: {
+          proof: "outer-proof",
+          verificationKey: "vk",
+        },
+        zkPassportOuterPublicInputs: validOuterPublicInputs,
+      }),
+    );
+  });
+
+  it("rejects cleartext passport PII and local A1 witness secrets", () => {
+    for (const key of [
+      "queryResult",
+      "originalQuery",
+      "committedInputs",
+      "nationality",
+      "nationalityAlpha3",
+      "expiry_date",
+      "passportExpiryDate",
+      "expiryTs",
+      "uniqueIdentifier",
+      "nationalityBlind",
+      "expiryBlind",
+      "localWitness",
+      "minimalZkPassportWitness",
+    ]) {
+      assert.throws(
+        () => assertNoPassportA1OrchestratorArtifacts({ schema: "passport-a1-v1", [key]: "leak" }),
+        /PII-bearing zkPassport artifact/,
+      );
+    }
   });
 });
 

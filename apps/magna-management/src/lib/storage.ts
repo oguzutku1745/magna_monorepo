@@ -58,6 +58,7 @@ export type WalletProfile = {
 
 const CREDENTIALS_KEY = "magna-management:credential-refs:v1";
 const WALLET_PROFILE_KEY = "magna-management:wallet-profile:v1";
+const CHAIN_FINGERPRINT_KEY = "magna-management:chain-fingerprint:v1";
 
 export type CredentialRefFilter = {
   issuerAddress?: string;
@@ -78,6 +79,21 @@ export function loadCredentialRefs(): StoredCredentialRef[] {
 
 export function saveCredentialRefs(refs: StoredCredentialRef[]): void {
   window.localStorage.setItem(CREDENTIALS_KEY, JSON.stringify(refs));
+}
+
+export function clearStoredWalletState(): void {
+  window.localStorage.removeItem(CREDENTIALS_KEY);
+  window.localStorage.removeItem(WALLET_PROFILE_KEY);
+}
+
+export function reconcileStoredChainFingerprint(nextFingerprint: string): boolean {
+  const previousFingerprint = window.localStorage.getItem(CHAIN_FINGERPRINT_KEY);
+  const changed = Boolean(previousFingerprint && previousFingerprint !== nextFingerprint);
+  if (changed) {
+    clearStoredWalletState();
+  }
+  window.localStorage.setItem(CHAIN_FINGERPRINT_KEY, nextFingerprint);
+  return changed;
 }
 
 function normalizeScopeValue(value?: string): string {

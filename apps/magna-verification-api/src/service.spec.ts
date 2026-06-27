@@ -244,12 +244,14 @@ describe("passport A1 request validation and dispatch", () => {
     ghostOwner: "0x2222222222222222222222222222222222222222222222222222222222222222",
     rootCommitment: "456",
     credentialValidUntil: "1893456000",
-    wrapperPublicInputs: ["123", "789", "101112", "18", "1893456000", "999"],
+    claimsHash: "123",
+    wrapperPublicInputs: ["123", "789", "101112", "18", "1893456000", "999", "555", "666", "777", "888"],
     wrapperProof: {
       proof: "wrapper-proof",
-      publicInputs: ["123", "789", "101112", "18", "1893456000", "999"],
+      publicInputs: ["123", "789", "101112", "18", "1893456000", "999", "555", "666", "777", "888"],
     },
-    claimsHash: "123",
+    zkPassportOuterProof: { proof: "outer-proof", name: "outer_evm_passport" },
+    zkPassportOuterPublicInputs: ["0", "1", "2", "33", "44", "555", "666", "777", "888", "1", "999", "1000"],
     mode: "rooted" as const,
     ghostDerivationVersion: "v2_scoped" as const,
   };
@@ -463,11 +465,14 @@ describe("verifyAndIssuePassportA1", () => {
     ghostOwner: "0x2222222222222222222222222222222222222222222222222222222222222222",
     rootCommitment: "456",
     credentialValidUntil: "1893456000",
-    wrapperPublicInputs: ["123", "789", "101112", "18", "1893456000", "999"],
+    claimsHash: "123",
+    wrapperPublicInputs: ["123", "789", "101112", "18", "1893456000", "999", "555", "666", "777", "888"],
     wrapperProof: {
       proof: "wrapper-proof",
-      publicInputs: ["123", "789", "101112", "18", "1893456000", "999"],
+      publicInputs: ["123", "789", "101112", "18", "1893456000", "999", "555", "666", "777", "888"],
     },
+    zkPassportOuterProof: { proof: "outer-proof", name: "outer_evm_passport" },
+    zkPassportOuterPublicInputs: ["0", "1", "2", "33", "44", "555", "666", "777", "888", "1", "999", "1000"],
     mode: "rooted" as const,
     ghostDerivationVersion: "v2_scoped" as const,
   };
@@ -497,12 +502,18 @@ describe("verifyAndIssuePassportA1", () => {
   it("verifies wrapper proof and registers rooted A1 issuance with v2 values", async () => {
     const { context, registerRootedPassportV2, registerCredentialV2 } = contextWithV2Issuer();
     const verifyWrapperProof = vi.fn(async () => true);
+    const verifyZkPassportOuterProof = vi.fn(async () => true);
 
     const result = await verifyAndIssuePassportA1(config, cleanA1Payload, async () => context as never, {
       verifyWrapperProof,
+      verifyZkPassportOuterProof,
     });
 
     expect(verifyWrapperProof).toHaveBeenCalledWith(cleanA1Payload.wrapperProof);
+    expect(verifyZkPassportOuterProof).toHaveBeenCalledWith(
+      cleanA1Payload.zkPassportOuterProof,
+      cleanA1Payload.zkPassportOuterPublicInputs,
+    );
     expect(registerRootedPassportV2).toHaveBeenCalledOnce();
     expect(registerCredentialV2).not.toHaveBeenCalled();
     expect(result.issuanceTxHash).toBe("0xa1");
@@ -522,6 +533,7 @@ describe("verifyAndIssuePassportA1", () => {
       verified: true,
       publicInputs: cleanA1Payload.wrapperPublicInputs,
     }));
+    const verifyZkPassportOuterProof = vi.fn(async () => true);
 
     const result = await verifyAndIssuePassportA1(
       config,
@@ -532,7 +544,7 @@ describe("verifyAndIssuePassportA1", () => {
         ghostDerivationVersion: undefined,
       },
       async () => context as never,
-      { verifyWrapperProof },
+      { verifyWrapperProof, verifyZkPassportOuterProof },
     );
 
     expect(registerCredentialV2).toHaveBeenCalledOnce();
@@ -554,7 +566,7 @@ describe("verifyAndIssuePassportA1", () => {
           ...cleanA1Payload,
           wrapperProof: {
             proof: "wrapper-proof",
-            publicInputs: ["321", "789", "101112", "18", "1893456000", "999"],
+            publicInputs: ["321", "789", "101112", "18", "1893456000", "999", "555", "666", "777", "888"],
           },
         },
         contextLoader,
@@ -575,6 +587,20 @@ describe("verifyAndIssuePassportA1", () => {
         verifyWrapperProof: async () => false,
       }),
     ).rejects.toThrow("Passport A1 wrapper proof verification failed");
+    expect(contextLoader).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid zkPassport outer proofs before loading contract context", async () => {
+    const contextLoader = vi.fn(async () => {
+      throw new Error("context should not be loaded for invalid outer proofs");
+    });
+
+    await expect(
+      verifyAndIssuePassportA1(config, cleanA1Payload, contextLoader as never, {
+        verifyWrapperProof: async () => true,
+        verifyZkPassportOuterProof: async () => false,
+      }),
+    ).rejects.toThrow("Passport A1 zkPassport outer proof verification failed");
     expect(contextLoader).not.toHaveBeenCalled();
   });
 
@@ -639,13 +665,17 @@ describe("verifyAndIssuePassportA1", () => {
     expect(contextLoader).not.toHaveBeenCalled();
   });
 
-  it("fails closed by default without the wrapper package development opt-in", async () => {
+  it("fails closed by default when outer verifier RPC is not configured", async () => {
     const contextLoader = vi.fn(async () => {
-      throw new Error("context should not be loaded when wrapper verifier is not production-ready");
+      throw new Error("context should not be loaded when outer verifier is not configured");
     });
 
-    await expect(verifyAndIssuePassportA1(config, cleanA1Payload, contextLoader as never)).rejects.toThrow(
-      "Passport wrapper verification is blocked",
+    await expect(
+      verifyAndIssuePassportA1(config, cleanA1Payload, contextLoader as never, {
+        verifyWrapperProof: async () => true,
+      }),
+    ).rejects.toThrow(
+      "MAGNA_ZKPASSPORT_EVM_RPC_URL is required for Passport A1 outer proof verification",
     );
     expect(contextLoader).not.toHaveBeenCalled();
   });

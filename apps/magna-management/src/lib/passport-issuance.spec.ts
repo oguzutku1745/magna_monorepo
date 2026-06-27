@@ -34,7 +34,7 @@ const completion: VerifiedPassportCompletion = {
   } as never,
 };
 
-const validOuterPublicInputs = ["0", "1", "2", "33", "44", "555", "666", "1", "999", "1000"];
+const validOuterPublicInputs = ["0", "1", "2", "33", "44", "555", "666", "777", "888", "1", "999", "1000"];
 const a1Completion: VerifiedPassportCompletion = {
   ...completion,
   proofs: [
@@ -194,9 +194,9 @@ describe("passport issuance routing", () => {
     const provePassportWrapper = vi.fn(async () => ({
       proof: {
         proof: "wrapper-proof",
-        publicInputs: ["111", "222", "333", "21", "1769817600", "999"],
+        publicInputs: ["111", "222", "333", "21", "1769817600", "999", "555", "666", "777", "888"],
       },
-      publicInputs: ["111", "222", "333", "21", "1769817600", "999"],
+      publicInputs: ["111", "222", "333", "21", "1769817600", "999", "555", "666", "777", "888"],
       outputs: {
         claimsHash: "111",
         credentialValidUntil: "1769817600",
@@ -243,7 +243,11 @@ describe("passport issuance routing", () => {
       ghostOwner: "0xghost",
       rootCommitment: "789",
       credentialValidUntil: "1769817600",
-      wrapperPublicInputs: ["111", "222", "333", "21", "1769817600", "999"],
+      wrapperPublicInputs: ["111", "222", "333", "21", "1769817600", "999", "555", "666", "777", "888"],
+      zkPassportOuterProof: {
+        proof: "compressed-zkpassport-proof",
+      },
+      zkPassportOuterPublicInputs: validOuterPublicInputs,
       claimsHash: "111",
       mode: "rooted",
       ghostDerivationVersion: "v2_scoped",
@@ -253,7 +257,6 @@ describe("passport issuance routing", () => {
       "originalQuery",
       "proofs",
       "committedInputs",
-      "outerPublicInputs",
       "expiryTs",
       "nationality",
       "uniqueIdentifier",
@@ -325,7 +328,7 @@ describe("passport issuance routing", () => {
           expiryBlind: "222",
         },
       }),
-    ).toBe(PILOT_CREDENTIAL_UNUSABLE_MESSAGE);
+    ).toBeUndefined();
     expect(passportPilotCredentialUsageBlock({ issuanceKind: "legacy" })).toBeUndefined();
     expect(passportPilotCredentialUsageBlock(null)).toBeUndefined();
   });
