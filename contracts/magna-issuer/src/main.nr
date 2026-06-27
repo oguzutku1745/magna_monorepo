@@ -9,7 +9,7 @@ pub contract MagnaIssuer {
     use aztec::{
         history::nullifier::assert_nullifier_did_not_exist_by,
         macros::{functions::{external, initializer, internal, only_self, view}, storage::storage},
-        messages::message_delivery::MessageDelivery,
+        messages::delivery::MessageDelivery,
         note::{
             ConfirmedNote,
             HintedNote,
@@ -27,9 +27,17 @@ pub contract MagnaIssuer {
         utils::comparison::Comparator,
     };
     use crate::internal::{
-        claims::{compute_instagram_claims_hash, compute_passport_claims_hash},
+        claims::{
+            compute_instagram_claims_hash,
+            compute_passport_claims_hash,
+            compute_passport_claims_hash_v2,
+            compute_passport_expiry_commitment,
+            compute_passport_nationality_commitment,
+        },
         constants::{
             MAGNA_CLAIMS_DS,
+            MAGNA_PASSPORT_EXPIRY_COMMITMENT_DS,
+            MAGNA_PASSPORT_NATIONALITY_COMMITMENT_DS,
             MAGNA_REVOCATION_DS,
             MAGNA_ROOT_AUTHORITY_REVOCATION_DS,
             MAGNA_ROOT_REVOCATION_DS,
@@ -40,6 +48,7 @@ pub contract MagnaIssuer {
             MAGNA_SPONSOR_RL_MAX_SLOTS_PER_WINDOW,
             MAGNA_SPONSOR_RL_WINDOW_SECONDS,
             SCHEMA_VERSION_V1,
+            SCHEMA_VERSION_V2,
         },
         errors::{assert_orchestrator_sender, assert_owners_match_sender},
         metering::increment_counter,
@@ -54,6 +63,7 @@ pub contract MagnaIssuer {
 
     use magna_lib::{
         InstagramClaims,
+        PassportCommittedClaimsWitness,
         PassportClaims,
         Policy,
         require_policy_matches_instagram,
@@ -201,7 +211,7 @@ pub contract MagnaIssuer {
             expiry_ts,
         };
         self.storage.credential_notes.at(active_owner).insert(credential_note).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
         );
 
         let status_note = StatusNote {
@@ -210,7 +220,7 @@ pub contract MagnaIssuer {
             credential_type,
         };
         self.storage.status_notes.at(active_owner).insert(status_note).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
         );
 
         let recovery_note = RecoveryNote {
@@ -220,7 +230,50 @@ pub contract MagnaIssuer {
             expiry_ts,
         };
         self.storage.recovery_notes.at(ghost_owner).insert(recovery_note).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
+        );
+    }
+
+    #[external("private")]
+    fn register_credential_v2(
+        active_owner: AztecAddress,
+        ghost_owner: AztecAddress,
+        claims_hash: Field,
+        credential_type: u8,
+        credential_valid_until: u64,
+    ) {
+        assert_orchestrator_sender(self.msg_sender(), self.storage.orchestrator.read());
+
+        // Safety: Randomness here is only used as a note secret input and does not
+        // influence consensus-critical public state branching.
+        let revocation_secret = unsafe { random() };
+
+        let credential_note = CredentialNote {
+            claims_hash,
+            credential_type,
+            expiry_ts: credential_valid_until,
+        };
+        self.storage.credential_notes.at(active_owner).insert(credential_note).deliver(
+            MessageDelivery::onchain_unconstrained(),
+        );
+
+        let status_note = StatusNote {
+            revocation_secret,
+            claims_hash,
+            credential_type,
+        };
+        self.storage.status_notes.at(active_owner).insert(status_note).deliver(
+            MessageDelivery::onchain_unconstrained(),
+        );
+
+        let recovery_note = RecoveryNote {
+            revocation_secret,
+            claims_hash,
+            credential_type,
+            expiry_ts: credential_valid_until,
+        };
+        self.storage.recovery_notes.at(ghost_owner).insert(recovery_note).deliver(
+            MessageDelivery::onchain_unconstrained(),
         );
     }
 
@@ -306,6 +359,53 @@ pub contract MagnaIssuer {
     }
 
     #[external("private")]
+    fn register_rooted_passport_v2(
+        active_owner: AztecAddress,
+        ghost_owner: AztecAddress,
+        root_commitment: Field,
+        claims_hash: Field,
+        credential_valid_until: u64,
+    ) {
+        assert_orchestrator_sender(self.msg_sender(), self.storage.orchestrator.read());
+        assert(root_commitment != 0, "root commitment required");
+        assert(claims_hash != 0, "authority claims hash required");
+
+        // Safety: Randomness here is only used as a note secret input and does not
+        // influence consensus-critical public state branching.
+        let root_revocation_secret = unsafe { random() };
+        self.internal.mint_root_notes(
+            active_owner,
+            ghost_owner,
+            root_commitment,
+            root_revocation_secret,
+        );
+
+        // Safety: Randomness here is only used as a note secret input and does not
+        // influence consensus-critical public state branching.
+        let authority_revocation_secret = unsafe { random() };
+        self.internal.mint_root_authority_note(
+            active_owner,
+            root_commitment,
+            claims_hash,
+            credential_valid_until,
+            authority_revocation_secret,
+        );
+
+        // Safety: Randomness here is only used as a note secret input and does not
+        // influence consensus-critical public state branching.
+        let linked_revocation_secret = unsafe { random() };
+        self.internal.mint_linked_credential_notes(
+            active_owner,
+            ghost_owner,
+            root_commitment,
+            claims_hash,
+            1,
+            credential_valid_until,
+            linked_revocation_secret,
+        );
+    }
+
+    #[external("private")]
     fn register_linked_credential(
         active_owner: AztecAddress,
         ghost_owner: AztecAddress,
@@ -353,6 +453,25 @@ pub contract MagnaIssuer {
     }
 
     #[external("private")]
+    fn verify_v2(
+        policy: Policy,
+        hinted_credential: HintedNote<CredentialNote>,
+        hinted_status: HintedNote<StatusNote>,
+        claims_witness: PassportCommittedClaimsWitness,
+        sponsor_slot: u8,
+    ) {
+        self.internal.verify_for_caller_v2(
+            self.msg_sender(),
+            policy,
+            hinted_credential,
+            hinted_status,
+            claims_witness,
+            sponsor_slot,
+            false,
+        );
+    }
+
+    #[external("private")]
     fn verify_instagram(
         policy: Policy,
         hinted_credential: HintedNote<CredentialNote>,
@@ -393,6 +512,31 @@ pub contract MagnaIssuer {
             hinted_status,
             min_age_proven,
             nationality_alpha3_packed,
+            sponsor_slot,
+            true,
+        );
+    }
+
+    #[external("private")]
+    fn verify_sponsored_v2(
+        caller: AztecAddress,
+        policy: Policy,
+        hinted_credential: HintedNote<CredentialNote>,
+        hinted_status: HintedNote<StatusNote>,
+        claims_witness: PassportCommittedClaimsWitness,
+        sponsor_slot: u8,
+    ) {
+        assert(caller != AztecAddress::zero(), "caller must be non-zero");
+        let sender = self.msg_sender();
+        let allowlisted = self.storage.company_sponsor_gateways.at(sender).read();
+        let disabled = self.storage.disabled_company_sponsor_gateways.at(sender).get_current_value();
+        assert(allowlisted & !disabled, "company sponsor only");
+        self.internal.verify_for_caller_v2(
+            caller,
+            policy,
+            hinted_credential,
+            hinted_status,
+            claims_witness,
             sponsor_slot,
             true,
         );
@@ -451,6 +595,31 @@ pub contract MagnaIssuer {
     }
 
     #[external("private")]
+    fn verify_consumer_v2(
+        caller: AztecAddress,
+        policy: Policy,
+        hinted_credential: HintedNote<CredentialNote>,
+        hinted_status: HintedNote<StatusNote>,
+        claims_witness: PassportCommittedClaimsWitness,
+        sponsor_slot: u8,
+    ) {
+        assert(caller != AztecAddress::zero(), "caller must be non-zero");
+        let sender = self.msg_sender();
+        let allowlisted = self.storage.consumer_gateways.at(sender).get_current_value();
+        let disabled = self.storage.disabled_consumer_gateways.at(sender).get_current_value();
+        assert(allowlisted & !disabled, "consumer only");
+        self.internal.verify_for_caller_v2(
+            caller,
+            policy,
+            hinted_credential,
+            hinted_status,
+            claims_witness,
+            sponsor_slot,
+            false,
+        );
+    }
+
+    #[external("private")]
     fn verify_linked_consumer(
         caller: AztecAddress,
         policy: Policy,
@@ -482,6 +651,35 @@ pub contract MagnaIssuer {
     }
 
     #[external("private")]
+    fn verify_linked_consumer_v2(
+        caller: AztecAddress,
+        policy: Policy,
+        hinted_root_status: HintedNote<RootStatusNote>,
+        hinted_root_authority: HintedNote<RootAuthorityNote>,
+        hinted_credential: HintedNote<LinkedCredentialNote>,
+        hinted_status: HintedNote<LinkedStatusNote>,
+        claims_witness: PassportCommittedClaimsWitness,
+        sponsor_slot: u8,
+    ) {
+        assert(caller != AztecAddress::zero(), "caller must be non-zero");
+        let sender = self.msg_sender();
+        let allowlisted = self.storage.consumer_gateways.at(sender).get_current_value();
+        let disabled = self.storage.disabled_consumer_gateways.at(sender).get_current_value();
+        assert(allowlisted & !disabled, "consumer only");
+        self.internal.verify_linked_for_caller_v2(
+            caller,
+            policy,
+            hinted_root_status,
+            hinted_root_authority,
+            hinted_credential,
+            hinted_status,
+            claims_witness,
+            sponsor_slot,
+            false,
+        );
+    }
+
+    #[external("private")]
     fn verify_linked(
         policy: Policy,
         hinted_root_status: HintedNote<RootStatusNote>,
@@ -501,6 +699,29 @@ pub contract MagnaIssuer {
             hinted_status,
             min_age_proven,
             nationality_alpha3_packed,
+            sponsor_slot,
+            false,
+        );
+    }
+
+    #[external("private")]
+    fn verify_linked_v2(
+        policy: Policy,
+        hinted_root_status: HintedNote<RootStatusNote>,
+        hinted_root_authority: HintedNote<RootAuthorityNote>,
+        hinted_credential: HintedNote<LinkedCredentialNote>,
+        hinted_status: HintedNote<LinkedStatusNote>,
+        claims_witness: PassportCommittedClaimsWitness,
+        sponsor_slot: u8,
+    ) {
+        self.internal.verify_linked_for_caller_v2(
+            self.msg_sender(),
+            policy,
+            hinted_root_status,
+            hinted_root_authority,
+            hinted_credential,
+            hinted_status,
+            claims_witness,
             sponsor_slot,
             false,
         );
@@ -555,6 +776,35 @@ pub contract MagnaIssuer {
             hinted_status,
             min_age_proven,
             nationality_alpha3_packed,
+            sponsor_slot,
+            true,
+        );
+    }
+
+    #[external("private")]
+    fn verify_linked_sponsored_v2(
+        caller: AztecAddress,
+        policy: Policy,
+        hinted_root_status: HintedNote<RootStatusNote>,
+        hinted_root_authority: HintedNote<RootAuthorityNote>,
+        hinted_credential: HintedNote<LinkedCredentialNote>,
+        hinted_status: HintedNote<LinkedStatusNote>,
+        claims_witness: PassportCommittedClaimsWitness,
+        sponsor_slot: u8,
+    ) {
+        assert(caller != AztecAddress::zero(), "caller must be non-zero");
+        let sender = self.msg_sender();
+        let allowlisted = self.storage.company_sponsor_gateways.at(sender).read();
+        let disabled = self.storage.disabled_company_sponsor_gateways.at(sender).get_current_value();
+        assert(allowlisted & !disabled, "company sponsor only");
+        self.internal.verify_linked_for_caller_v2(
+            caller,
+            policy,
+            hinted_root_status,
+            hinted_root_authority,
+            hinted_credential,
+            hinted_status,
+            claims_witness,
             sponsor_slot,
             true,
         );
@@ -898,7 +1148,7 @@ pub contract MagnaIssuer {
                 sponsor_slot,
                 MAGNA_SPONSOR_RL_DS,
             );
-            self.context.push_nullifier(rl_nullifier);
+            self.context.push_nullifier_unsafe(rl_nullifier);
 
             // Also bind inclusion to the current rate-limit window end.
             let window_end = (window_id + 1) * MAGNA_SPONSOR_RL_WINDOW_SECONDS;
@@ -921,6 +1171,117 @@ pub contract MagnaIssuer {
         self.enqueue_self._meter_verify();
 
         // Optional verify meter hook wiring: if configured, enforce sponsored credential-type policy and meter there too.
+        if verify_meter_hook != AztecAddress::zero() {
+            MagnaVerifyMeterHook::at(verify_meter_hook)
+                .meter_verify_or_revert(hinted_credential.note.credential_type)
+                .enqueue(self.context);
+        }
+    }
+
+    #[internal("private")]
+    fn claims_from_committed_passport_witness(
+        credential_type: u8,
+        expected_claims_hash: Field,
+        claims_witness: PassportCommittedClaimsWitness,
+    ) -> PassportClaims {
+        let nationality_commitment = compute_passport_nationality_commitment(
+            claims_witness.nationality_alpha3_packed,
+            claims_witness.nationality_blind,
+            MAGNA_PASSPORT_NATIONALITY_COMMITMENT_DS,
+        );
+        let expiry_commitment = compute_passport_expiry_commitment(
+            claims_witness.expiry_ts,
+            claims_witness.expiry_blind,
+            MAGNA_PASSPORT_EXPIRY_COMMITMENT_DS,
+        );
+        let claims_hash = compute_passport_claims_hash_v2(
+            SCHEMA_VERSION_V2,
+            credential_type,
+            nationality_commitment,
+            claims_witness.min_age_proven,
+            expiry_commitment,
+            MAGNA_CLAIMS_DS,
+        );
+        assert(claims_hash == expected_claims_hash, "claims hash mismatch");
+
+        PassportClaims {
+            min_age_proven: claims_witness.min_age_proven,
+            nationality_alpha3_packed: claims_witness.nationality_alpha3_packed,
+            expiry_ts: claims_witness.expiry_ts,
+        }
+    }
+
+    #[internal("private")]
+    fn verify_for_caller_v2(
+        caller: AztecAddress,
+        policy: Policy,
+        hinted_credential: HintedNote<CredentialNote>,
+        hinted_status: HintedNote<StatusNote>,
+        claims_witness: PassportCommittedClaimsWitness,
+        sponsor_slot: u8,
+        force_sponsored: bool,
+    ) {
+        assert_owners_match_sender(hinted_credential.owner, hinted_status.owner, caller);
+
+        let header = self.context.get_anchor_block_header();
+        let _ = aztec::history::note::assert_note_existed_by(header, hinted_credential);
+        let _ = aztec::history::note::assert_note_existed_by(header, hinted_status);
+
+        assert(
+            hinted_credential.note.credential_type == hinted_status.note.credential_type,
+            "credential/status type mismatch",
+        );
+        assert(hinted_credential.note.claims_hash == hinted_status.note.claims_hash, "claims mismatch");
+
+        let claims = self.internal.claims_from_committed_passport_witness(
+            hinted_credential.note.credential_type,
+            hinted_credential.note.claims_hash,
+            claims_witness,
+        );
+        require_policy_matches_passport(policy, hinted_credential.note.credential_type, claims);
+
+        let verify_meter_hook = self.storage.verify_meter_hook.read();
+        let sponsored_mode = force_sponsored | (verify_meter_hook != AztecAddress::zero());
+        let mut inclusion_deadline = hinted_credential.note.expiry_ts;
+        if sponsored_mode {
+            let mask = self.storage.sponsored_credential_type_mask.get_current_value();
+            if mask != 0 {
+                let bit = 1 as u64 << (hinted_credential.note.credential_type as u64);
+                assert((mask & bit) == bit, "credential type not sponsored");
+            }
+
+            assert(sponsor_slot < MAGNA_SPONSOR_RL_MAX_SLOTS_PER_WINDOW, "invalid sponsor slot");
+            let anchor_ts = header.global_variables.timestamp;
+            let window_id = anchor_ts / MAGNA_SPONSOR_RL_WINDOW_SECONDS;
+
+            let rl_nullifier = compute_sponsor_rate_limit_nullifier(
+                hinted_status.note.revocation_secret,
+                hinted_status.note.credential_type,
+                hinted_status.note.claims_hash,
+                window_id,
+                sponsor_slot,
+                MAGNA_SPONSOR_RL_DS,
+            );
+            self.context.push_nullifier_unsafe(rl_nullifier);
+
+            let window_end = (window_id + 1) * MAGNA_SPONSOR_RL_WINDOW_SECONDS;
+            if window_end < hinted_credential.note.expiry_ts {
+                inclusion_deadline = window_end;
+            }
+        }
+        self.context.set_expiration_timestamp(inclusion_deadline);
+
+        let revocation_nullifier = compute_revocation_nullifier(
+            hinted_status.note.revocation_secret,
+            hinted_status.note.credential_type,
+            hinted_status.note.claims_hash,
+            MAGNA_REVOCATION_DS,
+        );
+        let siloed_revocation_nullifier = compute_siloed_nullifier(self.address, revocation_nullifier);
+        assert_nullifier_did_not_exist_by(header, siloed_revocation_nullifier);
+
+        self.enqueue_self._meter_verify();
+
         if verify_meter_hook != AztecAddress::zero() {
             MagnaVerifyMeterHook::at(verify_meter_hook)
                 .meter_verify_or_revert(hinted_credential.note.credential_type)
@@ -983,7 +1344,7 @@ pub contract MagnaIssuer {
                 sponsor_slot,
                 MAGNA_SPONSOR_RL_DS,
             );
-            self.context.push_nullifier(rl_nullifier);
+            self.context.push_nullifier_unsafe(rl_nullifier);
 
             let window_end = (window_id + 1) * MAGNA_SPONSOR_RL_WINDOW_SECONDS;
             if window_end < hinted_credential.note.expiry_ts {
@@ -1097,7 +1458,136 @@ pub contract MagnaIssuer {
                 sponsor_slot,
                 MAGNA_SPONSOR_RL_DS,
             );
-            self.context.push_nullifier(rl_nullifier);
+            self.context.push_nullifier_unsafe(rl_nullifier);
+
+            let window_end = (window_id + 1) * MAGNA_SPONSOR_RL_WINDOW_SECONDS;
+            if window_end < hinted_credential.note.expiry_ts {
+                inclusion_deadline = window_end;
+            }
+        }
+        self.context.set_expiration_timestamp(inclusion_deadline);
+
+        let linked_revocation_nullifier = compute_revocation_nullifier(
+            hinted_status.note.revocation_secret,
+            hinted_status.note.credential_type,
+            hinted_status.note.claims_hash,
+            MAGNA_REVOCATION_DS,
+        );
+        let siloed_linked_revocation_nullifier = compute_siloed_nullifier(
+            self.address,
+            linked_revocation_nullifier,
+        );
+        assert_nullifier_did_not_exist_by(header, siloed_linked_revocation_nullifier);
+
+        let root_revocation_nullifier = compute_root_revocation_nullifier(
+            hinted_root_status.note.revocation_secret,
+            hinted_root_status.note.root_commitment,
+            MAGNA_ROOT_REVOCATION_DS,
+        );
+        let siloed_root_revocation_nullifier = compute_siloed_nullifier(
+            self.address,
+            root_revocation_nullifier,
+        );
+        assert_nullifier_did_not_exist_by(header, siloed_root_revocation_nullifier);
+
+        let root_authority_revocation_nullifier = compute_root_authority_revocation_nullifier(
+            hinted_root_authority.note.revocation_secret,
+            hinted_root_authority.note.root_commitment,
+            hinted_root_authority.note.claims_hash,
+            MAGNA_ROOT_AUTHORITY_REVOCATION_DS,
+        );
+        let siloed_root_authority_revocation_nullifier = compute_siloed_nullifier(
+            self.address,
+            root_authority_revocation_nullifier,
+        );
+        assert_nullifier_did_not_exist_by(header, siloed_root_authority_revocation_nullifier);
+
+        self.enqueue_self._meter_verify();
+
+        if verify_meter_hook != AztecAddress::zero() {
+            MagnaVerifyMeterHook::at(verify_meter_hook)
+                .meter_verify_or_revert(hinted_credential.note.credential_type)
+                .enqueue(self.context);
+        }
+    }
+
+    #[internal("private")]
+    fn verify_linked_for_caller_v2(
+        caller: AztecAddress,
+        policy: Policy,
+        hinted_root_status: HintedNote<RootStatusNote>,
+        hinted_root_authority: HintedNote<RootAuthorityNote>,
+        hinted_credential: HintedNote<LinkedCredentialNote>,
+        hinted_status: HintedNote<LinkedStatusNote>,
+        claims_witness: PassportCommittedClaimsWitness,
+        sponsor_slot: u8,
+        force_sponsored: bool,
+    ) {
+        assert(hinted_root_status.owner == caller, "root status owner mismatch");
+        assert(hinted_root_authority.owner == caller, "root authority owner mismatch");
+        assert(hinted_credential.owner == caller, "linked credential owner mismatch");
+        assert(hinted_status.owner == caller, "linked status owner mismatch");
+
+        let header = self.context.get_anchor_block_header();
+        let _ = aztec::history::note::assert_note_existed_by(header, hinted_root_status);
+        let _ = aztec::history::note::assert_note_existed_by(header, hinted_root_authority);
+        let _ = aztec::history::note::assert_note_existed_by(header, hinted_credential);
+        let _ = aztec::history::note::assert_note_existed_by(header, hinted_status);
+
+        assert(
+            hinted_credential.note.root_commitment == hinted_status.note.root_commitment,
+            "linked root mismatch",
+        );
+        assert(
+            hinted_credential.note.root_commitment == hinted_root_status.note.root_commitment,
+            "root status mismatch",
+        );
+        assert(
+            hinted_root_authority.note.root_commitment == hinted_root_status.note.root_commitment,
+            "root authority mismatch",
+        );
+        assert(
+            hinted_credential.note.credential_type == hinted_status.note.credential_type,
+            "linked credential/status type mismatch",
+        );
+        assert(hinted_credential.note.claims_hash == hinted_status.note.claims_hash, "linked claims mismatch");
+        assert(
+            hinted_root_authority.note.claims_hash == hinted_credential.note.claims_hash,
+            "root authority claims mismatch",
+        );
+
+        let claims = self.internal.claims_from_committed_passport_witness(
+            hinted_credential.note.credential_type,
+            hinted_credential.note.claims_hash,
+            claims_witness,
+        );
+        require_policy_matches_passport(policy, hinted_credential.note.credential_type, claims);
+
+        let verify_meter_hook = self.storage.verify_meter_hook.read();
+        let sponsored_mode = force_sponsored | (verify_meter_hook != AztecAddress::zero());
+        let mut inclusion_deadline = hinted_credential.note.expiry_ts;
+        if hinted_root_authority.note.authority_expiry_ts < inclusion_deadline {
+            inclusion_deadline = hinted_root_authority.note.authority_expiry_ts;
+        }
+        if sponsored_mode {
+            let mask = self.storage.sponsored_credential_type_mask.get_current_value();
+            if mask != 0 {
+                let bit = 1 as u64 << (hinted_credential.note.credential_type as u64);
+                assert((mask & bit) == bit, "credential type not sponsored");
+            }
+
+            assert(sponsor_slot < MAGNA_SPONSOR_RL_MAX_SLOTS_PER_WINDOW, "invalid sponsor slot");
+            let anchor_ts = header.global_variables.timestamp;
+            let window_id = anchor_ts / MAGNA_SPONSOR_RL_WINDOW_SECONDS;
+            let rl_nullifier = compute_sponsor_rate_limit_nullifier(
+                hinted_status.note.revocation_secret,
+                hinted_status.note.credential_type,
+                hinted_status.note.claims_hash,
+                window_id,
+                sponsor_slot,
+                MAGNA_SPONSOR_RL_DS,
+            );
+            self.context.push_nullifier_unsafe(rl_nullifier);
 
             let window_end = (window_id + 1) * MAGNA_SPONSOR_RL_WINDOW_SECONDS;
             if window_end < hinted_credential.note.expiry_ts {
@@ -1227,7 +1717,7 @@ pub contract MagnaIssuer {
                 sponsor_slot,
                 MAGNA_SPONSOR_RL_DS,
             );
-            self.context.push_nullifier(rl_nullifier);
+            self.context.push_nullifier_unsafe(rl_nullifier);
 
             let window_end = (window_id + 1) * MAGNA_SPONSOR_RL_WINDOW_SECONDS;
             if window_end < hinted_credential.note.expiry_ts {
@@ -1289,12 +1779,12 @@ pub contract MagnaIssuer {
     ) {
         let root_status = RootStatusNote { root_commitment, revocation_secret };
         self.storage.root_status_notes.at(active_owner).insert(root_status).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
         );
 
         let root_recovery = RootRecoveryNote { root_commitment, revocation_secret };
         self.storage.root_recovery_notes.at(ghost_owner).insert(root_recovery).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
         );
     }
 
@@ -1313,7 +1803,7 @@ pub contract MagnaIssuer {
             revocation_secret,
         };
         self.storage.root_authority_notes.at(active_owner).insert(root_authority).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
         );
     }
 
@@ -1334,7 +1824,7 @@ pub contract MagnaIssuer {
             expiry_ts,
         };
         self.storage.linked_credential_notes.at(active_owner).insert(linked_credential).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
         );
 
         let linked_status = LinkedStatusNote {
@@ -1344,7 +1834,7 @@ pub contract MagnaIssuer {
             credential_type,
         };
         self.storage.linked_status_notes.at(active_owner).insert(linked_status).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
         );
 
         let linked_recovery = LinkedRecoveryNote {
@@ -1355,7 +1845,7 @@ pub contract MagnaIssuer {
             expiry_ts,
         };
         self.storage.linked_recovery_notes.at(ghost_owner).insert(linked_recovery).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
         );
     }
 
@@ -1402,7 +1892,7 @@ pub contract MagnaIssuer {
         );
         assert_nullifier_did_not_exist_by(header, prior_authority_kill_switch_siloed);
 
-        self.context.push_nullifier(prior_authority_kill_switch_nullifier);
+        self.context.push_nullifier_unsafe(prior_authority_kill_switch_nullifier);
 
         // Safety: Randomness here is only used as a note secret input and does not
         // influence consensus-critical public state branching.
@@ -1450,7 +1940,10 @@ pub contract MagnaIssuer {
             hinted_recovery.owner,
             recovery_note_hash_for_nullification,
         );
-        self.context.push_nullifier(recovery_spend_nullifier);
+        // The recovery note is proven via history (assert_note_existed_by), so it is a settled
+        // note from a prior transaction, not a pending same-tx note. Use push_nullifier_unsafe;
+        // push_nullifier_for_note_hash would try to squash a pending note that does not exist.
+        self.context.push_nullifier_unsafe(recovery_spend_nullifier);
 
         // Emit kill-switch nullifier that invalidates old active-owner proofs.
         let kill_switch_nullifier = compute_revocation_nullifier(
@@ -1459,7 +1952,7 @@ pub contract MagnaIssuer {
             hinted_recovery.note.claims_hash,
             MAGNA_REVOCATION_DS,
         );
-        self.context.push_nullifier(kill_switch_nullifier);
+        self.context.push_nullifier_unsafe(kill_switch_nullifier);
 
         // Re-issue status + recovery with fresh secret while preserving claims commitment.
         // Safety: Randomness here is only used as a note secret input and does not
@@ -1471,7 +1964,7 @@ pub contract MagnaIssuer {
             credential_type: hinted_recovery.note.credential_type,
         };
         self.storage.status_notes.at(new_active_owner).insert(fresh_status).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
         );
 
         let fresh_recovery = RecoveryNote {
@@ -1481,7 +1974,7 @@ pub contract MagnaIssuer {
             expiry_ts: hinted_recovery.note.expiry_ts,
         };
         self.storage.recovery_notes.at(caller).insert(fresh_recovery).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
         );
 
         if remint_credential {
@@ -1491,7 +1984,7 @@ pub contract MagnaIssuer {
                 expiry_ts: hinted_recovery.note.expiry_ts,
             };
             self.storage.credential_notes.at(new_active_owner).insert(fresh_credential).deliver(
-                MessageDelivery.ONCHAIN_UNCONSTRAINED,
+                MessageDelivery::onchain_unconstrained(),
             );
         }
     }
@@ -1518,14 +2011,15 @@ pub contract MagnaIssuer {
             hinted_root_recovery.owner,
             root_recovery_note_hash_for_nullification,
         );
-        self.context.push_nullifier(root_recovery_spend_nullifier);
+        // Settled note proven via history; nullify with push_nullifier_unsafe (see recover_for_caller).
+        self.context.push_nullifier_unsafe(root_recovery_spend_nullifier);
 
         let root_kill_switch_nullifier = compute_root_revocation_nullifier(
             hinted_root_recovery.note.revocation_secret,
             hinted_root_recovery.note.root_commitment,
             MAGNA_ROOT_REVOCATION_DS,
         );
-        self.context.push_nullifier(root_kill_switch_nullifier);
+        self.context.push_nullifier_unsafe(root_kill_switch_nullifier);
 
         // Safety: Randomness here is only used as a note secret input and does not
         // influence consensus-critical public state branching.
@@ -1535,7 +2029,7 @@ pub contract MagnaIssuer {
             revocation_secret: fresh_rs,
         };
         self.storage.root_status_notes.at(new_active_owner).insert(fresh_root_status).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
         );
 
         let fresh_root_recovery = RootRecoveryNote {
@@ -1543,7 +2037,7 @@ pub contract MagnaIssuer {
             revocation_secret: fresh_rs,
         };
         self.storage.root_recovery_notes.at(caller).insert(fresh_root_recovery).deliver(
-            MessageDelivery.ONCHAIN_UNCONSTRAINED,
+            MessageDelivery::onchain_unconstrained(),
         );
     }
 
@@ -1569,7 +2063,8 @@ pub contract MagnaIssuer {
             hinted_recovery.owner,
             linked_recovery_note_hash_for_nullification,
         );
-        self.context.push_nullifier(linked_recovery_spend_nullifier);
+        // Settled note proven via history; nullify with push_nullifier_unsafe (see recover_for_caller).
+        self.context.push_nullifier_unsafe(linked_recovery_spend_nullifier);
 
         let linked_kill_switch_nullifier = compute_revocation_nullifier(
             hinted_recovery.note.revocation_secret,
@@ -1577,7 +2072,7 @@ pub contract MagnaIssuer {
             hinted_recovery.note.claims_hash,
             MAGNA_REVOCATION_DS,
         );
-        self.context.push_nullifier(linked_kill_switch_nullifier);
+        self.context.push_nullifier_unsafe(linked_kill_switch_nullifier);
     }
 
     #[external("public")]

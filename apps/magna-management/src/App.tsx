@@ -7,6 +7,8 @@ import {
   loadStoredWebAuthnAccounts,
   MagnaBrowserClient,
   isRootedPassportHints,
+  packAlpha3,
+  type WalletPassportWrapperLocalWitness,
   type DiscoveredMagnaCredentialRef,
   type PassportClaimsForm,
   type PassportHints,
@@ -17,15 +19,18 @@ import {
 } from "@magna/wallet";
 import { AuthorizePage } from "./AuthorizePage";
 import { Threads } from "./components/Threads";
-import { getManagementEnv } from "./lib/env";
+import { getChainInfo } from "./lib/aztec";
+import { getManagementEnv, type ManagementEnv } from "./lib/env";
 import { navigate, useRoute } from "./lib/router";
 import {
   loadCredentialRefs,
   loadWalletProfile,
+  reconcileStoredChainFingerprint,
   refsForOwner,
   saveWalletProfile,
   saveCredentialRefs,
   upsertCredentialRef,
+  type PassportCommittedClaimsV2LocalWitness,
   type StoredCredentialRef,
   type WalletProfile,
 } from "./lib/storage";
@@ -33,11 +38,20 @@ import {
   startPassportZkRequest,
   verifyAndRefreshRootAuthorityThroughBackend,
   verifyAndIssueInstagramThroughBackend,
+  verifyAndIssuePassportA1ThroughBackend,
+  verifyAndIssuePassportPilotThroughBackend,
   verifyAndIssueThroughBackend,
   verifyRootRecoveryPreflightThroughBackend,
   type ActiveZkPassportRequest,
   type ZkPassportLifecycleEvent,
 } from "./lib/zkpassport";
+import {
+  issuePassportThroughConfiguredBackend,
+  passportA1BindCustomData,
+  passportPilotCredentialUsageBlock,
+  proofModeForPassportIssuanceKind,
+  type PassportA1LocalWitness,
+} from "./lib/passport-issuance";
 
 type Role = "user" | "company";
 
@@ -74,6 +88,20 @@ const DEFAULT_ALIAS = "magna-user";
 const DEFAULT_COMPANY_ALIAS = "magna-company";
 const WALLET_OPEN_MINIMUM_MS = 2_500;
 const ZKPASSPORT_FINAL_RESULT_TIMEOUT_MS = 120_000;
+
+function fingerprintFromChainContext(chain: { chainId: string; version: string }, env: ManagementEnv): string {
+  return JSON.stringify({
+    aztecNodeUrl: env.aztecNodeUrl,
+    chainId: chain.chainId,
+    version: chain.version,
+    issuerAddress: env.issuerAddress ?? "",
+    orchestratorAddress: env.orchestratorAddress ?? "",
+    activeCompanySponsorAddress: env.activeCompanySponsorAddress ?? "",
+    rightsRegistryAddress: env.rightsRegistryAddress ?? "",
+    rightsPurchaseL2Address: env.rightsPurchaseL2Address ?? "",
+    l2PaymentTokenAddress: env.l2PaymentTokenAddress ?? "",
+  });
+}
 
 const ISSUANCE_RAILS: CredentialRail[] = [
   {
@@ -122,6 +150,11 @@ function errorMessage(value: unknown): string {
   return value instanceof Error ? value.message : String(value);
 }
 
+async function provePassportWrapperInBrowser(witness: WalletPassportWrapperLocalWitness) {
+  const { provePassportWrapper } = await import("../../../packages/magna-passport-wrapper-proof/src/browser");
+  return provePassportWrapper(witness);
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => window.setTimeout(resolve, ms));
 }
@@ -130,8 +163,19 @@ function passkeysSupported(): boolean {
   return typeof window !== "undefined" && "PublicKeyCredential" in window;
 }
 
-function canonicalInstagramHandle(value: string): string {
-  return value.trim().replace(/^@+/, "").toLowerCase();
+const INVALID_INSTAGRAM_USERNAME_MESSAGE = "invalid username";
+
+export function canonicalInstagramHandle(value: string): string {
+  return value.trim().slice(1).toLowerCase();
+}
+
+export function isInstagramHandleInputValid(value: string): boolean {
+  return /^@[a-z0-9._]{1,30}$/i.test(value.trim());
+}
+
+function isInstagramUsernameError(value: unknown): boolean {
+  const message = errorMessage(value).toLowerCase();
+  return message.includes("instagram handle must") || message.includes("expected instagram greeting");
 }
 
 function credentialId(
@@ -201,6 +245,38 @@ function claimsFormFromRef(ref: StoredCredentialRef): PassportClaimsForm {
   };
 }
 
+export function passportCredentialAuthenticityLabel(
+  ref: Pick<StoredCredentialRef, "kind" | "issuanceKind" | "normalizedClaims" | "passportCommittedClaimsV2Witness">,
+): string | undefined {
+  if (ref.kind !== "passport") {
+    return undefined;
+  }
+  if (ref.issuanceKind === "a1") {
+    return "passport A1 wrapper proof (PII-blind)";
+  }
+  if (ref.issuanceKind === "pilot") {
+    return "PII-blind pilot (non-production; not passport-authentic)";
+  }
+  if (ref.issuanceKind === "legacy" || ref.normalizedClaims) {
+    return "legacy zkPassport backend verification";
+  }
+  return "unsupported passport credential (re-issue with A1/v2 support)";
+}
+
+function committedClaimsV2WitnessFromA1LocalWitness(
+  localWitness: PassportA1LocalWitness,
+): PassportCommittedClaimsV2LocalWitness {
+  return {
+    schema: "passport-committed-claims-v2",
+    credentialAuthenticity: "passport-a1",
+    minAgeProven: localWitness.witness.minAgeProven,
+    nationalityAlpha3Packed: packAlpha3(localWitness.witness.nationalityAlpha3).toString(),
+    nationalityBlind: BigInt(localWitness.witness.nationalityBlind).toString(),
+    expiryTs: BigInt(localWitness.witness.expiryTs).toString(),
+    expiryBlind: BigInt(localWitness.witness.expiryBlind).toString(),
+  };
+}
+
 function readFileAsBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -230,6 +306,7 @@ export function App() {
   const [zkRequest, setZkRequest] = useState<ActiveZkPassportRequest | null>(null);
   const [zkStage, setZkStage] = useState("idle");
   const [zkProofCount, setZkProofCount] = useState(0);
+  const [passportA1LocalWitness, setPassportA1LocalWitness] = useState<PassportA1LocalWitness | null>(null);
   const [ageThreshold, setAgeThreshold] = useState("18");
   const [instagramHandle, setInstagramHandle] = useState("");
   const [instagramEmailFile, setInstagramEmailFile] = useState<File | null>(null);
@@ -275,6 +352,40 @@ export function App() {
   const appendLog = useCallback((message: string) => {
     console.info(`[magna-management] ${message}`);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getChainInfo(env.aztecNodeUrl)
+      .then(info => {
+        if (cancelled || typeof window === "undefined") return;
+        const nextFingerprint = fingerprintFromChainContext(
+          {
+            chainId: info.chainId.toString(),
+            version: info.version.toString(),
+          },
+          env,
+        );
+        if (!reconcileStoredChainFingerprint(nextFingerprint)) return;
+        setSession(null);
+        setWalletProfile(null);
+        setCredentials(loadCredentialRefs());
+        setCredentialHints({});
+        setNotice({
+          tone: "warning",
+          text: "Detected a chain/deployment change. Cleared local credential metadata; re-issue credentials for this chain.",
+        });
+        appendLog("Detected chain/deployment change; cleared local wallet metadata.");
+        if (route.path.startsWith("/user") && route.path !== "/user/login") {
+          route.go("/user/login");
+        }
+      })
+      .catch(error => {
+        appendLog(`Chain fingerprint check skipped: ${errorMessage(error)}`);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [appendLog, env, route]);
 
   useEffect(() => {
     if (
@@ -345,6 +456,14 @@ export function App() {
     const client = new MagnaBrowserClient(nextSession.wallet, env, nextSession.activeAccount.address);
     await client.syncOrchestratorSender();
     for (const ref of passportRefs) {
+      const pilotBlock = passportPilotCredentialUsageBlock(ref);
+      if (pilotBlock) {
+        setCredentialHints(current => ({
+          ...current,
+          [ref.id]: { status: "error", message: pilotBlock },
+        }));
+        continue;
+      }
       setCredentialHints(current => ({
         ...current,
         [ref.id]: { status: "loading", message: "Fetching hinted notes" },
@@ -391,6 +510,7 @@ export function App() {
       issuanceTxHash: discovered.issuanceTxHash ?? existing?.issuanceTxHash,
       issuerAddress: env.issuerAddress,
       mode: discovered.mode,
+      issuanceKind: existing?.issuanceKind ?? (existing?.normalizedClaims ? "legacy" : undefined),
       rootCommitment: discovered.rootCommitment ?? existing?.rootCommitment,
     };
   }
@@ -611,12 +731,35 @@ export function App() {
       setNotice({ tone: "danger", text: "VITE_MAGNA_VERIFICATION_API_URL is required for zkPassport issuance." });
       return;
     }
+    let proofMode: ReturnType<typeof proofModeForPassportIssuanceKind>;
+    try {
+      proofMode = proofModeForPassportIssuanceKind(env.zkPassportIssuanceKind);
+    } catch (error) {
+      const message = errorMessage(error);
+      setNotice({ tone: "danger", text: message });
+      appendLog(`zkPassport issuance unavailable: ${message}`);
+      return;
+    }
+    const a1BindCustomData =
+      env.zkPassportIssuanceKind === "a1"
+        ? passportA1BindCustomData({
+            activeOwner: activeSession.activeAccount.address,
+            requestScope: env.zkPassportRequestScope,
+          })
+        : undefined;
 
     setZkStage("creating_request");
     setZkProofCount(0);
+    setPassportA1LocalWitness(null);
     appendLog("zkPassport issuance flow started.");
     if (env.zkPassportDevMode) {
       appendLog("zkPassport dev mode enabled (mock proofs allowed).");
+    }
+    if (env.zkPassportIssuanceKind === "pilot") {
+      appendLog("PII-blind pilot issuance enabled (non-production; not passport-authentic).");
+    }
+    if (env.zkPassportIssuanceKind === "a1") {
+      appendLog("Passport A1 issuance will use local wrapper proving and backend two-proof verification.");
     }
     let finalResultTimeout: number | undefined;
     let timedOutWaitingForResult = false;
@@ -624,6 +767,8 @@ export function App() {
     const request = await runAction("Create zkPassport request", async () =>
       startPassportZkRequest({
         ageThreshold: parsedAge,
+        proofMode,
+        a1BindCustomData,
         metadata: {
           name: env.zkPassportRequestName,
           logo: env.zkPassportRequestLogo,
@@ -670,16 +815,52 @@ export function App() {
           return;
         }
         setZkStage("submitting_to_backend");
-        appendLog("zkPassport final result received. Submitting proofs to verification API.");
-        const issued = await verifyAndIssueThroughBackend(env.verificationApiUrl!, {
-          proofs: completion.proofs,
-          originalQuery: completion.originalQuery,
-          queryResult: completion.queryResult,
-          activeOwner: activeSession.activeAccount.address,
-          ageThreshold: parsedAge,
-          mode: env.zkPassportPrimaryIssuanceMode,
-          ghostDerivationVersion: env.zkPassportGhostDerivationVersion,
-        });
+        appendLog(
+          env.zkPassportIssuanceKind === "pilot"
+            ? "zkPassport final result received. Submitting local pilot commitments to verification API."
+            : "zkPassport final result received. Submitting proofs to verification API.",
+        );
+        const issueResult = await issuePassportThroughConfiguredBackend(
+          {
+            issuanceKind: env.zkPassportIssuanceKind,
+            verificationApiUrl: env.verificationApiUrl!,
+            completion,
+            activeOwner: activeSession.activeAccount.address,
+            ageThreshold: parsedAge,
+            mode: env.zkPassportPrimaryIssuanceMode,
+            ghostDerivationVersion: env.zkPassportGhostDerivationVersion,
+            requestScope: env.zkPassportRequestScope,
+            a1BindCustomData,
+          },
+          {
+            verifyAndIssueThroughBackend,
+            verifyAndIssuePassportPilotThroughBackend,
+            verifyAndIssuePassportA1ThroughBackend,
+            provePassportWrapper: provePassportWrapperInBrowser,
+            onA1Progress: event => {
+              if (event.type === "building_witness") {
+                setZkStage("building_a1_witness");
+                appendLog("Building local A1 wrapper witness.");
+              } else if (event.type === "generating_wrapper_proof") {
+                setZkStage("generating_a1_wrapper_proof");
+                appendLog("Generating local A1 wrapper proof.");
+              } else {
+                setZkStage("submitting_to_backend");
+                appendLog("Submitting A1-safe public payload to verification API.");
+              }
+            },
+          },
+        );
+        if (issueResult.issuanceKind === "a1") {
+          setPassportA1LocalWitness(issueResult.localWitness);
+        }
+        const issued = issueResult.response;
+        const passportCommittedClaimsV2Witness =
+          issueResult.issuanceKind === "a1"
+            ? committedClaimsV2WitnessFromA1LocalWitness(issueResult.localWitness)
+            : undefined;
+        const normalizedClaims =
+          issueResult.issuanceKind === "legacy" ? issueResult.response.normalizedClaims : undefined;
         const ref: StoredCredentialRef = {
           id: credentialId({
             ownerAddress: activeSession.activeAccount.address,
@@ -698,16 +879,32 @@ export function App() {
           issuerAddress: issued.issuerAddress,
           orchestratorAddress: issued.orchestratorAddress,
           mode: issued.mode,
+          issuanceKind: issueResult.issuanceKind,
           rootCommitment: issued.rootCommitment,
           ghostOwner: issued.ghostOwner,
           ghostDerivationVersion: issued.ghostDerivationVersion,
-          normalizedClaims: issued.normalizedClaims,
+          passportCommittedClaimsV2Witness,
+          normalizedClaims,
         };
         setCredentials(upsertCredentialRef(ref));
         await loadHintsForCredentialRefs(activeSession, [ref]);
-        setNotice({ tone: "success", text: "zkPassport credential issued and stored for this wallet." });
+        setNotice({
+          tone: "success",
+          text:
+            issueResult.issuanceKind === "a1"
+              ? "Passport A1 credential issued and stored for this wallet. A1 witness is available locally on this device."
+              : issueResult.issuanceKind === "pilot"
+              ? "PII-blind pilot credential issued and stored for this wallet (non-production; not passport-authentic)."
+              : "zkPassport credential issued and stored for this wallet.",
+        });
         setZkStage("issued");
-        appendLog(`zkPassport credential issued. Claims hash: ${issued.claimsHash}`);
+        appendLog(
+          issueResult.issuanceKind === "a1"
+            ? `Passport A1 credential issued. A1 witness available locally. Claims hash: ${issued.claimsHash}`
+            : issueResult.issuanceKind === "pilot"
+            ? `PII-blind pilot credential issued (non-production; not passport-authentic). Claims hash: ${issued.claimsHash}`
+            : `zkPassport credential issued. Claims hash: ${issued.claimsHash}`,
+        );
       })
       .catch(error => {
         if (finalResultTimeout) {
@@ -733,22 +930,34 @@ export function App() {
       setNotice({ tone: "danger", text: "VITE_MAGNA_VERIFICATION_API_URL is required for Instagram issuance." });
       return;
     }
-    const handle = canonicalInstagramHandle(instagramHandle);
-    if (!/^[a-z0-9._]{1,30}$/.test(handle)) {
-      setNotice({ tone: "danger", text: "Enter a valid Instagram handle without @." });
+    if (!isInstagramHandleInputValid(instagramHandle)) {
+      setNotice({ tone: "danger", text: INVALID_INSTAGRAM_USERNAME_MESSAGE });
       return;
     }
+    const handle = canonicalInstagramHandle(instagramHandle);
     if (!instagramEmailFile) {
       setNotice({ tone: "danger", text: "Choose the Instagram security email .eml file." });
       return;
     }
     await runAction("Issuing Instagram credential", async () => {
       const emlBase64 = await readFileAsBase64(instagramEmailFile);
-      const issued = await verifyAndIssueInstagramThroughBackend(env.verificationApiUrl!, {
-        emlBase64,
-        claimedHandle: handle,
-        activeOwner: activeSession.activeAccount.address,
-      });
+      const issued = await (async () => {
+        try {
+          return await verifyAndIssueInstagramThroughBackend(env.verificationApiUrl!, {
+            emlBase64,
+            claimedHandle: handle,
+            activeOwner: activeSession.activeAccount.address,
+          });
+        } catch (error) {
+          if (isInstagramUsernameError(error)) {
+            throw new Error(INVALID_INSTAGRAM_USERNAME_MESSAGE);
+          }
+          throw error;
+        }
+      })();
+      if (issued.normalizedClaims.instagramHandle !== handle) {
+        throw new Error(INVALID_INSTAGRAM_USERNAME_MESSAGE);
+      }
       const ref: StoredCredentialRef = {
         id: credentialId({
           ownerAddress: activeSession.activeAccount.address,
@@ -781,6 +990,11 @@ export function App() {
   async function startRootedRenewal(ref: StoredCredentialRef) {
     const activeSession = requireDeployedWallet("renewal");
     if (!activeSession) return;
+    const pilotBlock = passportPilotCredentialUsageBlock(ref);
+    if (pilotBlock) {
+      setNotice({ tone: "danger", text: pilotBlock });
+      return;
+    }
     if (!env.verificationApiUrl) {
       setNotice({ tone: "danger", text: "VITE_MAGNA_VERIFICATION_API_URL is required for rooted renewal." });
       return;
@@ -864,6 +1078,11 @@ export function App() {
   async function startRootRecovery(ref: StoredCredentialRef) {
     const activeSession = requireDeployedWallet("recovery");
     if (!activeSession) return;
+    const pilotBlock = passportPilotCredentialUsageBlock(ref);
+    if (pilotBlock) {
+      setNotice({ tone: "danger", text: pilotBlock });
+      return;
+    }
     if (!recoveryTarget) {
       setNotice({ tone: "danger", text: "Create or open the new passkey target before recovering root lineage." });
       return;
@@ -1096,6 +1315,8 @@ export function App() {
             zkRequest={zkRequest}
             zkStage={zkStage}
             zkProofCount={zkProofCount}
+            zkPassportIssuanceKind={env.zkPassportIssuanceKind}
+            passportA1LocalWitnessAvailable={Boolean(passportA1LocalWitness)}
             ageThreshold={ageThreshold}
             setAgeThreshold={setAgeThreshold}
             instagramHandle={instagramHandle}
@@ -1500,6 +1721,7 @@ function Dashboard(props: {
 
 function CredentialCard(props: { refData: StoredCredentialRef; hintState?: CredentialHintState }) {
   const ref = props.refData;
+  const passportAuthenticity = passportCredentialAuthenticityLabel(ref);
   return (
     <article className="credential-card">
       <div className="card-head">
@@ -1507,10 +1729,12 @@ function CredentialCard(props: { refData: StoredCredentialRef; hintState?: Crede
         <strong>{ref.status.replace(/_/g, " ")}</strong>
       </div>
       <KeyValue label="Claims hash" value={ref.claimsHash} />
+      {passportAuthenticity ? <KeyValue label="Authenticity" value={passportAuthenticity} /> : null}
       {props.hintState ? <KeyValue label="Hinted notes" value={props.hintState.message ?? props.hintState.status} /> : null}
       {ref.mode ? <KeyValue label="Mode" value={ref.mode} /> : null}
       {ref.rootCommitment ? <KeyValue label="Root commitment" value={ref.rootCommitment} /> : null}
       {ref.ghostOwner ? <KeyValue label="Ghost owner" value={ref.ghostOwner} /> : null}
+      {ref.passportCommittedClaimsV2Witness ? <KeyValue label="A1 witness" value="available locally" /> : null}
       {ref.normalizedClaims ? (
         <>
           <KeyValue label="Nationality" value={ref.normalizedClaims.nationalityAlpha3} />
@@ -1541,6 +1765,8 @@ function Issuance(props: {
   zkRequest: ActiveZkPassportRequest | null;
   zkStage: string;
   zkProofCount: number;
+  zkPassportIssuanceKind: "legacy" | "pilot" | "a1";
+  passportA1LocalWitnessAvailable: boolean;
   ageThreshold: string;
   setAgeThreshold: (value: string) => void;
   instagramHandle: string;
@@ -1567,6 +1793,22 @@ function Issuance(props: {
           </button>
           <div className={`zk-status-card ${status === "success" ? "success" : status === "failed" ? "danger" : ""}`}>
             <KeyValue label="Status" value={status} />
+            <KeyValue label="zkPassport stage" value={props.zkStage} />
+            <KeyValue label="Proofs generated" value={String(props.zkProofCount)} />
+            <KeyValue
+              label="A1 wrapper status"
+              value={
+                props.zkPassportIssuanceKind === "a1"
+                  ? "fail-closed unless production wrapper proving is available"
+                  : "not selected"
+              }
+            />
+            {props.zkPassportIssuanceKind === "a1" ? (
+              <KeyValue
+                label="A1 local witness"
+                value={props.passportA1LocalWitnessAvailable ? "available locally" : "not retained"}
+              />
+            ) : null}
             <p>{zkStatusMessage(status)}</p>
           </div>
           {props.zkRequest ? (
@@ -1591,7 +1833,7 @@ function Issuance(props: {
             <input
               value={props.instagramHandle}
               onChange={event => props.setInstagramHandle(event.target.value)}
-              placeholder="magnasocial"
+              placeholder="@magnasocial"
             />
           </label>
           <label>

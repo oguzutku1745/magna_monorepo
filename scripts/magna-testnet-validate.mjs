@@ -13,7 +13,6 @@ import { loadContractArtifact } from "@aztec/aztec.js/abi";
 import { SetPublicAuthwitContractInteraction } from "@aztec/aztec.js/authorization";
 import { Contract, DeployMethod } from "@aztec/aztec.js/contracts";
 import { Fq, Fr } from "@aztec/aztec.js/fields";
-import { PublicKeys } from "@aztec/aztec.js/keys";
 import { getFeeJuiceBalance } from "@aztec/aztec.js/utils";
 import { createExtendedL1Client } from "@aztec/ethereum/client";
 import { deployL1Contract } from "@aztec/ethereum/deploy-l1-contract";
@@ -28,7 +27,7 @@ import { pad, parseAbiItem } from "viem";
 import rightsRegistryArtifactJson from "../contracts/magna-company-rights-registry/target/magna_company_rights_registry-MagnaCompanyRightsRegistry.json" with { type: "json" };
 import rightsPurchaseArtifactJson from "../contracts/magna-rights-purchase-l2/target/magna_rights_purchase_l2-MagnaRightsPurchaseL2.json" with { type: "json" };
 
-const PINNED_AZTEC_VERSION = process.env.AZTEC_VERSION_PIN ?? "4.2.0-aztecnr-rc.2";
+const PINNED_AZTEC_VERSION = process.env.AZTEC_VERSION_PIN ?? "5.0.0-rc.1";
 const DEFAULT_PRICE_PER_VERIFY = 150_000n;
 const DEFAULT_L1_TOKEN_DECIMALS = 6;
 const DEFAULT_REPORTS_DIR = "reports";
@@ -106,12 +105,13 @@ function makeBinding(artifact) {
       return Contract.at(address, artifact, wallet);
     },
     deploy(wallet, ...args) {
-      return new DeployMethod(
-        PublicKeys.default(),
+      return DeployMethod.create(
         wallet,
-        artifact,
-        (instance, innerWallet) => Contract.at(instance.address, artifact, innerWallet),
-        args,
+        {
+          artifact,
+          postDeployCtor: (instance, innerWallet) => Contract.at(instance.address, artifact, innerWallet),
+          args,
+        },
       );
     },
   };
@@ -393,7 +393,9 @@ function buildConfig(cli) {
   const l1PaymentTokenAddress =
     cli.l1PaymentTokenAddress ?? process.env.L1_PAYMENT_TOKEN_ADDRESS ?? manifest?.l1?.paymentTokenAddress;
   const l2PaymentTokenAddress =
-    cli.l2PaymentTokenAddress ?? process.env.L2_PAYMENT_TOKEN_ADDRESS ?? manifest?.l2?.paymentTokenAddress;
+    cli.l2PaymentTokenAddress ??
+    process.env.L2_PAYMENT_TOKEN_ADDRESS ??
+    (mode === "deploy" ? undefined : manifest?.l2?.paymentTokenAddress);
   const l1PaymentTokenDecimals = parseNumber(
     cli.l1PaymentTokenDecimals ?? process.env.L1_PAYMENT_TOKEN_DECIMALS ?? manifest?.config?.l1PaymentTokenDecimals,
     DEFAULT_L1_TOKEN_DECIMALS,
@@ -414,7 +416,9 @@ function buildConfig(cli) {
     process.env.MAGNA_AZTEC_ADMIN_SIGNING_KEY;
   const aztecAdminAlias = cli.aztecAdminAlias ?? process.env.AZTEC_ADMIN_ALIAS ?? "magna-testnet-admin";
   const aztecAdminAddress =
-    cli.aztecAdminAddress ?? process.env.AZTEC_ADMIN_ADDRESS ?? manifest?.l2?.adminAddress;
+    cli.aztecAdminAddress ??
+    process.env.AZTEC_ADMIN_ADDRESS ??
+    (mode === "deploy" ? undefined : manifest?.l2?.adminAddress);
   const smokeSponsorAddresses =
     parseAddressList(
       cli.smokeSponsorAddresses ??
@@ -554,7 +558,7 @@ async function createAdminWallet(config, reporter) {
     ephemeral: config.walletEphemeral,
     pxeConfig: { proverEnabled: false },
   });
-  const accountManager = await wallet.createSchnorrAccount(
+  const accountManager = await wallet.createSchnorrInitializerlessAccount(
     parseField(config.aztecAdminSecret, "aztec admin secret"),
     parseField(config.aztecAdminSalt, "aztec admin salt"),
     parseFq(config.aztecAdminSigningKey, "aztec admin signing key"),
@@ -1429,12 +1433,16 @@ async function main() {
     console.error(errorDetails(error));
     process.exit(1);
   } finally {
-    try {
-      if (runtime?.wallet) {
-        await runtime.wallet.stop();
+    // Aztec 5.0.0-rc.1 can double-free native resources during explicit wallet shutdown on macOS.
+    // These scripts are short-lived, so OS process cleanup is safer unless explicitly requested.
+    if (process.env.MAGNA_EXPLICIT_WALLET_STOP === "true") {
+      try {
+        if (runtime?.wallet) {
+          await runtime.wallet.stop();
+        }
+      } catch {
+        // best-effort shutdown
       }
-    } catch {
-      // best-effort shutdown
     }
   }
 }

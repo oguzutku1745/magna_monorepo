@@ -5,6 +5,8 @@ const testState = vi.hoisted(() => {
   const activeAddress = "0x2222222222222222222222222222222222222222";
   const linkedLogin = vi.fn(async () => ({ txHash: "0xlinked" }));
   const legacyLogin = vi.fn(async () => ({ txHash: "0xlegacy" }));
+  const linkedLoginV2 = vi.fn(async () => ({ txHash: "0xlinkedv2" }));
+  const legacyLoginV2 = vi.fn(async () => ({ txHash: "0xlegacyv2" }));
   const disconnect = vi.fn(async () => undefined);
   const registerKnownIssuerSender = vi.fn(async () => undefined);
   const createWebAuthnWalletSession = vi.fn(async () => ({
@@ -17,12 +19,16 @@ const testState = vi.hoisted(() => {
   class MagnaVerificationEngine {
     loginWithLinkedMagnaThroughConsumer = linkedLogin;
     loginWithMagnaThroughConsumer = legacyLogin;
+    loginWithLinkedMagnaV2ThroughConsumer = linkedLoginV2;
+    loginWithMagnaV2ThroughConsumer = legacyLoginV2;
   }
 
   return {
     activeAddress,
     linkedLogin,
     legacyLogin,
+    linkedLoginV2,
+    legacyLoginV2,
     disconnect,
     registerKnownIssuerSender,
     createWebAuthnWalletSession,
@@ -106,6 +112,8 @@ describe("runWalletLoginForRequest", () => {
     });
     testState.linkedLogin.mockClear();
     testState.legacyLogin.mockClear();
+    testState.linkedLoginV2.mockClear();
+    testState.legacyLoginV2.mockClear();
     testState.disconnect.mockClear();
     testState.registerKnownIssuerSender.mockClear();
     testState.createWebAuthnWalletSession.mockClear();
@@ -146,5 +154,89 @@ describe("runWalletLoginForRequest", () => {
       from: testState.activeAddress,
     });
     expect(testState.disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("routes rooted stored committed passports through v2 linked consumer-gateway login", async () => {
+    localStorage.setItem(
+      LAST_ISSUED_PASSPORT_STORAGE_KEY,
+      JSON.stringify({
+        ownerAddress: testState.activeAddress,
+        claimsHash: "123",
+        mode: "rooted",
+        rootCommitment: "99",
+        issuanceKind: "a1",
+        passportCommittedClaimsV2Witness: {
+          schema: "passport-committed-claims-v2",
+          credentialAuthenticity: "passport-a1",
+          minAgeProven: 18,
+          nationalityAlpha3Packed: "5925714",
+          nationalityBlind: "111",
+          expiryTs: "1893456000",
+          expiryBlind: "222",
+        },
+      }),
+    );
+
+    const outcome = await runWalletLoginForRequest({
+      policy,
+      consumerGatewayAddress: "0xconsumer",
+    });
+
+    expect(outcome).toEqual({ verified: true, receipt: "0xlinkedv2" });
+    expect(testState.linkedLogin).not.toHaveBeenCalled();
+    expect(testState.legacyLogin).not.toHaveBeenCalled();
+    expect(testState.linkedLoginV2).toHaveBeenCalledWith({
+      policy,
+      consumerGatewayAddress: "0xconsumer",
+      rootCommitment: "99",
+      claimsHash: "123",
+      claimsWitness: {
+        minAgeProven: 18,
+        nationalityAlpha3Packed: 5925714n,
+        nationalityBlind: 111n,
+        expiryTs: 1893456000n,
+        expiryBlind: 222n,
+      },
+      from: testState.activeAddress,
+    });
+    expect(testState.packAlpha3).not.toHaveBeenCalled();
+    expect(testState.disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("fails clearly instead of falling back when an A1 ref lacks the local v2 witness", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    localStorage.setItem(
+      LAST_ISSUED_PASSPORT_STORAGE_KEY,
+      JSON.stringify({
+        ownerAddress: testState.activeAddress,
+        claimsHash: "123",
+        mode: "rooted",
+        rootCommitment: "99",
+        issuanceKind: "a1",
+        normalizedClaims: {
+          nationalityAlpha3: "ZKR",
+          minAgeProven: 18,
+        },
+      }),
+    );
+
+    const outcome = await runWalletLoginForRequest({
+      policy,
+      consumerGatewayAddress: "0xconsumer",
+    });
+
+    expect(outcome).toEqual({
+      verified: false,
+      receipt: null,
+      error:
+        "Passport A1 credential is missing its local v2 witness. Re-issue this passport credential on this device to restore A1/v2 presentation.",
+    });
+    expect(testState.linkedLogin).not.toHaveBeenCalled();
+    expect(testState.legacyLogin).not.toHaveBeenCalled();
+    expect(testState.linkedLoginV2).not.toHaveBeenCalled();
+    expect(testState.legacyLoginV2).not.toHaveBeenCalled();
+    expect(testState.packAlpha3).not.toHaveBeenCalled();
+    expect(testState.disconnect).toHaveBeenCalledOnce();
+    warn.mockRestore();
   });
 });

@@ -7,6 +7,8 @@ import {
 } from "@zkpassport/sdk";
 import type { GhostDerivationVersion } from "@magna/wallet";
 
+type ZkPassportProofMode = "fast" | "compressed" | "compressed-evm";
+
 export type ZkPassportLifecycleEvent =
   | { type: "request_created"; requestId: string; url: string }
   | { type: "bridge_connected" }
@@ -48,6 +50,64 @@ export type VerifyAndIssueResponse = {
     minAgeProven: number;
     passportExpiryDate: string;
     expiryTs: string;
+  };
+};
+
+export type VerifyAndIssuePassportPilotPayload = {
+  pilotSchema: "passport-pii-blind-v0";
+  activeOwner: string;
+  claimsHash: string;
+  ghostOwner: string;
+  rootCommitment: string;
+  credentialValidUntil: string;
+  mode?: "passport" | "rooted";
+  ghostDerivationVersion?: GhostDerivationVersion;
+};
+
+export type VerifyAndIssuePassportA1Payload = {
+  schema: "passport-a1-v1";
+  activeOwner: string;
+  ghostOwner: string;
+  rootCommitment: string;
+  credentialValidUntil: string;
+  wrapperProof: unknown;
+  wrapperPublicInputs: string[];
+  zkPassportOuterProof: unknown;
+  zkPassportOuterPublicInputs: string[];
+  claimsHash: string;
+  mode?: "passport" | "rooted";
+  ghostDerivationVersion?: GhostDerivationVersion;
+};
+
+export type VerifyAndIssuePassportA1Response = {
+  issuanceTxHash?: string;
+  ghostOwner: string;
+  rootCommitment: string;
+  claimsHash: string;
+  mode: "passport" | "rooted";
+  ghostDerivationVersion: GhostDerivationVersion;
+  issuerAddress: string;
+  orchestratorAddress: string;
+  verificationSummary: {
+    verified: true;
+    passportA1: true;
+    piiBlind: true;
+  };
+};
+
+export type VerifyAndIssuePassportPilotResponse = {
+  issuanceTxHash?: string;
+  ghostOwner: string;
+  rootCommitment: string;
+  claimsHash: string;
+  mode: "passport" | "rooted";
+  ghostDerivationVersion: GhostDerivationVersion;
+  issuerAddress: string;
+  orchestratorAddress: string;
+  verificationSummary: {
+    verified: true;
+    pilot: true;
+    piiBlind: true;
   };
 };
 
@@ -219,6 +279,8 @@ async function postVerificationApi<TResponse>(
 export async function startPassportZkRequest(options: {
   ageThreshold: number;
   metadata: { name: string; logo: string; purpose: string; scope?: string };
+  proofMode?: ZkPassportProofMode;
+  a1BindCustomData?: string;
   devMode?: boolean;
   onEvent?: (event: ZkPassportLifecycleEvent) => void;
 }): Promise<ActiveZkPassportRequest> {
@@ -227,14 +289,22 @@ export async function startPassportZkRequest(options: {
     logo: options.metadata.logo,
     purpose: options.metadata.purpose,
     scope: options.metadata.scope,
+    mode: options.proofMode,
     devMode: options.devMode,
   });
 
-  const built = queryBuilder
+  let query = queryBuilder
     .gte("age", options.ageThreshold)
     .disclose("nationality")
-    .disclose("expiry_date")
-    .done();
+    .disclose("expiry_date");
+  if (options.a1BindCustomData) {
+    const bind = (query as { bind?: (key: "custom_data", value: string) => typeof query }).bind;
+    if (typeof bind !== "function") {
+      throw new Error("zkPassport SDK does not support custom_data binding required for A1 issuance.");
+    }
+    query = bind.call(query, "custom_data", options.a1BindCustomData);
+  }
+  const built = query.done();
 
   options.onEvent?.({ type: "request_created", requestId: built.requestId, url: built.url });
 
@@ -329,6 +399,28 @@ export async function verifyAndIssueThroughBackend(
   payload: VerifyAndIssuePayload,
 ): Promise<VerifyAndIssueResponse> {
   return await postVerificationApi<VerifyAndIssueResponse>(
+    verificationApiUrl,
+    "/zkpassport/verify-and-issue",
+    payload,
+  );
+}
+
+export async function verifyAndIssuePassportPilotThroughBackend(
+  verificationApiUrl: string,
+  payload: VerifyAndIssuePassportPilotPayload,
+): Promise<VerifyAndIssuePassportPilotResponse> {
+  return await postVerificationApi<VerifyAndIssuePassportPilotResponse>(
+    verificationApiUrl,
+    "/zkpassport/verify-and-issue",
+    payload,
+  );
+}
+
+export async function verifyAndIssuePassportA1ThroughBackend(
+  verificationApiUrl: string,
+  payload: VerifyAndIssuePassportA1Payload,
+): Promise<VerifyAndIssuePassportA1Response> {
+  return await postVerificationApi<VerifyAndIssuePassportA1Response>(
     verificationApiUrl,
     "/zkpassport/verify-and-issue",
     payload,

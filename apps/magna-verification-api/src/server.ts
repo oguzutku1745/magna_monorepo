@@ -2,15 +2,14 @@ import cors from "cors";
 import express from "express";
 import {
   createIssuanceContextLoader,
+  dispatchVerifyAndIssuePassportRequest,
   hydrateVerificationApiEnvFromFiles,
   loadVerificationApiConfigFromEnv,
   verifyAndIssueInstagram,
-  verifyAndIssuePassport,
   verifyRootRecoveryPreflight,
   verifyAndRefreshRootAuthority,
   type VerifyRootRecoveryPreflightRequest,
   type VerifyAndRefreshRootAuthorityRequest,
-  type VerifyAndIssueRequest,
   type VerifyAndIssueInstagramRequest,
 } from "./service.js";
 import { createSessionCode, exchangeSessionCode } from "./session-code-store.js";
@@ -85,8 +84,7 @@ app.post("/api/session/exchange", (req, res) => {
 
 app.post("/zkpassport/verify-and-issue", async (req, res) => {
   try {
-    const payload = req.body as VerifyAndIssueRequest;
-    const result = await verifyAndIssuePassport(config, payload, loadIssuanceContext);
+    const result = await dispatchVerifyAndIssuePassportRequest(config, req.body, loadIssuanceContext);
     res.status(200).json(result);
   } catch (error) {
     const message = errorMessage(error);

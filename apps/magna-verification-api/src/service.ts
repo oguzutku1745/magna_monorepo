@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getSchnorrAccountContractAddress } from "@aztec/accounts/schnorr";
-import { getInitialTestAccountsData } from "@aztec/accounts/testing";
+import { getInitialTestAccountsData, INITIAL_TEST_SIGNING_KEYS } from "@aztec/accounts/testing";
 import { AztecAddress } from "@aztec/aztec.js/addresses";
 import type { ContractArtifact } from "@aztec/aztec.js/abi";
 import { Fr } from "@aztec/aztec.js/fields";
@@ -12,6 +12,8 @@ import type { Wallet } from "@aztec/aztec.js/wallet";
 import { contractInstanceWithAddressFromPlainObject } from "@aztec/stdlib/contract";
 import { EmbeddedWallet } from "@aztec/wallets/embedded";
 import {
+  assertNoPassportA1OrchestratorArtifacts,
+  assertNoZkPassportPrivateArtifacts,
   computeInstagramClaimsHash,
   computeInstagramHandleHash,
   computePassportClaimsHash,
@@ -23,12 +25,23 @@ import {
   type GhostDerivationVersion,
   type InstagramCanonicalClaims,
   type PassportCanonicalClaims,
+  extractZkPassportOuterProofUtilityMetadata,
 } from "@magna/wallet";
+import {
+  parsePassportWrapperPublicInputs,
+  verifyZkPassportOuterEvmProof,
+  verifyPassportWrapperProof,
+  type PassportWrapperPublicOutputs,
+} from "@magna/passport-wrapper-proof";
 import { MagnaIssuerContract } from "@magna/contracts-bindings";
 import type { ProofResult, Query, QueryResult } from "@zkpassport/sdk";
 import { proveInstagramEmail, type InstagramProofArtifact } from "@magna/instagram-proof";
 
 export type VerificationMode = "passport" | "rooted";
+
+export const PASSPORT_PII_BLIND_PILOT_SCHEMA = "passport-pii-blind-v0" as const;
+export const PASSPORT_PII_BLIND_PILOT_MAX_VALIDITY_SECONDS = 30 * 24 * 60 * 60;
+export const PASSPORT_A1_SCHEMA = "passport-a1-v1" as const;
 
 export type VerificationApiConfig = {
   port: number;
@@ -36,6 +49,9 @@ export type VerificationApiConfig = {
   zkPassportDomain: string;
   zkPassportScope: string;
   zkPassportDevMode: boolean;
+  zkPassportEvmRpcUrl?: string;
+  zkPassportValiditySeconds?: number;
+  enablePassportPilot: boolean;
   aztecNodeUrl: string;
   issuerAddress: string;
   localTestAccountIndex: number;
@@ -50,6 +66,49 @@ export type VerifyAndIssueRequest = {
   ageThreshold?: number;
   mode?: VerificationMode;
   ghostDerivationVersion?: GhostDerivationVersion;
+};
+
+export type VerifyAndIssuePassportPilotRequest = {
+  pilotSchema: typeof PASSPORT_PII_BLIND_PILOT_SCHEMA;
+  activeOwner: string;
+  claimsHash: string;
+  ghostOwner: string;
+  rootCommitment: string;
+  credentialValidUntil: string;
+  mode?: VerificationMode;
+  ghostDerivationVersion?: GhostDerivationVersion;
+};
+
+export type VerifyAndIssuePassportA1Request = {
+  schema: typeof PASSPORT_A1_SCHEMA;
+  activeOwner: string;
+  ghostOwner: string;
+  rootCommitment: string;
+  credentialValidUntil: string;
+  wrapperProof: unknown;
+  wrapperPublicInputs: string[];
+  zkPassportOuterProof: unknown;
+  zkPassportOuterPublicInputs: string[];
+  claimsHash: string;
+  mode?: VerificationMode;
+  ghostDerivationVersion?: GhostDerivationVersion;
+};
+
+type VerifyAndIssuePassportPilotDependencies = {
+  nowMs?: () => number;
+};
+
+type PassportA1WrapperVerificationResult =
+  | boolean
+  | {
+      verified: boolean;
+      publicInputs?: readonly unknown[];
+    };
+
+type VerifyAndIssuePassportA1Dependencies = {
+  verifyWrapperProof?: (proof: unknown) => Promise<PassportA1WrapperVerificationResult>;
+  verifyZkPassportOuterProof?: (proof: unknown, publicInputs: readonly string[]) => Promise<boolean>;
+  parseWrapperPublicInputs?: typeof parsePassportWrapperPublicInputs;
 };
 
 export type VerifyAndIssueInstagramRequest = {
@@ -80,7 +139,7 @@ export type VerifyRootRecoveryPreflightRequest = {
   ageThreshold?: number;
 };
 
-export type VerifyAndIssueResponse = {
+type VerifyAndIssuePassportResponse = {
   issuanceTxHash?: string;
   ghostOwner: string;
   rootCommitment: string;
@@ -100,6 +159,43 @@ export type VerifyAndIssueResponse = {
     expiryTs: string;
   };
 };
+
+type VerifyAndIssuePassportPilotResponse = {
+  issuanceTxHash?: string;
+  ghostOwner: string;
+  rootCommitment: string;
+  claimsHash: string;
+  mode: VerificationMode;
+  ghostDerivationVersion: GhostDerivationVersion;
+  issuerAddress: string;
+  orchestratorAddress: string;
+  verificationSummary: {
+    verified: true;
+    pilot: true;
+    piiBlind: true;
+  };
+};
+
+type VerifyAndIssuePassportA1Response = {
+  issuanceTxHash?: string;
+  ghostOwner: string;
+  rootCommitment: string;
+  claimsHash: string;
+  mode: VerificationMode;
+  ghostDerivationVersion: GhostDerivationVersion;
+  issuerAddress: string;
+  orchestratorAddress: string;
+  verificationSummary: {
+    verified: true;
+    passportA1: true;
+    piiBlind: true;
+  };
+};
+
+export type VerifyAndIssueResponse =
+  | VerifyAndIssuePassportResponse
+  | VerifyAndIssuePassportPilotResponse
+  | VerifyAndIssuePassportA1Response;
 
 export type VerifyAndIssueInstagramResponse = {
   issuanceTxHash?: string;
@@ -165,6 +261,9 @@ type IssuanceContext = {
   wallet: EmbeddedWallet;
   issuer: MagnaIssuerContract;
   orchestratorAddress: AztecAddress;
+  // Keep the account manager strongly referenced for the server lifetime.
+  // Aztec's native wallet stack can trap if this is collected while the wallet remains active.
+  orchestratorAccount: unknown;
 };
 
 type ZkPassportVerificationResult = {
@@ -178,6 +277,15 @@ function parseNumber(value: string | undefined, fallback: number): number {
   if (!value) return fallback;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseOptionalPositiveInteger(value: string | undefined, label: string): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${label} must be a positive integer.`);
+  }
+  return parsed;
 }
 
 function parseOptionalString(value: string | undefined): string | undefined {
@@ -367,6 +475,12 @@ export function loadVerificationApiConfigFromEnv(): VerificationApiConfig {
       readFirstEnv(["MAGNA_ZKPASSPORT_DEV_MODE", "VITE_MAGNA_ZKPASSPORT_DEV_MODE"]),
       false,
     ),
+    zkPassportEvmRpcUrl: parseOptionalString(readFirstEnv(["MAGNA_ZKPASSPORT_EVM_RPC_URL"])),
+    zkPassportValiditySeconds: parseOptionalPositiveInteger(
+      readFirstEnv(["MAGNA_ZKPASSPORT_VALIDITY_SECONDS"]),
+      "MAGNA_ZKPASSPORT_VALIDITY_SECONDS",
+    ),
+    enablePassportPilot: parseBoolean(readFirstEnv(["MAGNA_ENABLE_PASSPORT_PILOT"]), false),
     aztecNodeUrl: readFirstEnv(["MAGNA_AZTEC_NODE_URL", "VITE_AZTEC_NODE_URL"]) ?? "http://localhost:8080",
     issuerAddress: requiredEnv(["MAGNA_ISSUER_ADDRESS", "VITE_MAGNA_ISSUER_ADDRESS"]),
     localTestAccountIndex: parseNumber(
@@ -608,29 +722,26 @@ function readTxHash(receipt: unknown): string | undefined {
 async function ensureImportedLocalTestAccountAddress(
   wallet: EmbeddedWallet,
   index: number,
-): Promise<AztecAddress> {
+): Promise<{ address: AztecAddress; account: unknown }> {
   const initialAccounts = await getInitialTestAccountsData();
   const accountData = initialAccounts[index];
   if (!accountData) {
     throw new Error(`Local test account index ${index} is not available.`);
   }
 
-  const currentAccounts = await wallet.getAccounts();
-  const existing = currentAccounts.find(account => account.item.equals(accountData.address));
-  if (existing) {
-    return existing.item;
-  }
-
   const alias = `local-test-${index}`;
-  const importedAccount = await wallet.createSchnorrAccount(
+  const importedAccount = await wallet.createSchnorrInitializerlessAccount(
     accountData.secret,
     accountData.salt,
-    accountData.signingKey,
+    INITIAL_TEST_SIGNING_KEYS[index] ?? accountData.signingKey,
     alias,
   );
   const updatedAccounts = await wallet.getAccounts();
   const importedMatch = updatedAccounts.find(account => account.item.equals(importedAccount.address));
-  return importedMatch?.item ?? importedAccount.address;
+  return {
+    address: importedMatch?.item ?? importedAccount.address,
+    account: importedAccount,
+  };
 }
 
 async function registerContractArtifactAtAddress(
@@ -675,7 +786,7 @@ async function createIssuanceContext(config: VerificationApiConfig): Promise<Iss
   await waitForNode(node);
   const wallet = await EmbeddedWallet.create(node, { ephemeral: true });
   const localOrchestrator = await ensureImportedLocalTestAccountAddress(wallet, config.localTestAccountIndex);
-  const orchestratorAddress = localOrchestrator;
+  const orchestratorAddress = localOrchestrator.address;
   if (config.orchestratorAddress && config.orchestratorAddress !== orchestratorAddress.toString()) {
     throw new Error(
       `Configured orchestrator ${config.orchestratorAddress} does not match local test account ${orchestratorAddress.toString()}.`,
@@ -689,6 +800,7 @@ async function createIssuanceContext(config: VerificationApiConfig): Promise<Iss
     wallet,
     issuer,
     orchestratorAddress,
+    orchestratorAccount: localOrchestrator.account,
   };
 }
 
@@ -769,6 +881,248 @@ function requireFieldLikeString(value: unknown, fieldName: string): string {
     }
   }
   throw new Error(`${fieldName} must be field-like.`);
+}
+
+function requireDecimalString(value: unknown, fieldName: string): string {
+  if (typeof value !== "string" || !/^[0-9]+$/.test(value)) {
+    throw new Error(`${fieldName} must be a decimal string.`);
+  }
+  return value;
+}
+
+function requirePositiveUnixTimestampString(value: unknown, fieldName: string): string {
+  const normalized = requireDecimalString(value, fieldName);
+  if (BigInt(normalized) <= 0n) {
+    throw new Error(`${fieldName} must be a positive unix timestamp string.`);
+  }
+  return normalized;
+}
+
+function parsePassportPilotCredentialValidUntil(value: string, nowMs: () => number): bigint {
+  const credentialValidUntil = BigInt(value);
+  const nowSeconds = BigInt(Math.floor(nowMs() / 1000));
+  const maxCredentialValidUntil = nowSeconds + BigInt(PASSPORT_PII_BLIND_PILOT_MAX_VALIDITY_SECONDS);
+  if (credentialValidUntil > maxCredentialValidUntil) {
+    throw new Error("credentialValidUntil cannot exceed 30 days from server time.");
+  }
+  return credentialValidUntil;
+}
+
+function requireOptionalPilotMode(value: unknown): VerificationMode | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "passport" || value === "rooted") {
+    return value;
+  }
+  throw new Error("mode must be passport or rooted.");
+}
+
+function requireOptionalPilotGhostDerivationVersion(value: unknown): GhostDerivationVersion | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "v1_legacy_unscoped" || value === "v2_scoped") {
+    return value;
+  }
+  throw new Error("ghostDerivationVersion must be v1_legacy_unscoped or v2_scoped.");
+}
+
+export function isPassportPilotRequest(input: unknown): input is VerifyAndIssuePassportPilotRequest {
+  return Boolean(
+    input &&
+      typeof input === "object" &&
+      Reflect.get(input, "pilotSchema") === PASSPORT_PII_BLIND_PILOT_SCHEMA,
+  );
+}
+
+export function isPassportA1Request(input: unknown): input is VerifyAndIssuePassportA1Request {
+  return Boolean(input && typeof input === "object" && Reflect.get(input, "schema") === PASSPORT_A1_SCHEMA);
+}
+
+export function validatePassportPilotRequest(
+  input: VerifyAndIssuePassportPilotRequest,
+): VerifyAndIssuePassportPilotRequest {
+  assertNoZkPassportPrivateArtifacts(input);
+  if (input.pilotSchema !== PASSPORT_PII_BLIND_PILOT_SCHEMA) {
+    throw new Error("pilotSchema must be passport-pii-blind-v0.");
+  }
+  requireString(input.activeOwner, "activeOwner");
+  requireString(input.ghostOwner, "ghostOwner");
+  requireDecimalString(input.claimsHash, "claimsHash");
+  requireDecimalString(input.rootCommitment, "rootCommitment");
+  requirePositiveUnixTimestampString(input.credentialValidUntil, "credentialValidUntil");
+  const mode = resolveVerificationMode(requireOptionalPilotMode(input.mode));
+  resolveGhostDerivationVersion(requireOptionalPilotGhostDerivationVersion(input.ghostDerivationVersion), mode);
+  return input;
+}
+
+function assertNoPassportA1PrivateArtifacts(input: VerifyAndIssuePassportA1Request): void {
+  assertNoPassportA1OrchestratorArtifacts(input);
+}
+
+function requireWrapperProof(value: unknown): unknown {
+  if (value === undefined || value === null) {
+    throw new Error("wrapperProof is required.");
+  }
+  return value;
+}
+
+function requireWrapperPublicInputs(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    throw new Error("wrapperPublicInputs must be an array.");
+  }
+  return value.map((entry, index) => requireString(entry, `wrapperPublicInputs[${index}]`));
+}
+
+function requireZkPassportOuterProof(value: unknown): unknown {
+  if (value === undefined || value === null) {
+    throw new Error("zkPassportOuterProof is required.");
+  }
+  return value;
+}
+
+function requireZkPassportOuterPublicInputs(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    throw new Error("zkPassportOuterPublicInputs must be an array.");
+  }
+  return value.map((entry, index) => requireFieldLikeString(entry, `zkPassportOuterPublicInputs[${index}]`));
+}
+
+function normalizeBoundWrapperPublicInputs(value: unknown, fieldName: string): string[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`${fieldName} must be an array.`);
+  }
+  return value.map((entry, index) => {
+    const raw = requireFieldLikeString(entry, `${fieldName}[${index}]`);
+    try {
+      return BigInt(raw).toString();
+    } catch {
+      throw new Error(`${fieldName}[${index}] must be a decimal or 0x-prefixed field string.`);
+    }
+  });
+}
+
+function readProofBoundWrapperPublicInputs(proof: unknown): string[] | undefined {
+  if (!proof || typeof proof !== "object") {
+    return undefined;
+  }
+  const publicInputs = Reflect.get(proof, "publicInputs");
+  return publicInputs === undefined
+    ? undefined
+    : normalizeBoundWrapperPublicInputs(publicInputs, "wrapperProof.publicInputs");
+}
+
+function normalizeWrapperVerificationResult(
+  result: PassportA1WrapperVerificationResult,
+): {
+  verified: boolean;
+  publicInputs?: string[];
+} {
+  if (typeof result === "boolean") {
+    return { verified: result };
+  }
+  if (!result || typeof result !== "object") {
+    throw new Error("Unexpected Passport A1 wrapper verifier result.");
+  }
+  return {
+    verified: result.verified === true,
+    publicInputs:
+      result.publicInputs === undefined
+        ? undefined
+        : normalizeBoundWrapperPublicInputs(result.publicInputs, "wrapper verifier publicInputs"),
+  };
+}
+
+function assertSameWrapperPublicInputs(actual: readonly string[], expected: readonly string[], message: string): void {
+  if (actual.length !== expected.length || actual.some((entry, index) => entry !== expected[index])) {
+    throw new Error(message);
+  }
+}
+
+function validatePassportA1WrapperOutputs(outputs: PassportWrapperPublicOutputs): PassportWrapperPublicOutputs {
+  return {
+    claimsHash: requireDecimalString(outputs.claimsHash, "wrapperPublicInputs.claimsHash"),
+    nationalityCommitment: requireDecimalString(
+      outputs.nationalityCommitment,
+      "wrapperPublicInputs.nationalityCommitment",
+    ),
+    expiryCommitment: requireDecimalString(outputs.expiryCommitment, "wrapperPublicInputs.expiryCommitment"),
+    minAgeProven: outputs.minAgeProven,
+    credentialValidUntil: requirePositiveUnixTimestampString(
+      outputs.credentialValidUntil,
+      "wrapperPublicInputs.credentialValidUntil",
+    ),
+    scopedNullifier: requireDecimalString(outputs.scopedNullifier, "wrapperPublicInputs.scopedNullifier"),
+    nationalityDisclosureCommitment: requireDecimalString(
+      outputs.nationalityDisclosureCommitment,
+      "wrapperPublicInputs.nationalityDisclosureCommitment",
+    ),
+    expiryDisclosureCommitment: requireDecimalString(
+      outputs.expiryDisclosureCommitment,
+      "wrapperPublicInputs.expiryDisclosureCommitment",
+    ),
+    agePredicateCommitment: requireDecimalString(
+      outputs.agePredicateCommitment,
+      "wrapperPublicInputs.agePredicateCommitment",
+    ),
+    bindCommitment: requireDecimalString(outputs.bindCommitment, "wrapperPublicInputs.bindCommitment"),
+  };
+}
+
+function assertPassportA1PayloadMatchesWrapperOutputs(
+  input: VerifyAndIssuePassportA1Request,
+  outputs: PassportWrapperPublicOutputs,
+): void {
+  if (input.credentialValidUntil !== outputs.credentialValidUntil) {
+    throw new Error("credentialValidUntil must match wrapper public outputs.");
+  }
+  if (input.claimsHash !== undefined && input.claimsHash !== outputs.claimsHash) {
+    throw new Error("claimsHash must match wrapper public outputs.");
+  }
+}
+
+function assertPassportA1OuterInputsMatchWrapperOutputs(
+  outerPublicInputs: readonly string[],
+  outputs: PassportWrapperPublicOutputs,
+): void {
+  const metadata = extractZkPassportOuterProofUtilityMetadata(outerPublicInputs);
+  const [nationalityDisclosureCommitment, expiryDisclosureCommitment, agePredicateCommitment, bindCommitment] =
+    metadata.parameterCommitments;
+  if (nationalityDisclosureCommitment !== outputs.nationalityDisclosureCommitment) {
+    throw new Error("zkPassport nationality disclosure commitment must match wrapper public outputs.");
+  }
+  if (expiryDisclosureCommitment !== outputs.expiryDisclosureCommitment) {
+    throw new Error("zkPassport expiry disclosure commitment must match wrapper public outputs.");
+  }
+  if (agePredicateCommitment !== outputs.agePredicateCommitment) {
+    throw new Error("zkPassport age predicate commitment must match wrapper public outputs.");
+  }
+  if (bindCommitment !== outputs.bindCommitment) {
+    throw new Error("zkPassport bind commitment must match wrapper public outputs.");
+  }
+  if (metadata.scopedNullifier !== outputs.scopedNullifier) {
+    throw new Error("zkPassport scoped nullifier must match wrapper public outputs.");
+  }
+}
+
+export function validatePassportA1Request(input: VerifyAndIssuePassportA1Request): VerifyAndIssuePassportA1Request {
+  assertNoPassportA1PrivateArtifacts(input);
+  if (input.schema !== PASSPORT_A1_SCHEMA) {
+    throw new Error("schema must be passport-a1-v1.");
+  }
+  requireString(input.activeOwner, "activeOwner");
+  requireString(input.ghostOwner, "ghostOwner");
+  requireDecimalString(input.rootCommitment, "rootCommitment");
+  requirePositiveUnixTimestampString(input.credentialValidUntil, "credentialValidUntil");
+  requireWrapperProof(input.wrapperProof);
+  input.wrapperPublicInputs = requireWrapperPublicInputs(input.wrapperPublicInputs);
+  requireZkPassportOuterProof(input.zkPassportOuterProof);
+  input.zkPassportOuterPublicInputs = requireZkPassportOuterPublicInputs(input.zkPassportOuterPublicInputs);
+  requireDecimalString(input.claimsHash, "claimsHash");
+  const mode = resolveVerificationMode(requireOptionalPilotMode(input.mode));
+  resolveGhostDerivationVersion(requireOptionalPilotGhostDerivationVersion(input.ghostDerivationVersion), mode);
+  return input;
 }
 
 function defaultInstagramExpiryTs(): bigint {
@@ -870,6 +1224,217 @@ export async function verifyAndIssuePassport(
       expiryTs: normalized.claims.expiryTs.toString(),
     },
   };
+}
+
+export async function verifyAndIssuePassportPilot(
+  config: VerificationApiConfig,
+  input: VerifyAndIssuePassportPilotRequest,
+  contextLoader: () => Promise<IssuanceContext>,
+  dependencies: VerifyAndIssuePassportPilotDependencies = {},
+): Promise<VerifyAndIssueResponse> {
+  const validated = validatePassportPilotRequest(input);
+  const mode = resolveVerificationMode(validated.mode);
+  const ghostDerivationVersion = resolveGhostDerivationVersion(validated.ghostDerivationVersion, mode);
+  const credentialValidUntil = parsePassportPilotCredentialValidUntil(
+    validated.credentialValidUntil,
+    dependencies.nowMs ?? Date.now,
+  );
+  const context = await contextLoader();
+  const activeOwnerAddress = AztecAddress.fromString(validated.activeOwner);
+  const ghostOwnerAddress = AztecAddress.fromString(validated.ghostOwner);
+  const claimsHash = new Fr(BigInt(validated.claimsHash));
+
+  const interaction =
+    mode === "rooted"
+      ? context.issuer.methods.register_rooted_passport_v2(
+          activeOwnerAddress,
+          ghostOwnerAddress,
+          new Fr(BigInt(validated.rootCommitment)),
+          claimsHash,
+          credentialValidUntil,
+        )
+      : context.issuer.methods.register_credential_v2(
+          activeOwnerAddress,
+          ghostOwnerAddress,
+          claimsHash,
+          CredentialType.Passport,
+          credentialValidUntil,
+        );
+
+  const receipt = await interaction.send({ from: context.orchestratorAddress });
+  return {
+    issuanceTxHash: readTxHash(receipt),
+    ghostOwner: validated.ghostOwner,
+    rootCommitment: validated.rootCommitment,
+    claimsHash: validated.claimsHash,
+    mode,
+    ghostDerivationVersion,
+    issuerAddress: config.issuerAddress,
+    orchestratorAddress: context.orchestratorAddress.toString(),
+    verificationSummary: {
+      verified: true,
+      pilot: true,
+      piiBlind: true,
+    },
+  };
+}
+
+async function defaultVerifyPassportWrapperProof(proof: unknown): Promise<PassportA1WrapperVerificationResult> {
+  return verifyPassportWrapperProof(proof as never);
+}
+
+async function defaultVerifyZkPassportOuterProof(
+  config: VerificationApiConfig,
+  proof: unknown,
+  publicInputs: readonly string[],
+): Promise<boolean> {
+  return verifyZkPassportOuterEvmProof({
+    proof,
+    publicInputs,
+    rpcUrl: config.zkPassportEvmRpcUrl,
+    validityPeriodInSeconds: config.zkPassportValiditySeconds,
+    domain: config.zkPassportDomain,
+    scope: config.zkPassportScope,
+    devMode: config.zkPassportDevMode,
+  });
+}
+
+export async function verifyAndIssuePassportA1(
+  config: VerificationApiConfig,
+  input: VerifyAndIssuePassportA1Request,
+  contextLoader: () => Promise<IssuanceContext>,
+  dependencies: VerifyAndIssuePassportA1Dependencies = {},
+): Promise<VerifyAndIssueResponse> {
+  const validated = validatePassportA1Request(input);
+  const parseWrapperPublicInputs = dependencies.parseWrapperPublicInputs ?? parsePassportWrapperPublicInputs;
+  const proofBoundPublicInputs = readProofBoundWrapperPublicInputs(validated.wrapperProof);
+  if (proofBoundPublicInputs) {
+    assertSameWrapperPublicInputs(
+      proofBoundPublicInputs,
+      validated.wrapperPublicInputs,
+      "wrapperProof.publicInputs must match wrapperPublicInputs.",
+    );
+  }
+  let wrapperOutputs = proofBoundPublicInputs
+    ? validatePassportA1WrapperOutputs(parseWrapperPublicInputs(proofBoundPublicInputs))
+    : undefined;
+  if (wrapperOutputs) {
+    assertPassportA1PayloadMatchesWrapperOutputs(validated, wrapperOutputs);
+  }
+
+  const verifyWrapperProof = dependencies.verifyWrapperProof ?? defaultVerifyPassportWrapperProof;
+  const verification = normalizeWrapperVerificationResult(await verifyWrapperProof(validated.wrapperProof));
+  if (!verification.verified) {
+    throw new Error("Passport A1 wrapper proof verification failed.");
+  }
+
+  let boundPublicInputs = proofBoundPublicInputs;
+  if (verification.publicInputs) {
+    if (boundPublicInputs) {
+      assertSameWrapperPublicInputs(
+        verification.publicInputs,
+        boundPublicInputs,
+        "Verifier-attested public inputs must match wrapperProof.publicInputs.",
+      );
+    } else {
+      assertSameWrapperPublicInputs(
+        verification.publicInputs,
+        validated.wrapperPublicInputs,
+        "Verifier-attested public inputs must match wrapperPublicInputs.",
+      );
+      boundPublicInputs = verification.publicInputs;
+    }
+  }
+  if (!boundPublicInputs) {
+    throw new Error("Passport A1 wrapper proof public inputs must be proof-bound or verifier-attested.");
+  }
+
+  if (!wrapperOutputs) {
+    wrapperOutputs = validatePassportA1WrapperOutputs(parseWrapperPublicInputs(boundPublicInputs));
+    assertPassportA1PayloadMatchesWrapperOutputs(validated, wrapperOutputs);
+  }
+  assertPassportA1OuterInputsMatchWrapperOutputs(validated.zkPassportOuterPublicInputs, wrapperOutputs);
+
+  const verifyZkPassportOuterProof =
+    dependencies.verifyZkPassportOuterProof ??
+    ((proof, publicInputs) => defaultVerifyZkPassportOuterProof(config, proof, publicInputs));
+  if (!(await verifyZkPassportOuterProof(validated.zkPassportOuterProof, validated.zkPassportOuterPublicInputs))) {
+    throw new Error("Passport A1 zkPassport outer proof verification failed.");
+  }
+
+  const mode = resolveVerificationMode(validated.mode);
+  const ghostDerivationVersion = resolveGhostDerivationVersion(validated.ghostDerivationVersion, mode);
+  const context = await contextLoader();
+  const activeOwnerAddress = AztecAddress.fromString(validated.activeOwner);
+  const ghostOwnerAddress = AztecAddress.fromString(validated.ghostOwner);
+  const claimsHash = new Fr(BigInt(wrapperOutputs.claimsHash));
+  const credentialValidUntil = BigInt(wrapperOutputs.credentialValidUntil);
+
+  const interaction =
+    mode === "rooted"
+      ? context.issuer.methods.register_rooted_passport_v2(
+          activeOwnerAddress,
+          ghostOwnerAddress,
+          new Fr(BigInt(validated.rootCommitment)),
+          claimsHash,
+          credentialValidUntil,
+        )
+      : context.issuer.methods.register_credential_v2(
+          activeOwnerAddress,
+          ghostOwnerAddress,
+          claimsHash,
+          CredentialType.Passport,
+          credentialValidUntil,
+        );
+
+  const receipt = await interaction.send({ from: context.orchestratorAddress });
+  return {
+    issuanceTxHash: readTxHash(receipt),
+    ghostOwner: validated.ghostOwner,
+    rootCommitment: validated.rootCommitment,
+    claimsHash: wrapperOutputs.claimsHash,
+    mode,
+    ghostDerivationVersion,
+    issuerAddress: config.issuerAddress,
+    orchestratorAddress: context.orchestratorAddress.toString(),
+    verificationSummary: {
+      verified: true,
+      passportA1: true,
+      piiBlind: true,
+    },
+  };
+}
+
+export type VerifyAndIssuePassportHandlerKind = "passport-a1" | "passport-pii-blind-pilot" | "passport-legacy";
+
+export function selectVerifyAndIssuePassportHandler(input: unknown): VerifyAndIssuePassportHandlerKind {
+  if (isPassportA1Request(input)) {
+    return "passport-a1";
+  }
+  if (isPassportPilotRequest(input)) {
+    return "passport-pii-blind-pilot";
+  }
+  return "passport-legacy";
+}
+
+export async function dispatchVerifyAndIssuePassportRequest(
+  config: VerificationApiConfig,
+  input: VerifyAndIssueRequest | VerifyAndIssuePassportPilotRequest | VerifyAndIssuePassportA1Request,
+  contextLoader: () => Promise<IssuanceContext>,
+): Promise<VerifyAndIssueResponse> {
+  switch (selectVerifyAndIssuePassportHandler(input)) {
+    case "passport-a1":
+      return verifyAndIssuePassportA1(config, input as VerifyAndIssuePassportA1Request, contextLoader);
+    case "passport-pii-blind-pilot":
+      if (!config.enablePassportPilot) {
+        throw new Error(
+          "Passport PII-blind pilot issuance is disabled. Set MAGNA_ENABLE_PASSPORT_PILOT=true only in development/test to enable it.",
+        );
+      }
+      return verifyAndIssuePassportPilot(config, input as VerifyAndIssuePassportPilotRequest, contextLoader);
+    case "passport-legacy":
+      return verifyAndIssuePassport(config, input as VerifyAndIssueRequest, contextLoader);
+  }
 }
 
 export async function verifyAndIssueInstagram(

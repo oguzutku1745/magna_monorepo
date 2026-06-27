@@ -13,7 +13,7 @@ import {
   type MagnaConsumerLoginOutcome,
 } from "@magna/wallet";
 import { getManagementEnv } from "./env";
-import { refsForOwner } from "./storage";
+import { clearStoredWalletState, refsForOwner } from "./storage";
 
 function loadPassportCredential(ownerAddress: string, issuerAddress?: string) {
   const credential = refsForOwner(ownerAddress, { issuerAddress }).find(
@@ -52,6 +52,17 @@ function loadInstagramCredential(ownerAddress: string, handleHash: bigint, issue
     );
   }
   return credential;
+}
+
+function isMissingHintedNoteError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("Failed to get a note") ||
+    message.includes("credential note not found") ||
+    message.includes("status note not found") ||
+    message.includes("linked credential note not found") ||
+    message.includes("linked status note not found")
+  );
 }
 
 function verificationRequirements(policy: Policy, requirements?: LoginRequirement[]): LoginRequirement[] {
@@ -146,6 +157,13 @@ export async function runWalletLoginForRequest(input: {
     return { verified: true, receipt: receipts[0]?.receipt ?? null, receipts };
   } catch (error) {
     console.warn("magna verification failed", error);
+    if (isMissingHintedNoteError(error)) {
+      clearStoredWalletState();
+      throw new Error(
+        "Stored Magna credential notes were not found on the current Aztec chain. " +
+          "Reopen your wallet and re-issue the required credentials.",
+      );
+    }
     throw error;
   } finally {
     await session.disconnect();

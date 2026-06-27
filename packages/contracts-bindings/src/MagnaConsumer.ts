@@ -4,7 +4,7 @@
 /* eslint-disable */
 import { AztecAddress, CompleteAddress } from '@aztec/aztec.js/addresses';
 import { type AbiType, type AztecAddressLike, type ContractArtifact, EventSelector, decodeFromAbi, type EthAddressLike, type FieldLike, type FunctionSelectorLike, loadContractArtifact, loadContractArtifactForPublic, type NoirCompiledContract, type OptionLike, type U128Like, type WrappedFieldLike } from '@aztec/aztec.js/abi';
-import { Contract, ContractBase, ContractFunctionInteraction, type ContractMethod, type ContractStorageLayout, DeployMethod } from '@aztec/aztec.js/contracts';
+import { Contract, ContractBase, ContractFunctionInteraction, type ContractMethod, type ContractStorageLayout, type DeployInstantiationOptions, DeployMethod } from '@aztec/aztec.js/contracts';
 import { EthAddress } from '@aztec/aztec.js/addresses';
 import { Fr, Point } from '@aztec/aztec.js/fields';
 import { type PublicKey, PublicKeys } from '@aztec/aztec.js/keys';
@@ -44,32 +44,37 @@ export class MagnaConsumerContract extends ContractBase {
   
   /**
    * Creates a tx to deploy a new instance of this contract.
+   * @param instantiation - Optional address-affecting parameters (salt, deployer / universalDeploy, publicKeys).
+   *                       Salt defaults to a random value; the deployer is locked lazily from the first send-time `from`.
    */
-  public static deploy(wallet: Wallet, issuer_address: AztecAddressLike) {
-    return new DeployMethod<MagnaConsumerContract>(PublicKeys.default(), wallet, MagnaConsumerContractArtifact, (instance, wallet) => MagnaConsumerContract.at(instance.address, wallet), Array.from(arguments).slice(1));
-  }
-
-  /**
-   * Creates a tx to deploy a new instance of this contract using the specified public keys hash to derive the address.
-   */
-  public static deployWithPublicKeys(publicKeys: PublicKeys, wallet: Wallet, issuer_address: AztecAddressLike) {
-    return new DeployMethod<MagnaConsumerContract>(publicKeys, wallet, MagnaConsumerContractArtifact, (instance, wallet) => MagnaConsumerContract.at(instance.address, wallet), Array.from(arguments).slice(2));
+  public static deploy(wallet: Wallet, issuer_address: AztecAddressLike, instantiation?: DeployInstantiationOptions) {
+    return DeployMethod.create<MagnaConsumerContract>(
+      wallet,
+      {
+        artifact: MagnaConsumerContractArtifact,
+        postDeployCtor: (instance, wallet) => MagnaConsumerContract.at(instance.address, wallet),
+        args: [issuer_address],
+      },
+      instantiation,
+    );
   }
 
   /**
    * Creates a tx to deploy a new instance of this contract using the specified constructor method.
    */
   public static deployWithOpts<M extends keyof MagnaConsumerContract['methods']>(
-    opts: { publicKeys?: PublicKeys; method?: M; wallet: Wallet },
+    opts: { method?: M; wallet: Wallet; instantiation?: DeployInstantiationOptions },
     ...args: Parameters<MagnaConsumerContract['methods'][M]>
   ) {
-    return new DeployMethod<MagnaConsumerContract>(
-      opts.publicKeys ?? PublicKeys.default(),
+    return DeployMethod.create<MagnaConsumerContract>(
       opts.wallet,
-      MagnaConsumerContractArtifact,
-      (instance, wallet) => MagnaConsumerContract.at(instance.address, wallet),
-      Array.from(arguments).slice(1),
-      opts.method ?? 'constructor',
+      {
+        artifact: MagnaConsumerContractArtifact,
+        postDeployCtor: (instance, wallet) => MagnaConsumerContract.at(instance.address, wallet),
+        args,
+        constructorNameOrArtifact: opts.method ?? 'constructor',
+      },
+      opts.instantiation,
     );
   }
   
@@ -117,8 +122,14 @@ gated_login_count: {
     /** login_with_linked_magna(policy: struct, hinted_root_status: struct, hinted_root_authority: struct, hinted_credential: struct, hinted_status: struct, min_age_proven: integer, nationality_alpha3_packed: field, sponsor_slot: integer) */
     login_with_linked_magna: ((policy: { credential_type: (bigint | number), constraints: { claim_id: (bigint | number), op: (bigint | number), value: FieldLike }[] }, hinted_root_status: { note: { root_commitment: FieldLike, revocation_secret: FieldLike }, contract_address: AztecAddressLike, owner: AztecAddressLike, randomness: FieldLike, storage_slot: FieldLike, metadata: { stage: (bigint | number), maybe_note_nonce: FieldLike } }, hinted_root_authority: { note: { root_commitment: FieldLike, claims_hash: FieldLike, authority_expiry_ts: (bigint | number), revocation_secret: FieldLike }, contract_address: AztecAddressLike, owner: AztecAddressLike, randomness: FieldLike, storage_slot: FieldLike, metadata: { stage: (bigint | number), maybe_note_nonce: FieldLike } }, hinted_credential: { note: { root_commitment: FieldLike, claims_hash: FieldLike, credential_type: (bigint | number), expiry_ts: (bigint | number) }, contract_address: AztecAddressLike, owner: AztecAddressLike, randomness: FieldLike, storage_slot: FieldLike, metadata: { stage: (bigint | number), maybe_note_nonce: FieldLike } }, hinted_status: { note: { root_commitment: FieldLike, revocation_secret: FieldLike, claims_hash: FieldLike, credential_type: (bigint | number) }, contract_address: AztecAddressLike, owner: AztecAddressLike, randomness: FieldLike, storage_slot: FieldLike, metadata: { stage: (bigint | number), maybe_note_nonce: FieldLike } }, min_age_proven: (bigint | number), nationality_alpha3_packed: FieldLike, sponsor_slot: (bigint | number)) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
+    /** login_with_linked_magna_v2(policy: struct, hinted_root_status: struct, hinted_root_authority: struct, hinted_credential: struct, hinted_status: struct, claims_witness: struct, sponsor_slot: integer) */
+    login_with_linked_magna_v2: ((policy: { credential_type: (bigint | number), constraints: { claim_id: (bigint | number), op: (bigint | number), value: FieldLike }[] }, hinted_root_status: { note: { root_commitment: FieldLike, revocation_secret: FieldLike }, contract_address: AztecAddressLike, owner: AztecAddressLike, randomness: FieldLike, storage_slot: FieldLike, metadata: { stage: (bigint | number), maybe_note_nonce: FieldLike } }, hinted_root_authority: { note: { root_commitment: FieldLike, claims_hash: FieldLike, authority_expiry_ts: (bigint | number), revocation_secret: FieldLike }, contract_address: AztecAddressLike, owner: AztecAddressLike, randomness: FieldLike, storage_slot: FieldLike, metadata: { stage: (bigint | number), maybe_note_nonce: FieldLike } }, hinted_credential: { note: { root_commitment: FieldLike, claims_hash: FieldLike, credential_type: (bigint | number), expiry_ts: (bigint | number) }, contract_address: AztecAddressLike, owner: AztecAddressLike, randomness: FieldLike, storage_slot: FieldLike, metadata: { stage: (bigint | number), maybe_note_nonce: FieldLike } }, hinted_status: { note: { root_commitment: FieldLike, revocation_secret: FieldLike, claims_hash: FieldLike, credential_type: (bigint | number) }, contract_address: AztecAddressLike, owner: AztecAddressLike, randomness: FieldLike, storage_slot: FieldLike, metadata: { stage: (bigint | number), maybe_note_nonce: FieldLike } }, claims_witness: { min_age_proven: (bigint | number), nationality_alpha3_packed: FieldLike, nationality_blind: FieldLike, expiry_ts: (bigint | number), expiry_blind: FieldLike }, sponsor_slot: (bigint | number)) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
+
     /** login_with_magna(policy: struct, hinted_credential: struct, hinted_status: struct, min_age_proven: integer, nationality_alpha3_packed: field, sponsor_slot: integer) */
     login_with_magna: ((policy: { credential_type: (bigint | number), constraints: { claim_id: (bigint | number), op: (bigint | number), value: FieldLike }[] }, hinted_credential: { note: { claims_hash: FieldLike, credential_type: (bigint | number), expiry_ts: (bigint | number) }, contract_address: AztecAddressLike, owner: AztecAddressLike, randomness: FieldLike, storage_slot: FieldLike, metadata: { stage: (bigint | number), maybe_note_nonce: FieldLike } }, hinted_status: { note: { revocation_secret: FieldLike, claims_hash: FieldLike, credential_type: (bigint | number) }, contract_address: AztecAddressLike, owner: AztecAddressLike, randomness: FieldLike, storage_slot: FieldLike, metadata: { stage: (bigint | number), maybe_note_nonce: FieldLike } }, min_age_proven: (bigint | number), nationality_alpha3_packed: FieldLike, sponsor_slot: (bigint | number)) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
+
+    /** login_with_magna_v2(policy: struct, hinted_credential: struct, hinted_status: struct, claims_witness: struct, sponsor_slot: integer) */
+    login_with_magna_v2: ((policy: { credential_type: (bigint | number), constraints: { claim_id: (bigint | number), op: (bigint | number), value: FieldLike }[] }, hinted_credential: { note: { claims_hash: FieldLike, credential_type: (bigint | number), expiry_ts: (bigint | number) }, contract_address: AztecAddressLike, owner: AztecAddressLike, randomness: FieldLike, storage_slot: FieldLike, metadata: { stage: (bigint | number), maybe_note_nonce: FieldLike } }, hinted_status: { note: { revocation_secret: FieldLike, claims_hash: FieldLike, credential_type: (bigint | number) }, contract_address: AztecAddressLike, owner: AztecAddressLike, randomness: FieldLike, storage_slot: FieldLike, metadata: { stage: (bigint | number), maybe_note_nonce: FieldLike } }, claims_witness: { min_age_proven: (bigint | number), nationality_alpha3_packed: FieldLike, nationality_blind: FieldLike, expiry_ts: (bigint | number), expiry_blind: FieldLike }, sponsor_slot: (bigint | number)) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
     /** offchain_receive(messages: struct) */
     offchain_receive: ((messages: { ciphertext: FieldLike[], recipient: AztecAddressLike, tx_hash: OptionLike<FieldLike>, anchor_block_timestamp: (bigint | number) }[]) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;

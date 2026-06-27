@@ -7,20 +7,21 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test dist/**/*.spec.js",
+    "test": "npm run build && node ../../scripts/node-test-runner.mjs 'dist/**/*.spec.js'",
     "lint": "echo \"no lint configured\""
   },
   "peerDependencies": {
-    "@aztec/aztec.js": "4.2.0-aztecnr-rc.2"
+    "@aztec/aztec.js": "5.0.0-rc.1"
   },
   "dependencies": {
-    "@aztec/accounts": "4.2.0-aztecnr-rc.2",
-    "@aztec/foundation": "4.2.0-aztecnr-rc.2",
-    "@aztec/noir-contracts.js": "4.2.0-aztecnr-rc.2",
-    "@aztec/stdlib": "4.2.0-aztecnr-rc.2",
+    "@aztec/accounts": "5.0.0-rc.1",
+    "@aztec/foundation": "5.0.0-rc.1",
+    "@aztec/noir-contracts.js": "5.0.0-rc.1",
+    "@aztec/stdlib": "5.0.0-rc.1",
     "@magna/contracts-bindings": "0.1.0",
     "@magna/core": "0.1.0",
-    "@aztec/wallet-sdk": "4.2.0-aztecnr-rc.2",
+    "@aztec/wallet-sdk": "5.0.0-rc.1",
+    "@zkpassport/utils": "0.36.1",
     "viem": "npm:@aztec/viem@2.38.2"
   },
   "devDependencies": {

@@ -37,6 +37,15 @@ pub struct PassportClaims {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct PassportCommittedClaimsWitness {
+    pub min_age_proven: u8,
+    pub nationality_alpha3_packed: Field,
+    pub nationality_blind: Field,
+    pub expiry_ts: u64,
+    pub expiry_blind: Field,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct InstagramClaims {
     pub handle_hash: Field,
     pub expiry_ts: u64,

@@ -2,6 +2,17 @@ import type { GhostDerivationVersion } from "@magna/wallet";
 
 export type CredentialKind = "passport" | "instagram";
 export type CredentialStatus = "active" | "pending_attestation" | "recovery_pending" | "unknown";
+export type CredentialIssuanceKind = "legacy" | "pilot" | "a1";
+
+export type PassportCommittedClaimsV2LocalWitness = {
+  schema: "passport-committed-claims-v2";
+  credentialAuthenticity: "passport-a1";
+  minAgeProven: number;
+  nationalityAlpha3Packed: string;
+  nationalityBlind: string;
+  expiryTs: string;
+  expiryBlind: string;
+};
 
 export type StoredCredentialRef = {
   id: string;
@@ -16,9 +27,11 @@ export type StoredCredentialRef = {
   issuerAddress?: string;
   orchestratorAddress?: string;
   mode?: "passport" | "rooted";
+  issuanceKind?: CredentialIssuanceKind;
   rootCommitment?: string;
   ghostOwner?: string;
   ghostDerivationVersion?: GhostDerivationVersion;
+  passportCommittedClaimsV2Witness?: PassportCommittedClaimsV2LocalWitness;
   normalizedClaims?: {
     nationalityAlpha3: string;
     minAgeProven: number;
@@ -45,6 +58,7 @@ export type WalletProfile = {
 
 const CREDENTIALS_KEY = "magna-management:credential-refs:v1";
 const WALLET_PROFILE_KEY = "magna-management:wallet-profile:v1";
+const CHAIN_FINGERPRINT_KEY = "magna-management:chain-fingerprint:v1";
 
 export type CredentialRefFilter = {
   issuerAddress?: string;
@@ -65,6 +79,21 @@ export function loadCredentialRefs(): StoredCredentialRef[] {
 
 export function saveCredentialRefs(refs: StoredCredentialRef[]): void {
   window.localStorage.setItem(CREDENTIALS_KEY, JSON.stringify(refs));
+}
+
+export function clearStoredWalletState(): void {
+  window.localStorage.removeItem(CREDENTIALS_KEY);
+  window.localStorage.removeItem(WALLET_PROFILE_KEY);
+}
+
+export function reconcileStoredChainFingerprint(nextFingerprint: string): boolean {
+  const previousFingerprint = window.localStorage.getItem(CHAIN_FINGERPRINT_KEY);
+  const changed = Boolean(previousFingerprint && previousFingerprint !== nextFingerprint);
+  if (changed) {
+    clearStoredWalletState();
+  }
+  window.localStorage.setItem(CHAIN_FINGERPRINT_KEY, nextFingerprint);
+  return changed;
 }
 
 function normalizeScopeValue(value?: string): string {

@@ -105,6 +105,101 @@ test("runMagnaConsumerLogin routes rooted credentials through linked consumer ga
   assert.deepEqual(outcome, { verified: true, receipt: "0xlinked" });
 });
 
+test("runMagnaConsumerLogin routes committed rooted passports through v2 consumer gateway", async () => {
+  const hintedRootStatusNote = { id: "root-status" };
+  const hintedRootAuthorityNote = { id: "root-authority" };
+  const hintedCredentialNote = { id: "linked-credential" };
+  const hintedStatusNote = { id: "linked-status" };
+  let legacyCalled = false;
+  let v2Args: unknown[] | undefined;
+
+  (MagnaIssuerContract as unknown as { at: (address: unknown, wallet: unknown) => unknown }).at = () => ({
+    methods: {
+      get_linked_credential_hinted: () => ({
+        simulate: async () => hintedCredentialNote,
+      }),
+      get_linked_status_hinted: () => ({
+        simulate: async () => hintedStatusNote,
+      }),
+      get_root_status_hinted: () => ({
+        simulate: async () => hintedRootStatusNote,
+      }),
+      get_root_authority_hinted: () => ({
+        simulate: async () => hintedRootAuthorityNote,
+      }),
+    },
+  });
+  (MagnaConsumerContract as unknown as { at: (address: unknown, wallet: unknown) => unknown }).at = () => ({
+    methods: {
+      login_with_linked_magna: () => {
+        legacyCalled = true;
+        return { send: async () => ({ txHash: "0xlegacy" }) };
+      },
+      login_with_linked_magna_v2: (...args: unknown[]) => {
+        v2Args = args;
+        return { send: async () => ({ txHash: "0xlinkedv2" }) };
+      },
+    },
+  });
+
+  const outcome = await runMagnaConsumerLogin({
+    env: {
+      aztecNodeUrl,
+      issuerAddress,
+      orchestratorAddress,
+    },
+    wallet: {
+      registerSender: async () => undefined,
+      getContractMetadata: async (address: { toString(): string }) => ({
+        instance: { address: address.toString() },
+      }),
+      registerContract: async () => undefined,
+    } as never,
+    activeAddress,
+    consumerGatewayAddress,
+    policy: {
+      credentialType: CredentialType.Passport,
+      constraints: [
+        {
+          claimId: ClaimId.AgeMinProven,
+          op: ConstraintOp.Gte,
+          value: 18n,
+        },
+      ],
+    },
+    credential: {
+      ownerAddress: activeAddress,
+      claimsHash: "123",
+      mode: "rooted",
+      rootCommitment: "99",
+      committedClaimsWitness: {
+        minAgeProven: 18,
+        nationalityAlpha3Packed: "5925714",
+        nationalityBlind: "111",
+        expiryTs: "1893456000",
+        expiryBlind: "222",
+      },
+    },
+  });
+
+  assert.equal(legacyCalled, false);
+  assert.deepEqual(v2Args?.slice(1), [
+    hintedRootStatusNote,
+    hintedRootAuthorityNote,
+    hintedCredentialNote,
+    hintedStatusNote,
+    {
+      min_age_proven: 18,
+      nationality_alpha3_packed: 5925714n,
+      nationality_blind: 111n,
+      expiry_ts: 1893456000n,
+      expiry_blind: 222n,
+    },
+    0,
+  ]);
+  assert.deepEqual(outcome, { verified: true, receipt: "0xlinkedv2" });
+});
+
 test("runMagnaConsumerLogin routes instagram credentials through issuer verification", async () => {
   const hintedCredentialNote = { id: "instagram-credential" };
   const hintedStatusNote = { id: "instagram-status" };

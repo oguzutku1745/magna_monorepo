@@ -6,7 +6,7 @@ import { connect } from "node:net";
 import { resolve, join, basename } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
-const PINNED_AZTEC_VERSION = process.env.AZTEC_VERSION_PIN ?? "4.2.0-aztecnr-rc.2";
+const PINNED_AZTEC_VERSION = process.env.AZTEC_VERSION_PIN ?? "5.0.0-rc.1";
 const TXE_PORT = Number(process.env.AZTEC_TXE_PORT ?? "8081");
 const TXE_START_TIMEOUT_MS = Number(process.env.AZTEC_TXE_START_TIMEOUT_MS ?? "30000");
 const NARGO_TEST_THREADS = process.env.AZTEC_NARGO_TEST_THREADS ?? "1";
@@ -68,8 +68,7 @@ function compileProject(projectPath) {
   const aztecNargo = run("aztec-nargo", ["compile"], cwd);
   if (aztecNargo === 0) process.exit(0);
 
-  const nargo = run("nargo", ["compile"], cwd);
-  process.exit(nargo);
+  process.exit(aztecNargo);
 }
 
 function compileProjectReturn(projectPath) {
@@ -80,7 +79,7 @@ function compileProjectReturn(projectPath) {
   // Fallback for CLI builds that do not expose `aztec compile`.
   const aztecNargo = run("aztec-nargo", ["compile"], cwd);
   if (aztecNargo === 0) return 0;
-  return run("nargo", ["compile"], cwd);
+  return aztecNargo;
 }
 
 function ensureArtifactInTarget(repoRoot, targetProjectPath, sourceProjectName, sourceArtifactName, destArtifactName) {
@@ -288,7 +287,7 @@ async function testProject(projectPath) {
   try {
     await waitForPort(TXE_PORT, txe);
     status = run(
-      "nargo",
+      "aztec-nargo",
       [
         "test",
         "--silence-warnings",

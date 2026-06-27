@@ -23,11 +23,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { getInitialTestAccountsData } from "@aztec/accounts/testing";
+import { getInitialTestAccountsData, INITIAL_TEST_SIGNING_KEYS } from "@aztec/accounts/testing";
 import { AztecAddress } from "@aztec/aztec.js/addresses";
 import { createAztecNodeClient } from "@aztec/aztec.js/node";
 import { Fr } from "@aztec/aztec.js/fields";
-import { ProtocolContractAddress } from "@aztec/aztec.js/protocol";
+import { FeeJuiceContract, ProtocolContractAddress } from "@aztec/aztec.js/protocol";
 import { getFeeJuiceBalance } from "@aztec/aztec.js/utils";
 import { createExtendedL1Client } from "@aztec/ethereum/client";
 import { L1FeeJuicePortalManager } from "@aztec/aztec.js/ethereum";
@@ -35,7 +35,6 @@ import { createLogger } from "@aztec/foundation/log";
 import { retryUntil } from "@aztec/foundation/retry";
 import { getNonNullifiedL1ToL2MessageWitness } from "@aztec/stdlib/messaging";
 import { EmbeddedWallet } from "@aztec/wallets/embedded";
-import { FeeJuiceContract } from "@aztec/noir-contracts.js/FeeJuice";
 import { TokenContract } from "@aztec/noir-contracts.js/Token";
 
 const DEFAULT_NETWORK_NAME = "local";
@@ -146,10 +145,10 @@ async function importLocalTestAccount(wallet, index) {
   if (!account) {
     throw new Error(`Local test account index ${index} is not available.`);
   }
-  const manager = await wallet.createSchnorrAccount(
+  const manager = await wallet.createSchnorrInitializerlessAccount(
     account.secret,
     account.salt,
-    account.signingKey,
+    INITIAL_TEST_SIGNING_KEYS[index] ?? account.signingKey,
     `local-test-${index}`,
   );
   return manager.address;
@@ -199,7 +198,7 @@ async function claimBridgedFeeJuice(node, wallet, feePayer, recipient, claim, wa
     );
   }
 
-  const feeJuice = await FeeJuiceContract.at(ProtocolContractAddress.FeeJuice, wallet);
+  const feeJuice = FeeJuiceContract.at(wallet);
   const claimReceipt = await feeJuice.methods
     .claim(recipient, claim.claimAmount, claim.claimSecret, claim.messageLeafIndex)
     .send({ from: feePayer });

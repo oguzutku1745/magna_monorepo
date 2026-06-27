@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ClaimId, ConstraintOp, CredentialType, type Policy } from "@magna/core";
-import { saveCredentialRefs, type StoredCredentialRef } from "./storage";
+import { loadCredentialRefs, saveCredentialRefs, type StoredCredentialRef } from "./storage";
 
 const testState = vi.hoisted(() => {
   const activeAddress = "0x2222222222222222222222222222222222222222";
@@ -142,6 +142,26 @@ describe("runWalletLoginForRequest", () => {
       }),
     ).rejects.toThrow("policy constraint failed");
 
+    expect(testState.disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("clears stale local credential refs when hinted notes are missing on the current chain", async () => {
+    saveCredentialRefs([passportRef()]);
+    testState.runMagnaConsumerLogin.mockRejectedValueOnce(
+      new Error(
+        "Fetch rooted hinted notes failed for root 99 claims hash 123 on owner " +
+          `${testState.activeAddress}: Assertion failed: Failed to get a note 'assert(self.is_some(), message)'`,
+      ),
+    );
+
+    await expect(
+      runWalletLoginForRequest({
+        policy,
+        consumerGatewayAddress: "0xconsumer",
+      }),
+    ).rejects.toThrow("Stored Magna credential notes were not found on the current Aztec chain.");
+
+    expect(loadCredentialRefs()).toEqual([]);
     expect(testState.disconnect).toHaveBeenCalledOnce();
   });
 

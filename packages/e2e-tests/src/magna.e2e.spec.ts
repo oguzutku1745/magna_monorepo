@@ -10,7 +10,7 @@ import { createAztecNodeClient } from "@aztec/aztec.js/node";
 import { AztecAddress, EthAddress } from "@aztec/aztec.js/addresses";
 import type { FeePaymentMethod } from "@aztec/aztec.js/fee";
 import { Fr } from "@aztec/aztec.js/fields";
-import { ProtocolContractAddress } from "@aztec/aztec.js/protocol";
+import { FeeJuiceContract, ProtocolContractAddress } from "@aztec/aztec.js/protocol";
 import { ExecutionPayload } from "@aztec/aztec.js/tx";
 import { AccountManager } from "@aztec/aztec.js/wallet";
 import { getFeeJuiceBalance } from "@aztec/aztec.js/utils";
@@ -26,7 +26,6 @@ import { getNonNullifiedL1ToL2MessageWitness } from "@aztec/stdlib/messaging";
 import { Gas, GasFees, GasSettings } from "@aztec/stdlib/gas";
 import { EmbeddedWallet } from "@aztec/wallets/embedded";
 import { createLogger } from "@aztec/foundation/log";
-import { FeeJuiceContract } from "@aztec/noir-contracts.js/FeeJuice";
 import { TokenContract } from "@aztec/noir-contracts.js/Token";
 import {
   MagnaCompanySponsorContract,
@@ -686,7 +685,7 @@ async function createAndDeployWebAuthnAccount(
   );
   const accountManager = await runStep(
     `AccountManager.create(WebAuthn ${alias})`,
-    async () => await AccountManager.create(wallet, Fr.random(), accountContract, Fr.random()),
+    async () => await AccountManager.create(wallet, Fr.random(), accountContract, { salt: Fr.random() }),
   );
   await runStep(`wallet.registerContract(WebAuthn ${alias})`, async () => {
     await wallet.registerContract(
@@ -780,7 +779,7 @@ async function claimBridgedFeeJuice(
     );
   });
 
-  const feeJuice = await FeeJuiceContract.at(ProtocolContractAddress.FeeJuice, wallet);
+  const feeJuice = FeeJuiceContract.at(wallet);
   const claimReceipt = await runStep(`FeeJuice.claim(${recipient.toString()})`, async () => {
     return await feeJuice.methods
       .claim(recipient, claim.claimAmount, claim.claimSecret, claim.messageLeafIndex)

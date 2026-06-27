@@ -4,10 +4,19 @@ import type { Wallet } from "@aztec/aztec.js/wallet";
 import { MagnaConsumerContract, MagnaIssuerContract } from "@magna/contracts-bindings";
 import { MagnaVerificationEngine } from "../engine/verification-engine.js";
 import { packAlpha3 } from "../engine/encoding.js";
+import type { PassportCommittedClaimsWitness } from "../engine/types.js";
 import { registerKnownIssuerSender } from "../embedded/note-discovery.js";
 import { syncEmbeddedWalletPxeIfAvailable } from "../embedded/lifecycle.js";
 import { readTxHash, registerContractArtifactAtAddress } from "./aztec.js";
 import type { MagnaBrowserEnv } from "./env.js";
+
+type StoredPassportCommittedClaimsWitness = {
+  minAgeProven: number;
+  nationalityAlpha3Packed: string | bigint;
+  nationalityBlind: string | bigint;
+  expiryTs: string | bigint;
+  expiryBlind: string | bigint;
+};
 
 export type MagnaPassportConsumerLoginCredential = {
   ownerAddress: string;
@@ -15,7 +24,8 @@ export type MagnaPassportConsumerLoginCredential = {
   claimsHash: string;
   mode?: "passport" | "rooted";
   rootCommitment?: string;
-  normalizedClaims: {
+  committedClaimsWitness?: StoredPassportCommittedClaimsWitness;
+  normalizedClaims?: {
     nationalityAlpha3: string;
     minAgeProven: number;
   };
@@ -53,6 +63,31 @@ function instagramHandleHashFromPolicy(policy: Policy): bigint {
   return constraint.value;
 }
 
+function isStoredCommittedWitness(value: unknown): value is StoredPassportCommittedClaimsWitness {
+  const witness = value as Partial<StoredPassportCommittedClaimsWitness> | undefined;
+  return Boolean(
+    witness &&
+      typeof witness.minAgeProven === "number" &&
+      (typeof witness.nationalityAlpha3Packed === "string" || typeof witness.nationalityAlpha3Packed === "bigint") &&
+      (typeof witness.nationalityBlind === "string" || typeof witness.nationalityBlind === "bigint") &&
+      (typeof witness.expiryTs === "string" || typeof witness.expiryTs === "bigint") &&
+      (typeof witness.expiryBlind === "string" || typeof witness.expiryBlind === "bigint")
+  );
+}
+
+function normalizeCommittedWitness(
+  witness: StoredPassportCommittedClaimsWitness | undefined,
+): PassportCommittedClaimsWitness | undefined {
+  if (!witness) return undefined;
+  return {
+    minAgeProven: witness.minAgeProven,
+    nationalityAlpha3Packed: BigInt(witness.nationalityAlpha3Packed),
+    nationalityBlind: BigInt(witness.nationalityBlind),
+    expiryTs: BigInt(witness.expiryTs),
+    expiryBlind: BigInt(witness.expiryBlind),
+  };
+}
+
 function assertConsumerCredential(
   credential: Partial<MagnaConsumerLoginCredential> | null | undefined,
   policy: Policy,
@@ -81,10 +116,15 @@ function assertConsumerCredential(
     typeof passportCredential.ownerAddress !== "string" ||
     !passportCredential.ownerAddress ||
     typeof passportCredential.claimsHash !== "string" ||
-    !passportCredential.claimsHash ||
-    !passportCredential.normalizedClaims ||
-    typeof passportCredential.normalizedClaims.nationalityAlpha3 !== "string" ||
-    typeof passportCredential.normalizedClaims.minAgeProven !== "number"
+    !passportCredential.claimsHash
+  ) {
+    throw new Error("Stored Magna passport credential reference is incomplete.");
+  }
+  if (
+    !isStoredCommittedWitness(passportCredential.committedClaimsWitness) &&
+    (!passportCredential.normalizedClaims ||
+      typeof passportCredential.normalizedClaims.nationalityAlpha3 !== "string" ||
+      typeof passportCredential.normalizedClaims.minAgeProven !== "number")
   ) {
     throw new Error("Stored Magna passport credential reference is incomplete.");
   }
@@ -160,9 +200,28 @@ export async function runMagnaConsumerLogin(input: {
       )
     : await (async () => {
         const passportCredential = credential as MagnaPassportConsumerLoginCredential;
+        const committedClaimsWitness = normalizeCommittedWitness(passportCredential.committedClaimsWitness);
+        if (committedClaimsWitness) {
+          return passportCredential.mode === "rooted"
+            ? engine.loginWithLinkedMagnaV2ThroughConsumer({
+                policy: input.policy,
+                consumerGatewayAddress: input.consumerGatewayAddress,
+                rootCommitment: passportCredential.rootCommitment!,
+                claimsHash: passportCredential.claimsHash,
+                claimsWitness: committedClaimsWitness,
+                from: input.activeAddress,
+              })
+            : engine.loginWithMagnaV2ThroughConsumer({
+                policy: input.policy,
+                consumerGatewayAddress: input.consumerGatewayAddress,
+                claimsHash: passportCredential.claimsHash,
+                claimsWitness: committedClaimsWitness,
+                from: input.activeAddress,
+              });
+        }
         const claimsWitness = {
-          minAgeProven: passportCredential.normalizedClaims.minAgeProven,
-          nationalityAlpha3Packed: packAlpha3(passportCredential.normalizedClaims.nationalityAlpha3),
+          minAgeProven: passportCredential.normalizedClaims!.minAgeProven,
+          nationalityAlpha3Packed: packAlpha3(passportCredential.normalizedClaims!.nationalityAlpha3),
         };
         return passportCredential.mode === "rooted"
           ? engine.loginWithLinkedMagnaThroughConsumer({

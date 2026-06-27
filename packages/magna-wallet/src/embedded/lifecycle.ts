@@ -1,4 +1,4 @@
-import { getInitialTestAccountsData } from "@aztec/accounts/testing";
+import { getInitialTestAccountsData, INITIAL_TEST_SIGNING_KEYS } from "@aztec/accounts/testing";
 import { getSchnorrAccountContractAddress } from "@aztec/accounts/schnorr";
 import { AztecAddress } from "@aztec/aztec.js/addresses";
 import { createAztecNodeClient, waitForNode } from "@aztec/aztec.js/node";
@@ -474,10 +474,10 @@ export async function ensureImportedLocalTestAccountAddress(
   }
 
   const alias = `local-test-${index}`;
-  const importedAccount = await wallet.createSchnorrAccount(
+  const importedAccount = await wallet.createSchnorrInitializerlessAccount(
     accountData.secret,
     accountData.salt,
-    accountData.signingKey,
+    INITIAL_TEST_SIGNING_KEYS[index] ?? accountData.signingKey,
     alias,
   );
   const updatedAccounts = await wallet.getAccounts();

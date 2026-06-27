@@ -12,12 +12,13 @@
     "test": "npm run -ws test",
     "lint": "npm run -ws lint",
     "verification-api:dev": "npm run -w @magna/verification-api dev",
+    "readiness:passport-a1": "node ./scripts/passport-a1-readiness.mjs",
     "instagram-proof:prepare": "npm run -w @magna/instagram-proof build && npm run -w @magna/instagram-proof compile:circuit",
-    "web:bootstrap:local": "node ./scripts/bootstrap-web-local.mjs",
+    "web:bootstrap:local": "node ./scripts/bootstrap-web-local-wrapper.mjs",
     "fund:fee-juice": "node ./scripts/fund-fee-juice.mjs",
     "vectors:sync": "node ./scripts/sync-golden-vectors.mjs",
     "vectors:webauthn": "node ./scripts/gen-webauthn-fixtures.mjs",
-    "aztec:version": "VERSION=4.2.0-aztecnr-rc.2 aztec --version",
+    "aztec:version": "VERSION=5.0.0-rc.1 aztec --version",
     "compile:issuer": "node ./scripts/aztec-tooling.mjs compile ./contracts/magna-issuer",
     "compile:company-rights-registry": "node ./scripts/aztec-tooling.mjs compile ./contracts/magna-company-rights-registry",
     "compile:company-sponsor": "node ./scripts/aztec-tooling.mjs compile ./contracts/magna-company-sponsor",
@@ -49,7 +50,7 @@
     "test:core": "npm run -w @magna/core test"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=24.12.0"
   },
   "dependencies": {
     "@zkpassport/sdk": "0.15.1",
