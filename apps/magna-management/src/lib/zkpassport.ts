@@ -79,6 +79,17 @@ export type VerifyAndIssuePassportA1Payload = {
   ghostDerivationVersion?: GhostDerivationVersion;
 };
 
+export type PassportA1ProofPayload = Pick<
+  VerifyAndIssuePassportA1Payload,
+  | "schema"
+  | "credentialValidUntil"
+  | "wrapperProof"
+  | "wrapperPublicInputs"
+  | "zkPassportOuterProof"
+  | "zkPassportOuterPublicInputs"
+  | "claimsHash"
+>;
+
 export type VerifyAndIssuePassportA1Response = {
   issuanceTxHash?: string;
   ghostOwner: string;
@@ -121,6 +132,12 @@ export type VerifyAndRefreshRootAuthorityPayload = {
   ageThreshold: number;
 };
 
+export type VerifyAndRefreshRootAuthorityA1Payload = PassportA1ProofPayload & {
+  ghostOwner: string;
+  hintedRootStatusNote: unknown;
+  hintedRootAuthorityNote: unknown;
+};
+
 export type VerifyRootRecoveryPreflightPayload = {
   proofs: ProofResult[];
   originalQuery: Query;
@@ -129,6 +146,14 @@ export type VerifyRootRecoveryPreflightPayload = {
   expectedRootCommitment: string;
   ghostDerivationVersion?: GhostDerivationVersion;
   ageThreshold: number;
+};
+
+export type VerifyRootRecoveryPreflightA1Payload = PassportA1ProofPayload & {
+  expectedGhostOwner: string;
+  expectedRootCommitment: string;
+  derivedGhostOwner: string;
+  derivedRootCommitment: string;
+  ghostDerivationVersion?: GhostDerivationVersion;
 };
 
 export type VerifyAndRefreshRootAuthorityResponse = {
@@ -140,9 +165,11 @@ export type VerifyAndRefreshRootAuthorityResponse = {
   orchestratorAddress: string;
   verificationSummary: {
     verified: true;
-    uniqueIdentifierPresent: true;
+    uniqueIdentifierPresent?: true;
+    passportA1?: true;
+    piiBlind?: true;
   };
-  normalizedClaims: {
+  normalizedClaims?: {
     nationalityAlpha3: string;
     minAgeProven: number;
     passportExpiryDate: string;
@@ -160,9 +187,11 @@ export type VerifyRootRecoveryPreflightResponse = {
   matchesExpectedRootCommitment: true;
   verificationSummary: {
     verified: true;
-    uniqueIdentifierPresent: true;
+    uniqueIdentifierPresent?: true;
+    passportA1?: true;
+    piiBlind?: true;
   };
-  normalizedClaims: {
+  normalizedClaims?: {
     nationalityAlpha3: string;
     minAgeProven: number;
     passportExpiryDate: string;
@@ -435,7 +464,7 @@ export async function verifyAndIssuePassportA1ThroughBackend(
 
 export async function verifyAndRefreshRootAuthorityThroughBackend(
   verificationApiUrl: string,
-  payload: VerifyAndRefreshRootAuthorityPayload,
+  payload: VerifyAndRefreshRootAuthorityPayload | VerifyAndRefreshRootAuthorityA1Payload,
 ): Promise<VerifyAndRefreshRootAuthorityResponse> {
   return await postVerificationApi<VerifyAndRefreshRootAuthorityResponse>(
     verificationApiUrl,
@@ -446,7 +475,7 @@ export async function verifyAndRefreshRootAuthorityThroughBackend(
 
 export async function verifyRootRecoveryPreflightThroughBackend(
   verificationApiUrl: string,
-  payload: VerifyRootRecoveryPreflightPayload,
+  payload: VerifyRootRecoveryPreflightPayload | VerifyRootRecoveryPreflightA1Payload,
 ): Promise<VerifyRootRecoveryPreflightResponse> {
   return await postVerificationApi<VerifyRootRecoveryPreflightResponse>(
     verificationApiUrl,

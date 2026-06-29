@@ -94,6 +94,16 @@ export type VerifyAndIssuePassportA1Request = {
   ghostDerivationVersion?: GhostDerivationVersion;
 };
 
+type PassportA1ProofRequest = {
+  schema: typeof PASSPORT_A1_SCHEMA;
+  credentialValidUntil: string;
+  wrapperProof: unknown;
+  wrapperPublicInputs: string[];
+  zkPassportOuterProof: unknown;
+  zkPassportOuterPublicInputs: string[];
+  claimsHash: string;
+};
+
 type VerifyAndIssuePassportPilotDependencies = {
   nowMs?: () => number;
 };
@@ -129,6 +139,12 @@ export type VerifyAndRefreshRootAuthorityRequest = {
   ageThreshold?: number;
 };
 
+export type VerifyAndRefreshRootAuthorityA1Request = PassportA1ProofRequest & {
+  ghostOwner: string;
+  hintedRootStatusNote: unknown;
+  hintedRootAuthorityNote: unknown;
+};
+
 export type VerifyRootRecoveryPreflightRequest = {
   proofs: ProofResult[];
   originalQuery: Query;
@@ -137,6 +153,14 @@ export type VerifyRootRecoveryPreflightRequest = {
   expectedRootCommitment: string;
   ghostDerivationVersion?: GhostDerivationVersion;
   ageThreshold?: number;
+};
+
+export type VerifyRootRecoveryPreflightA1Request = PassportA1ProofRequest & {
+  expectedGhostOwner: string;
+  expectedRootCommitment: string;
+  derivedGhostOwner: string;
+  derivedRootCommitment: string;
+  ghostDerivationVersion?: GhostDerivationVersion;
 };
 
 type VerifyAndIssuePassportResponse = {
@@ -227,9 +251,11 @@ export type VerifyAndRefreshRootAuthorityResponse = {
   orchestratorAddress: string;
   verificationSummary: {
     verified: true;
-    uniqueIdentifierPresent: true;
+    uniqueIdentifierPresent?: true;
+    passportA1?: true;
+    piiBlind?: true;
   };
-  normalizedClaims: {
+  normalizedClaims?: {
     nationalityAlpha3: string;
     minAgeProven: number;
     passportExpiryDate: string;
@@ -247,9 +273,11 @@ export type VerifyRootRecoveryPreflightResponse = {
   matchesExpectedRootCommitment: true;
   verificationSummary: {
     verified: true;
-    uniqueIdentifierPresent: true;
+    uniqueIdentifierPresent?: true;
+    passportA1?: true;
+    piiBlind?: true;
   };
-  normalizedClaims: {
+  normalizedClaims?: {
     nationalityAlpha3: string;
     minAgeProven: number;
     passportExpiryDate: string;
@@ -940,6 +968,10 @@ export function isPassportA1Request(input: unknown): input is VerifyAndIssuePass
   return Boolean(input && typeof input === "object" && Reflect.get(input, "schema") === PASSPORT_A1_SCHEMA);
 }
 
+export function isPassportA1ProofRequest(input: unknown): input is PassportA1ProofRequest {
+  return Boolean(input && typeof input === "object" && Reflect.get(input, "schema") === PASSPORT_A1_SCHEMA);
+}
+
 export function validatePassportPilotRequest(
   input: VerifyAndIssuePassportPilotRequest,
 ): VerifyAndIssuePassportPilotRequest {
@@ -957,7 +989,7 @@ export function validatePassportPilotRequest(
   return input;
 }
 
-function assertNoPassportA1PrivateArtifacts(input: VerifyAndIssuePassportA1Request): void {
+function assertNoPassportA1PrivateArtifacts(input: PassportA1ProofRequest | VerifyAndIssuePassportA1Request): void {
   assertNoPassportA1OrchestratorArtifacts(input);
 }
 
@@ -1071,7 +1103,7 @@ function validatePassportA1WrapperOutputs(outputs: PassportWrapperPublicOutputs)
 }
 
 function assertPassportA1PayloadMatchesWrapperOutputs(
-  input: VerifyAndIssuePassportA1Request,
+  input: PassportA1ProofRequest,
   outputs: PassportWrapperPublicOutputs,
 ): void {
   if (input.credentialValidUntil !== outputs.credentialValidUntil) {
@@ -1105,20 +1137,25 @@ function assertPassportA1OuterInputsMatchWrapperOutputs(
   }
 }
 
-export function validatePassportA1Request(input: VerifyAndIssuePassportA1Request): VerifyAndIssuePassportA1Request {
+export function validatePassportA1ProofRequest<T extends PassportA1ProofRequest>(input: T): T {
   assertNoPassportA1PrivateArtifacts(input);
   if (input.schema !== PASSPORT_A1_SCHEMA) {
     throw new Error("schema must be passport-a1-v1.");
   }
-  requireString(input.activeOwner, "activeOwner");
-  requireString(input.ghostOwner, "ghostOwner");
-  requireDecimalString(input.rootCommitment, "rootCommitment");
   requirePositiveUnixTimestampString(input.credentialValidUntil, "credentialValidUntil");
   requireWrapperProof(input.wrapperProof);
   input.wrapperPublicInputs = requireWrapperPublicInputs(input.wrapperPublicInputs);
   requireZkPassportOuterProof(input.zkPassportOuterProof);
   input.zkPassportOuterPublicInputs = requireZkPassportOuterPublicInputs(input.zkPassportOuterPublicInputs);
   requireDecimalString(input.claimsHash, "claimsHash");
+  return input;
+}
+
+export function validatePassportA1Request(input: VerifyAndIssuePassportA1Request): VerifyAndIssuePassportA1Request {
+  validatePassportA1ProofRequest(input);
+  requireString(input.activeOwner, "activeOwner");
+  requireString(input.ghostOwner, "ghostOwner");
+  requireDecimalString(input.rootCommitment, "rootCommitment");
   const mode = resolveVerificationMode(requireOptionalPilotMode(input.mode));
   resolveGhostDerivationVersion(requireOptionalPilotGhostDerivationVersion(input.ghostDerivationVersion), mode);
   return input;
@@ -1305,6 +1342,57 @@ export async function verifyAndIssuePassportA1(
   dependencies: VerifyAndIssuePassportA1Dependencies = {},
 ): Promise<VerifyAndIssueResponse> {
   const validated = validatePassportA1Request(input);
+  const wrapperOutputs = await verifyPassportA1Proof(config, validated, dependencies);
+
+  const mode = resolveVerificationMode(validated.mode);
+  const ghostDerivationVersion = resolveGhostDerivationVersion(validated.ghostDerivationVersion, mode);
+  const context = await contextLoader();
+  const activeOwnerAddress = AztecAddress.fromString(validated.activeOwner);
+  const ghostOwnerAddress = AztecAddress.fromString(validated.ghostOwner);
+  const claimsHash = new Fr(BigInt(wrapperOutputs.claimsHash));
+  const credentialValidUntil = BigInt(wrapperOutputs.credentialValidUntil);
+
+  const interaction =
+    mode === "rooted"
+      ? context.issuer.methods.register_rooted_passport_v2(
+          activeOwnerAddress,
+          ghostOwnerAddress,
+          new Fr(BigInt(validated.rootCommitment)),
+          claimsHash,
+          credentialValidUntil,
+        )
+      : context.issuer.methods.register_credential_v2(
+          activeOwnerAddress,
+          ghostOwnerAddress,
+          claimsHash,
+          CredentialType.Passport,
+          credentialValidUntil,
+        );
+
+  const receipt = await interaction.send({ from: context.orchestratorAddress });
+  return {
+    issuanceTxHash: readTxHash(receipt),
+    ghostOwner: validated.ghostOwner,
+    rootCommitment: validated.rootCommitment,
+    claimsHash: wrapperOutputs.claimsHash,
+    mode,
+    ghostDerivationVersion,
+    issuerAddress: config.issuerAddress,
+    orchestratorAddress: context.orchestratorAddress.toString(),
+    verificationSummary: {
+      verified: true,
+      passportA1: true,
+      piiBlind: true,
+    },
+  };
+}
+
+async function verifyPassportA1Proof(
+  config: VerificationApiConfig,
+  input: PassportA1ProofRequest,
+  dependencies: VerifyAndIssuePassportA1Dependencies = {},
+): Promise<PassportWrapperPublicOutputs> {
+  const validated = validatePassportA1ProofRequest(input);
   const parseWrapperPublicInputs = dependencies.parseWrapperPublicInputs ?? parsePassportWrapperPublicInputs;
   const proofBoundPublicInputs = readProofBoundWrapperPublicInputs(validated.wrapperProof);
   if (proofBoundPublicInputs) {
@@ -1361,47 +1449,7 @@ export async function verifyAndIssuePassportA1(
     throw new Error("Passport A1 zkPassport outer proof verification failed.");
   }
 
-  const mode = resolveVerificationMode(validated.mode);
-  const ghostDerivationVersion = resolveGhostDerivationVersion(validated.ghostDerivationVersion, mode);
-  const context = await contextLoader();
-  const activeOwnerAddress = AztecAddress.fromString(validated.activeOwner);
-  const ghostOwnerAddress = AztecAddress.fromString(validated.ghostOwner);
-  const claimsHash = new Fr(BigInt(wrapperOutputs.claimsHash));
-  const credentialValidUntil = BigInt(wrapperOutputs.credentialValidUntil);
-
-  const interaction =
-    mode === "rooted"
-      ? context.issuer.methods.register_rooted_passport_v2(
-          activeOwnerAddress,
-          ghostOwnerAddress,
-          new Fr(BigInt(validated.rootCommitment)),
-          claimsHash,
-          credentialValidUntil,
-        )
-      : context.issuer.methods.register_credential_v2(
-          activeOwnerAddress,
-          ghostOwnerAddress,
-          claimsHash,
-          CredentialType.Passport,
-          credentialValidUntil,
-        );
-
-  const receipt = await interaction.send({ from: context.orchestratorAddress });
-  return {
-    issuanceTxHash: readTxHash(receipt),
-    ghostOwner: validated.ghostOwner,
-    rootCommitment: validated.rootCommitment,
-    claimsHash: wrapperOutputs.claimsHash,
-    mode,
-    ghostDerivationVersion,
-    issuerAddress: config.issuerAddress,
-    orchestratorAddress: context.orchestratorAddress.toString(),
-    verificationSummary: {
-      verified: true,
-      passportA1: true,
-      piiBlind: true,
-    },
-  };
+  return wrapperOutputs;
 }
 
 export type VerifyAndIssuePassportHandlerKind = "passport-a1" | "passport-pii-blind-pilot" | "passport-legacy";
@@ -1500,11 +1548,60 @@ export async function verifyAndIssueInstagram(
   };
 }
 
+export async function verifyAndRefreshRootAuthorityA1(
+  config: VerificationApiConfig,
+  input: VerifyAndRefreshRootAuthorityA1Request,
+  contextLoader: () => Promise<IssuanceContext>,
+  dependencies: VerifyAndIssuePassportA1Dependencies = {},
+): Promise<VerifyAndRefreshRootAuthorityResponse> {
+  const ghostOwner = requireString(input.ghostOwner, "ghostOwner");
+  if (!input.hintedRootStatusNote || typeof input.hintedRootStatusNote !== "object") {
+    throw new Error("hintedRootStatusNote is required.");
+  }
+  if (!input.hintedRootAuthorityNote || typeof input.hintedRootAuthorityNote !== "object") {
+    throw new Error("hintedRootAuthorityNote is required.");
+  }
+
+  const wrapperOutputs = await verifyPassportA1Proof(config, input, dependencies);
+  const context = await contextLoader();
+  const rootCommitment = requireFieldLikeString(
+    readPath(input.hintedRootStatusNote, ["note", "root_commitment"]),
+    "hintedRootStatusNote.note.root_commitment",
+  );
+  const receipt = await context.issuer.methods
+    .refresh_root_authority(
+      AztecAddress.fromString(ghostOwner),
+      input.hintedRootStatusNote as never,
+      input.hintedRootAuthorityNote as never,
+      new Fr(BigInt(wrapperOutputs.claimsHash)),
+      BigInt(wrapperOutputs.credentialValidUntil),
+    )
+    .send({ from: context.orchestratorAddress });
+
+  return {
+    renewalTxHash: readTxHash(receipt),
+    ghostOwner,
+    rootCommitment,
+    claimsHash: wrapperOutputs.claimsHash,
+    issuerAddress: config.issuerAddress,
+    orchestratorAddress: context.orchestratorAddress.toString(),
+    verificationSummary: {
+      verified: true,
+      passportA1: true,
+      piiBlind: true,
+    },
+  };
+}
+
 export async function verifyAndRefreshRootAuthority(
   config: VerificationApiConfig,
-  input: VerifyAndRefreshRootAuthorityRequest,
+  input: VerifyAndRefreshRootAuthorityRequest | VerifyAndRefreshRootAuthorityA1Request,
   contextLoader: () => Promise<IssuanceContext>,
 ): Promise<VerifyAndRefreshRootAuthorityResponse> {
+  if (isPassportA1ProofRequest(input)) {
+    return verifyAndRefreshRootAuthorityA1(config, input as VerifyAndRefreshRootAuthorityA1Request, contextLoader);
+  }
+
   const ghostOwner = requireString(input.ghostOwner, "ghostOwner");
   if (!input.hintedRootStatusNote || typeof input.hintedRootStatusNote !== "object") {
     throw new Error("hintedRootStatusNote is required.");
@@ -1550,15 +1647,57 @@ export async function verifyAndRefreshRootAuthority(
   };
 }
 
+export async function verifyRootRecoveryPreflightA1(
+  config: VerificationApiConfig,
+  input: VerifyRootRecoveryPreflightA1Request,
+  dependencies: VerifyAndIssuePassportA1Dependencies = {},
+): Promise<VerifyRootRecoveryPreflightResponse> {
+  const expectedGhostOwner = requireString(input.expectedGhostOwner, "expectedGhostOwner");
+  const expectedRootCommitment = requireString(input.expectedRootCommitment, "expectedRootCommitment");
+  const derivedGhostOwner = requireString(input.derivedGhostOwner, "derivedGhostOwner");
+  const derivedRootCommitment = requireString(input.derivedRootCommitment, "derivedRootCommitment");
+  const ghostDerivationVersion = resolveRootRecoveryGhostDerivationVersion(input.ghostDerivationVersion);
+  await verifyPassportA1Proof(config, input, dependencies);
+  if (derivedGhostOwner !== expectedGhostOwner) {
+    throw new Error(
+      `Fresh zkPassport proof does not match the configured ghost owner. expected=${expectedGhostOwner} derived=${derivedGhostOwner}`,
+    );
+  }
+  if (derivedRootCommitment !== expectedRootCommitment) {
+    throw new Error(
+      `Fresh zkPassport proof does not match the rooted passport lineage. expectedRootCommitment=${expectedRootCommitment} derivedRootCommitment=${derivedRootCommitment}`,
+    );
+  }
+
+  return {
+    expectedGhostOwner,
+    derivedGhostOwner,
+    expectedRootCommitment,
+    derivedRootCommitment,
+    ghostDerivationVersion,
+    matchesExpectedGhostOwner: true,
+    matchesExpectedRootCommitment: true,
+    verificationSummary: {
+      verified: true,
+      passportA1: true,
+      piiBlind: true,
+    },
+  };
+}
+
 export async function verifyRootRecoveryPreflight(
   config: VerificationApiConfig,
-  input: VerifyRootRecoveryPreflightRequest,
+  input: VerifyRootRecoveryPreflightRequest | VerifyRootRecoveryPreflightA1Request,
   dependencies?: {
     verifyPassportClaims?: typeof verifyZkPassportPassportClaims;
     deriveGhostOwner?: typeof deriveGhostOwnerAddress;
     deriveRoot?: typeof deriveRootCommitment;
   },
 ): Promise<VerifyRootRecoveryPreflightResponse> {
+  if (isPassportA1ProofRequest(input)) {
+    return verifyRootRecoveryPreflightA1(config, input as VerifyRootRecoveryPreflightA1Request);
+  }
+
   const expectedGhostOwner = requireString(input.expectedGhostOwner, "expectedGhostOwner");
   const expectedRootCommitment = requireString(input.expectedRootCommitment, "expectedRootCommitment");
   const ghostDerivationVersion = resolveRootRecoveryGhostDerivationVersion(input.ghostDerivationVersion);

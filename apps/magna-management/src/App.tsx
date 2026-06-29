@@ -47,6 +47,7 @@ import {
   type ZkPassportLifecycleEvent,
 } from "./lib/zkpassport";
 import {
+  buildPassportA1ProofMaterial,
   issuePassportThroughConfiguredBackend,
   passportA1BindCustomData,
   passportPilotCredentialUsageBlock,
@@ -213,6 +214,12 @@ function hasSameCredentialClaims(existing: StoredCredentialRef, discovered: Disc
 
 function credentialRefHasLocalA1Witness(ref?: Pick<StoredCredentialRef, "passportCommittedClaimsV2Witness">): boolean {
   return Boolean(ref?.passportCommittedClaimsV2Witness);
+}
+
+function isPassportA1Credential(
+  ref?: Pick<StoredCredentialRef, "kind" | "issuanceKind" | "passportCommittedClaimsV2Witness">,
+): boolean {
+  return Boolean(ref?.kind === "passport" && (ref.issuanceKind === "a1" || ref.passportCommittedClaimsV2Witness));
 }
 
 function credentialRefHasLegacyClaims(ref?: Pick<StoredCredentialRef, "normalizedClaims">): boolean {
@@ -1111,6 +1118,7 @@ export function App() {
   async function startRootedRenewal(ref: StoredCredentialRef) {
     const activeSession = requireDeployedWallet("renewal");
     if (!activeSession) return;
+    const activeOwner = requireSessionIdentityAddress(activeSession, env);
     const pilotBlock = passportPilotCredentialUsageBlock(ref);
     if (pilotBlock) {
       setNotice({ tone: "danger", text: pilotBlock });
@@ -1131,9 +1139,18 @@ export function App() {
       return;
     }
     const age = ref.normalizedClaims?.minAgeProven ?? 18;
+    const useA1Flow = isPassportA1Credential(ref);
+    const a1BindCustomData = useA1Flow
+      ? passportA1BindCustomData({
+          activeOwner,
+          requestScope: env.zkPassportRequestScope,
+        })
+      : undefined;
     const request = await runAction("Create zkPassport renewal request", async () =>
       startPassportZkRequest({
         ageThreshold: age,
+        proofMode: useA1Flow ? proofModeForPassportIssuanceKind("a1") : undefined,
+        a1BindCustomData,
         metadata: {
           name: env.zkPassportRequestName,
           logo: env.zkPassportRequestLogo,
@@ -1156,15 +1173,57 @@ export function App() {
           return;
         }
         setZkStage("submitting_renewal");
-        const renewed = await verifyAndRefreshRootAuthorityThroughBackend(env.verificationApiUrl!, {
-          proofs: completion.proofs,
-          originalQuery: completion.originalQuery,
-          queryResult: completion.queryResult,
-          ghostOwner: ref.ghostOwner!,
-          hintedRootStatusNote: rootedHints.hintedRootStatusNote,
-          hintedRootAuthorityNote: rootedHints.hintedRootAuthorityNote,
-          ageThreshold: age,
-        });
+        const a1ProofMaterial = useA1Flow
+          ? await buildPassportA1ProofMaterial(
+              {
+                issuanceKind: "a1",
+                verificationApiUrl: env.verificationApiUrl!,
+                completion,
+                activeOwner,
+                ageThreshold: age,
+                mode: "rooted",
+                ghostDerivationVersion: ref.ghostDerivationVersion ?? env.zkPassportGhostDerivationVersion,
+                preparedGhostOwner: ref.ghostOwner,
+                requestScope: env.zkPassportRequestScope,
+                a1BindCustomData,
+              },
+              {
+                provePassportWrapper: provePassportWrapperInBrowser,
+                onA1Progress: event => {
+                  if (event.type === "building_witness") {
+                    setZkStage("building_a1_witness");
+                    appendLog("Building local A1 renewal wrapper witness.");
+                  } else if (event.type === "generating_wrapper_proof") {
+                    setZkStage("generating_a1_wrapper_proof");
+                    appendLog("Generating local A1 renewal wrapper proof.");
+                  }
+                },
+              },
+            )
+          : undefined;
+        setZkStage("submitting_renewal");
+        if (a1ProofMaterial) {
+          appendLog("Submitting A1-safe renewal payload to verification API.");
+        }
+        const renewed = await verifyAndRefreshRootAuthorityThroughBackend(
+          env.verificationApiUrl!,
+          a1ProofMaterial
+            ? {
+                ...a1ProofMaterial.payload,
+                ghostOwner: ref.ghostOwner!,
+                hintedRootStatusNote: rootedHints.hintedRootStatusNote,
+                hintedRootAuthorityNote: rootedHints.hintedRootAuthorityNote,
+              }
+            : {
+                proofs: completion.proofs,
+                originalQuery: completion.originalQuery,
+                queryResult: completion.queryResult,
+                ghostOwner: ref.ghostOwner!,
+                hintedRootStatusNote: rootedHints.hintedRootStatusNote,
+                hintedRootAuthorityNote: rootedHints.hintedRootAuthorityNote,
+                ageThreshold: age,
+              },
+        );
         const renewedRef: StoredCredentialRef = {
           ...ref,
           id: credentialId({
@@ -1182,11 +1241,23 @@ export function App() {
           renewalTxHash: renewed.renewalTxHash,
           issuerAddress: renewed.issuerAddress,
           orchestratorAddress: renewed.orchestratorAddress,
+          issuanceKind: a1ProofMaterial ? "a1" : ref.issuanceKind,
+          passportCommittedClaimsV2Witness: a1ProofMaterial
+            ? committedClaimsV2WitnessFromA1LocalWitness(a1ProofMaterial.localWitness)
+            : ref.passportCommittedClaimsV2Witness,
           updatedAt: new Date().toISOString(),
         };
+        if (a1ProofMaterial) {
+          setPassportA1LocalWitness(a1ProofMaterial.localWitness);
+        }
         setCredentials(upsertCredentialRef(renewedRef));
         await loadHintsForCredentialRefs(activeSession, [renewedRef]);
-        setNotice({ tone: "success", text: "Rooted passport authority renewed." });
+        setNotice({
+          tone: "success",
+          text: a1ProofMaterial
+            ? "Rooted passport authority renewed with A1 wrapper proof. Fresh A1 witness is available locally on this device."
+            : "Rooted passport authority renewed.",
+        });
         setZkStage("renewed");
       })
       .catch(error => {
@@ -1236,9 +1307,18 @@ export function App() {
     }
     const age = ref.normalizedClaims?.minAgeProven ?? 18;
     const derivationVersion = ref.ghostDerivationVersion ?? env.zkPassportGhostDerivationVersion;
+    const useA1Flow = isPassportA1Credential(ref);
+    const a1BindCustomData = useA1Flow
+      ? passportA1BindCustomData({
+          activeOwner,
+          requestScope: env.zkPassportRequestScope,
+        })
+      : undefined;
     const request = await runAction("Create zkPassport root recovery request", async () =>
       startPassportZkRequest({
         ageThreshold: age,
+        proofMode: useA1Flow ? proofModeForPassportIssuanceKind("a1") : undefined,
+        a1BindCustomData,
         metadata: {
           name: env.zkPassportRequestName,
           logo: env.zkPassportRequestLogo,
@@ -1264,15 +1344,59 @@ export function App() {
           throw new Error("zkPassport verification succeeded but uniqueIdentifier is missing.");
         }
         setZkStage("submitting_recovery_preflight");
-        const preflight = await verifyRootRecoveryPreflightThroughBackend(env.verificationApiUrl!, {
-          proofs: completion.proofs,
-          originalQuery: completion.originalQuery,
-          queryResult: completion.queryResult,
-          expectedGhostOwner: ref.ghostOwner!,
-          expectedRootCommitment: ref.rootCommitment!,
-          ghostDerivationVersion: derivationVersion,
-          ageThreshold: age,
-        });
+        const a1ProofMaterial = useA1Flow
+          ? await buildPassportA1ProofMaterial(
+              {
+                issuanceKind: "a1",
+                verificationApiUrl: env.verificationApiUrl!,
+                completion,
+                activeOwner,
+                ageThreshold: age,
+                mode: "rooted",
+                ghostDerivationVersion: derivationVersion,
+                preparedGhostOwner: ref.ghostOwner,
+                requestScope: env.zkPassportRequestScope,
+                a1BindCustomData,
+              },
+              {
+                provePassportWrapper: provePassportWrapperInBrowser,
+                onA1Progress: event => {
+                  if (event.type === "building_witness") {
+                    setZkStage("building_a1_witness");
+                    appendLog("Building local A1 recovery preflight wrapper witness.");
+                  } else if (event.type === "generating_wrapper_proof") {
+                    setZkStage("generating_a1_wrapper_proof");
+                    appendLog("Generating local A1 recovery preflight wrapper proof.");
+                  }
+                },
+              },
+            )
+          : undefined;
+        setZkStage("submitting_recovery_preflight");
+        if (a1ProofMaterial) {
+          appendLog("Submitting A1-safe recovery preflight payload to verification API.");
+        }
+        const preflight = await verifyRootRecoveryPreflightThroughBackend(
+          env.verificationApiUrl!,
+          a1ProofMaterial
+            ? {
+                ...a1ProofMaterial.payload,
+                expectedGhostOwner: ref.ghostOwner!,
+                expectedRootCommitment: ref.rootCommitment!,
+                derivedGhostOwner: ref.ghostOwner!,
+                derivedRootCommitment: ref.rootCommitment!,
+                ghostDerivationVersion: derivationVersion,
+              }
+            : {
+                proofs: completion.proofs,
+                originalQuery: completion.originalQuery,
+                queryResult: completion.queryResult,
+                expectedGhostOwner: ref.ghostOwner!,
+                expectedRootCommitment: ref.rootCommitment!,
+                ghostDerivationVersion: derivationVersion,
+                ageThreshold: age,
+              },
+        );
 
         setZkStage("recovering_root");
         const attempts = buildRecoveryGhostDeploymentAttempts({

@@ -24,6 +24,7 @@ vi.mock("./lib/zkpassport", () => ({
   startPassportZkRequest: vi.fn(),
   verifyAndRefreshRootAuthorityThroughBackend: vi.fn(),
   verifyAndIssueInstagramThroughBackend: vi.fn(),
+  verifyAndIssuePassportA1ThroughBackend: vi.fn(),
   verifyAndIssuePassportPilotThroughBackend: vi.fn(),
   verifyAndIssueThroughBackend: vi.fn(),
   verifyRootRecoveryPreflightThroughBackend: vi.fn(),

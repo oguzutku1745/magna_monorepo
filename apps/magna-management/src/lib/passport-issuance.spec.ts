@@ -9,6 +9,10 @@ import {
   proofModeForPassportIssuanceKind,
   type VerifiedPassportCompletion,
 } from "./passport-issuance";
+import {
+  buildMinimalZkPassportWitnessFromDisclosures,
+  computeZkPassportParameterCommitmentManifestCandidates,
+} from "../../../../packages/magna-wallet/src/engine/zkpassport-safe-witness";
 
 const completion: VerifiedPassportCompletion = {
   status: "verified",
@@ -35,7 +39,31 @@ const completion: VerifiedPassportCompletion = {
   } as never,
 };
 
-const validOuterPublicInputs = ["0", "1", "2", "33", "44", "555", "666", "777", "888", "1", "999", "1000"];
+const validOuterPublicInputs = await (async () => {
+  const candidates = await computeZkPassportParameterCommitmentManifestCandidates(
+    buildMinimalZkPassportWitnessFromDisclosures({
+      nationalityAlpha3: "TUR",
+      expiryTs: 1942358399n,
+      agePredicate: { minAge: 21, maxAge: 0 },
+      bind: { customData: "magna-passport-a1:magna-passport-onboarding:0xactive" },
+    }),
+  );
+  const manifest = candidates[0].manifest;
+  return [
+    "0",
+    "1",
+    "2",
+    "33",
+    "44",
+    manifest.nationalityDisclosureCommitment,
+    manifest.expiryDisclosureCommitment,
+    manifest.agePredicateCommitment,
+    manifest.bindCommitment,
+    "1",
+    "999",
+    "1000",
+  ];
+})();
 const a1Completion: VerifiedPassportCompletion = {
   ...completion,
   proofs: [

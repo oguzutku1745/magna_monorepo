@@ -72,6 +72,11 @@ type PassportIssuanceDependencies = {
   onA1Progress?: (event: PassportA1ProgressEvent) => void;
 };
 
+type PassportA1ProofDependencies = Pick<
+  PassportIssuanceDependencies,
+  "provePassportWrapper" | "randomField" | "nowMs" | "onA1Progress"
+>;
+
 type GhostPreview = {
   address: string;
   uniqueIdentifier: string;
@@ -105,6 +110,22 @@ export type PassportA1LocalWitness = {
   expiryBlind: string;
   scopedNullifier?: string;
   wrapperPublicInputs: string[];
+};
+
+export type PassportA1ProofPayload = Pick<
+  VerifyAndIssuePassportA1Payload,
+  | "schema"
+  | "credentialValidUntil"
+  | "wrapperProof"
+  | "wrapperPublicInputs"
+  | "zkPassportOuterProof"
+  | "zkPassportOuterPublicInputs"
+  | "claimsHash"
+>;
+
+export type PassportA1ProofMaterial = {
+  payload: PassportA1ProofPayload;
+  localWitness: PassportA1LocalWitness;
 };
 
 type PassportWrapperProofArtifact = {
@@ -408,11 +429,7 @@ async function derivePilotGhost(input: {
   };
 }
 
-async function unavailablePassportWrapperProver(): Promise<never> {
-  throw new Error(A1_UNAVAILABLE_MESSAGE);
-}
-
-function assertNoPassportA1PrivateArtifacts(payload: VerifyAndIssuePassportA1Payload): void {
+function assertNoPassportA1PrivateArtifacts(payload: VerifyAndIssuePassportA1Payload | PassportA1ProofPayload): void {
   assertNoPassportA1OrchestratorArtifacts(payload);
 }
 
@@ -424,27 +441,20 @@ function proofArtifactWithoutLocalMetadata(value: unknown): unknown {
   return rest;
 }
 
-async function buildPassportA1Issuance(
+export async function buildPassportA1ProofMaterial(
   input: PassportIssuanceInput,
-  dependencies: PassportIssuanceDependencies,
-): Promise<Extract<PassportIssuanceResult, { issuanceKind: "a1" }>> {
-  const verifyAndIssuePassportA1ThroughBackend = dependencies.verifyAndIssuePassportA1ThroughBackend;
-  if (!verifyAndIssuePassportA1ThroughBackend) {
-    throw new Error("A1 backend client dependency is not configured.");
+  dependencies: PassportA1ProofDependencies,
+): Promise<PassportA1ProofMaterial> {
+  if (!dependencies.provePassportWrapper) {
+    throw new Error(A1_UNAVAILABLE_MESSAGE);
   }
+  const provePassportWrapper = dependencies.provePassportWrapper;
 
   dependencies.onA1Progress?.({ type: "building_witness" });
   const disclosures = localPassportDisclosures(input.completion.queryResult, input.ageThreshold);
   const nextRandomField = dependencies.randomField ?? randomField;
   const nationalityBlind = nextRandomField();
   const expiryBlind = nextRandomField();
-  const ghost = await derivePilotGhost({
-    uniqueIdentifier: input.completion.uniqueIdentifier,
-    credentialType: CredentialType.Passport,
-    ghostDerivationVersion: input.ghostDerivationVersion,
-    preparedGhostOwner: input.preparedGhostOwner,
-    deriveGhostAccountPreview: dependencies.deriveGhostAccountPreview ?? derivePilotGhostAccountPreview,
-  });
   const nowMs = dependencies.nowMs ?? Date.now;
   const credentialValidUntil = BigInt(Math.floor(nowMs() / 1000) + PILOT_VALIDITY_WINDOW_SECONDS);
   const outerArtifacts = extractZkPassportOuterProofArtifacts(input.completion);
@@ -466,18 +476,54 @@ async function buildPassportA1Issuance(
   });
 
   dependencies.onA1Progress?.({ type: "generating_wrapper_proof" });
-  const wrapperProof = await (dependencies.provePassportWrapper ?? unavailablePassportWrapperProver)(witness);
-  const payload: VerifyAndIssuePassportA1Payload = {
+  const wrapperProof = await provePassportWrapper(witness);
+  const payload: PassportA1ProofPayload = {
     schema: A1_SCHEMA,
-    activeOwner: input.activeOwner,
-    ghostOwner: ghost.ghostOwner,
-    rootCommitment: ghost.rootCommitment.toString(),
     credentialValidUntil: wrapperProof.outputs.credentialValidUntil,
     wrapperProof: wrapperProof.proof,
     wrapperPublicInputs: wrapperProof.publicInputs.map(String),
     zkPassportOuterProof: proofArtifactWithoutLocalMetadata(outerArtifacts.outerProof),
     zkPassportOuterPublicInputs: outerArtifacts.outerPublicInputs.map(String),
     claimsHash: wrapperProof.outputs.claimsHash,
+  };
+  assertNoPassportA1PrivateArtifacts(payload);
+
+  return {
+    payload,
+    localWitness: {
+      witness,
+      nationalityBlind: nationalityBlind.toString(),
+      expiryBlind: expiryBlind.toString(),
+      scopedNullifier: outerMetadata.scopedNullifier,
+      wrapperPublicInputs: payload.wrapperPublicInputs,
+    },
+  };
+}
+
+async function buildPassportA1Issuance(
+  input: PassportIssuanceInput,
+  dependencies: PassportIssuanceDependencies,
+): Promise<Extract<PassportIssuanceResult, { issuanceKind: "a1" }>> {
+  const verifyAndIssuePassportA1ThroughBackend = dependencies.verifyAndIssuePassportA1ThroughBackend;
+  if (!verifyAndIssuePassportA1ThroughBackend) {
+    throw new Error("A1 backend client dependency is not configured.");
+  }
+
+  const [proofMaterial, ghost] = await Promise.all([
+    buildPassportA1ProofMaterial(input, dependencies),
+    derivePilotGhost({
+      uniqueIdentifier: input.completion.uniqueIdentifier,
+      credentialType: CredentialType.Passport,
+      ghostDerivationVersion: input.ghostDerivationVersion,
+      preparedGhostOwner: input.preparedGhostOwner,
+      deriveGhostAccountPreview: dependencies.deriveGhostAccountPreview ?? derivePilotGhostAccountPreview,
+    }),
+  ]);
+  const payload: VerifyAndIssuePassportA1Payload = {
+    ...proofMaterial.payload,
+    activeOwner: input.activeOwner,
+    ghostOwner: ghost.ghostOwner,
+    rootCommitment: ghost.rootCommitment.toString(),
     mode: input.mode,
     ghostDerivationVersion: input.ghostDerivationVersion,
   };
@@ -487,13 +533,7 @@ async function buildPassportA1Issuance(
   return {
     issuanceKind: "a1",
     response: await verifyAndIssuePassportA1ThroughBackend(input.verificationApiUrl, payload),
-    localWitness: {
-      witness,
-      nationalityBlind: nationalityBlind.toString(),
-      expiryBlind: expiryBlind.toString(),
-      scopedNullifier: outerMetadata.scopedNullifier,
-      wrapperPublicInputs: payload.wrapperPublicInputs,
-    },
+    localWitness: proofMaterial.localWitness,
   };
 }
 
