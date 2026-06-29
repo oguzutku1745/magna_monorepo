@@ -8,6 +8,8 @@
     "apps/*"
   ],
   "scripts": {
+    "network:local": "./scripts/start-local-network.sh",
+    "localnet:drift": "node ./scripts/check-localnet-drift.mjs",
     "build": "npm run -ws build",
     "test": "npm run -ws test",
     "lint": "npm run -ws lint",

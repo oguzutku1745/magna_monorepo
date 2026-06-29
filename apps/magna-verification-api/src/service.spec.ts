@@ -245,13 +245,13 @@ describe("passport A1 request validation and dispatch", () => {
     rootCommitment: "456",
     credentialValidUntil: "1893456000",
     claimsHash: "123",
-    wrapperPublicInputs: ["123", "789", "101112", "18", "1893456000", "999", "555", "666", "777", "888"],
+    wrapperPublicInputs: ["123", "789", "101112", "18", "1893456000", "999", "555", "555", "777", "888"],
     wrapperProof: {
       proof: "wrapper-proof",
-      publicInputs: ["123", "789", "101112", "18", "1893456000", "999", "555", "666", "777", "888"],
+      publicInputs: ["123", "789", "101112", "18", "1893456000", "999", "555", "555", "777", "888"],
     },
     zkPassportOuterProof: { proof: "outer-proof", name: "outer_evm_passport" },
-    zkPassportOuterPublicInputs: ["0", "1", "2", "33", "44", "555", "666", "777", "888", "1", "999", "1000"],
+    zkPassportOuterPublicInputs: ["0", "1", "2", "33", "44", "777", "555", "888", "444", "1", "999", "1000"],
     mode: "rooted" as const,
     ghostDerivationVersion: "v2_scoped" as const,
   };
@@ -270,6 +270,15 @@ describe("passport A1 request validation and dispatch", () => {
         } as never),
       ).toThrow("PII-bearing zkPassport artifact");
     }
+    expect(() =>
+      validatePassportA1Request({
+        ...cleanA1Payload,
+        zkPassportOuterProof: {
+          ...cleanA1Payload.zkPassportOuterProof,
+          committedInputs: { disclose_bytes_evm: { disclosedBytes: [84, 85, 82] } },
+        },
+      }),
+    ).toThrow("PII-bearing zkPassport artifact");
     expect(() =>
       validatePassportA1Request({
         ...cleanA1Payload,
@@ -466,13 +475,13 @@ describe("verifyAndIssuePassportA1", () => {
     rootCommitment: "456",
     credentialValidUntil: "1893456000",
     claimsHash: "123",
-    wrapperPublicInputs: ["123", "789", "101112", "18", "1893456000", "999", "555", "666", "777", "888"],
+    wrapperPublicInputs: ["123", "789", "101112", "18", "1893456000", "999", "555", "555", "777", "888"],
     wrapperProof: {
       proof: "wrapper-proof",
-      publicInputs: ["123", "789", "101112", "18", "1893456000", "999", "555", "666", "777", "888"],
+      publicInputs: ["123", "789", "101112", "18", "1893456000", "999", "555", "555", "777", "888"],
     },
     zkPassportOuterProof: { proof: "outer-proof", name: "outer_evm_passport" },
-    zkPassportOuterPublicInputs: ["0", "1", "2", "33", "44", "555", "666", "777", "888", "1", "999", "1000"],
+    zkPassportOuterPublicInputs: ["0", "1", "2", "33", "44", "777", "555", "888", "444", "1", "999", "1000"],
     mode: "rooted" as const,
     ghostDerivationVersion: "v2_scoped" as const,
   };

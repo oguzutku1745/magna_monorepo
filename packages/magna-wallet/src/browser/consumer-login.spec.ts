@@ -1,33 +1,66 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { CredentialType, ClaimId, ConstraintOp } from "@magna/core";
-import { MagnaConsumerContract, MagnaIssuerContract } from "@magna/contracts-bindings";
+import { ContractInitializationStatus } from "@aztec/aztec.js/wallet";
+import { MagnaCompanySponsorContract, MagnaConsumerContract, MagnaIssuerContract } from "@magna/contracts-bindings";
 import { runMagnaConsumerLogin } from "./consumer-login.js";
 
 const activeAddress = "0x0222222222222222222222222222222222222222222222222222222222222222";
 const issuerAddress = "0x0111111111111111111111111111111111111111111111111111111111111111";
 const orchestratorAddress = "0x0333333333333333333333333333333333333333333333333333333333333333";
 const consumerGatewayAddress = "0x0444444444444444444444444444444444444444444444444444444444444444";
+const sponsorAddress = "0x0555555555555555555555555555555555555555555555555555555555555555";
 const aztecNodeUrl = "http://127.0.0.1:8080";
 
 const originalIssuerAt = MagnaIssuerContract.at;
 const originalConsumerAt = MagnaConsumerContract.at;
+const originalSponsorAt = MagnaCompanySponsorContract.at;
 
 after(() => {
   (MagnaIssuerContract as unknown as { at: typeof originalIssuerAt }).at = originalIssuerAt;
   (MagnaConsumerContract as unknown as { at: typeof originalConsumerAt }).at = originalConsumerAt;
+  (MagnaCompanySponsorContract as unknown as { at: typeof originalSponsorAt }).at = originalSponsorAt;
 });
 
-test("runMagnaConsumerLogin routes rooted credentials through linked consumer gateway", async () => {
+function sponsorEnv() {
+  return {
+    aztecNodeUrl,
+    issuerAddress,
+    orchestratorAddress,
+    activeCompanySponsorAddress: sponsorAddress,
+    companySponsorAddresses: [sponsorAddress],
+  };
+}
+
+function assertSponsorFeeOptions(options: unknown) {
+  const sendOptions = options as {
+    from?: { toString(): string };
+    fee?: {
+      paymentMethod?: {
+        getFeePayer: () => Promise<{ toString(): string }>;
+      };
+    };
+    additionalScopes?: { toString(): string }[];
+  };
+  assert.equal(sendOptions.from?.toString(), activeAddress);
+  assert.ok(sendOptions.fee, "expected sponsored fee config");
+  assert.equal(sendOptions.additionalScopes?.[0]?.toString(), sponsorAddress);
+  assert.equal(sendOptions.additionalScopes?.[1]?.toString(), issuerAddress);
+  return sendOptions.fee!.paymentMethod!.getFeePayer();
+}
+
+test("runMagnaConsumerLogin routes rooted credentials through the linked sponsor gateway", async () => {
   const hintedRootStatusNote = { id: "root-status" };
   const hintedRootAuthorityNote = { id: "root-authority" };
   const hintedCredentialNote = { id: "linked-credential" };
   const hintedStatusNote = { id: "linked-status" };
   let legacyCalled = false;
+  let linkedArgs: unknown[] | undefined;
   let linkedSendOptions: unknown;
   const registeredContracts: string[] = [];
 
   (MagnaIssuerContract as unknown as { at: (address: unknown, wallet: unknown) => unknown }).at = () => ({
+    address: { toString: () => issuerAddress },
     methods: {
       get_linked_credential_hinted: () => ({
         simulate: async () => hintedCredentialNote,
@@ -44,33 +77,37 @@ test("runMagnaConsumerLogin routes rooted credentials through linked consumer ga
     },
   });
   (MagnaConsumerContract as unknown as { at: (address: unknown, wallet: unknown) => unknown }).at = () => {
-    assert.deepEqual(registeredContracts, [issuerAddress, consumerGatewayAddress]);
+    throw new Error("consumer contract should not be bound for sponsored login");
+  };
+  (MagnaCompanySponsorContract as unknown as { at: (address: unknown, wallet: unknown) => unknown }).at = () => {
+    assert.deepEqual(registeredContracts, [issuerAddress, sponsorAddress]);
     return {
-    methods: {
-      login_with_magna: () => {
+      address: { toString: () => sponsorAddress },
+      methods: {
+      sponsored_verify: () => {
         legacyCalled = true;
         return { send: async () => ({ txHash: "0xlegacy" }) };
       },
-      login_with_linked_magna: () => ({
+      sponsored_verify_linked: (...args: unknown[]) => {
+        linkedArgs = args;
+        return {
         send: async (options: unknown) => {
           linkedSendOptions = options;
           return { txHash: "0xlinked" };
         },
-      }),
-    },
+        };
+      },
+      },
     };
   };
 
   const outcome = await runMagnaConsumerLogin({
-    env: {
-      aztecNodeUrl,
-      issuerAddress,
-      orchestratorAddress,
-    },
+    env: sponsorEnv(),
     wallet: {
       registerSender: async () => undefined,
       getContractMetadata: async (address: { toString(): string }) => ({
         instance: { address: address.toString() },
+        initializationStatus: ContractInitializationStatus.INITIALIZED,
       }),
       registerContract: async (instance: { address: string }) => {
         registeredContracts.push(instance.address);
@@ -101,19 +138,26 @@ test("runMagnaConsumerLogin routes rooted credentials through linked consumer ga
   });
 
   assert.equal(legacyCalled, false);
-  assert.deepEqual(linkedSendOptions, { from: activeAddress });
+  assert.deepEqual(linkedArgs?.slice(1, 5), [
+    hintedRootStatusNote,
+    hintedRootAuthorityNote,
+    hintedCredentialNote,
+    hintedStatusNote,
+  ]);
+  assert.equal((await assertSponsorFeeOptions(linkedSendOptions)).toString(), sponsorAddress);
   assert.deepEqual(outcome, { verified: true, receipt: "0xlinked" });
 });
 
-test("runMagnaConsumerLogin routes committed rooted passports through v2 consumer gateway", async () => {
+test("runMagnaConsumerLogin routes v2-only rooted passports through the linked sponsor gateway", async () => {
   const hintedRootStatusNote = { id: "root-status" };
   const hintedRootAuthorityNote = { id: "root-authority" };
   const hintedCredentialNote = { id: "linked-credential" };
   const hintedStatusNote = { id: "linked-status" };
-  let legacyCalled = false;
   let v2Args: unknown[] | undefined;
+  let linkedSendOptions: unknown;
 
   (MagnaIssuerContract as unknown as { at: (address: unknown, wallet: unknown) => unknown }).at = () => ({
+    address: { toString: () => issuerAddress },
     methods: {
       get_linked_credential_hinted: () => ({
         simulate: async () => hintedCredentialNote,
@@ -130,28 +174,30 @@ test("runMagnaConsumerLogin routes committed rooted passports through v2 consume
     },
   });
   (MagnaConsumerContract as unknown as { at: (address: unknown, wallet: unknown) => unknown }).at = () => ({
+    methods: {},
+  });
+  (MagnaCompanySponsorContract as unknown as { at: (address: unknown, wallet: unknown) => unknown }).at = () => ({
+    address: { toString: () => sponsorAddress },
     methods: {
-      login_with_linked_magna: () => {
-        legacyCalled = true;
-        return { send: async () => ({ txHash: "0xlegacy" }) };
-      },
-      login_with_linked_magna_v2: (...args: unknown[]) => {
+      sponsored_verify_linked_v2: (...args: unknown[]) => {
         v2Args = args;
-        return { send: async () => ({ txHash: "0xlinkedv2" }) };
+        return {
+          send: async (options: unknown) => {
+            linkedSendOptions = options;
+            return { txHash: "0xlinkedv2" };
+          },
+        };
       },
     },
   });
 
   const outcome = await runMagnaConsumerLogin({
-    env: {
-      aztecNodeUrl,
-      issuerAddress,
-      orchestratorAddress,
-    },
+    env: sponsorEnv(),
     wallet: {
       registerSender: async () => undefined,
       getContractMetadata: async (address: { toString(): string }) => ({
         instance: { address: address.toString() },
+        initializationStatus: ContractInitializationStatus.INITIALIZED,
       }),
       registerContract: async () => undefined,
     } as never,
@@ -182,7 +228,6 @@ test("runMagnaConsumerLogin routes committed rooted passports through v2 consume
     },
   });
 
-  assert.equal(legacyCalled, false);
   assert.deepEqual(v2Args?.slice(1), [
     hintedRootStatusNote,
     hintedRootAuthorityNote,
@@ -197,16 +242,19 @@ test("runMagnaConsumerLogin routes committed rooted passports through v2 consume
     },
     0,
   ]);
+  assert.equal((await assertSponsorFeeOptions(linkedSendOptions)).toString(), sponsorAddress);
   assert.deepEqual(outcome, { verified: true, receipt: "0xlinkedv2" });
 });
 
-test("runMagnaConsumerLogin routes instagram credentials through issuer verification", async () => {
+test("runMagnaConsumerLogin routes instagram credentials through sponsored issuer verification", async () => {
   const hintedCredentialNote = { id: "instagram-credential" };
   const hintedStatusNote = { id: "instagram-status" };
   const registeredContracts: string[] = [];
   let verifyArgs: unknown[] | undefined;
+  let sendOptions: unknown;
 
   (MagnaIssuerContract as unknown as { at: (address: unknown, wallet: unknown) => unknown }).at = () => ({
+    address: { toString: () => issuerAddress },
     methods: {
       get_credential_hinted: () => ({
         simulate: async () => hintedCredentialNote,
@@ -225,17 +273,31 @@ test("runMagnaConsumerLogin routes instagram credentials through issuer verifica
   (MagnaConsumerContract as unknown as { at: (address: unknown, wallet: unknown) => unknown }).at = () => {
     throw new Error("consumer contract should not be bound for instagram login");
   };
+  (MagnaCompanySponsorContract as unknown as { at: (address: unknown, wallet: unknown) => unknown }).at = () => {
+    assert.deepEqual(registeredContracts, [issuerAddress, sponsorAddress]);
+    return {
+      address: { toString: () => sponsorAddress },
+      methods: {
+        sponsored_verify_instagram: (...args: unknown[]) => {
+          verifyArgs = args;
+          return {
+            send: async (options: unknown) => {
+              sendOptions = options;
+              return { txHash: "0xinstagram" };
+            },
+          };
+        },
+      },
+    };
+  };
 
   const outcome = await runMagnaConsumerLogin({
-    env: {
-      aztecNodeUrl,
-      issuerAddress,
-      orchestratorAddress,
-    },
+    env: sponsorEnv(),
     wallet: {
       registerSender: async () => undefined,
       getContractMetadata: async (address: { toString(): string }) => ({
         instance: { address: address.toString() },
+        initializationStatus: ContractInitializationStatus.INITIALIZED,
       }),
       registerContract: async (instance: { address: string }) => {
         registeredContracts.push(instance.address);
@@ -262,12 +324,13 @@ test("runMagnaConsumerLogin routes instagram credentials through issuer verifica
     },
   });
 
-  assert.deepEqual(registeredContracts, [issuerAddress]);
+  assert.deepEqual(registeredContracts.slice(0, 2), [issuerAddress, sponsorAddress]);
   assert.deepEqual(verifyArgs?.slice(1), [
     hintedCredentialNote,
     hintedStatusNote,
     123n,
     0,
   ]);
+  assert.equal((await assertSponsorFeeOptions(sendOptions)).toString(), sponsorAddress);
   assert.deepEqual(outcome, { verified: true, receipt: "0xinstagram" });
 });

@@ -2,6 +2,17 @@ import { describe, expect, it } from "vitest";
 import localDeployment from "../../../../deployments/local.json";
 import { getManagementEnv } from "./env";
 
+const deployment = localDeployment as {
+  l2: {
+    issuerAddress?: string;
+    webBootstrap?: {
+      orchestratorAddress?: string;
+    };
+    activeCompanySponsorAddress?: string;
+    rightsRegistryAddress?: string;
+  };
+};
+
 describe("getManagementEnv", () => {
   it("keeps zkPassport dev mode disabled by default in local Vite dev", () => {
     const env = getManagementEnv({ DEV: true });
@@ -9,11 +20,11 @@ describe("getManagementEnv", () => {
     expect(env.zkPassportDevMode).toBe(false);
   });
 
-  it("keeps zkPassport dev mode disabled by default outside local dev", () => {
+  it("defaults passport issuance to A1 outside local dev", () => {
     const env = getManagementEnv({});
 
     expect(env.zkPassportDevMode).toBe(false);
-    expect(env.zkPassportIssuanceKind).toBe("legacy");
+    expect(env.zkPassportIssuanceKind).toBe("a1");
   });
 
   it("allows explicit zkPassport dev mode configuration to override the local-dev default", () => {
@@ -62,9 +73,9 @@ describe("getManagementEnv", () => {
   it("hydrates local contract addresses from the deployment manifest when env omits them", () => {
     const env = getManagementEnv({});
 
-    expect(env.issuerAddress).toBe(localDeployment.l2.issuerAddress);
-    expect(env.orchestratorAddress).toBe(localDeployment.l2.webBootstrap.orchestratorAddress);
-    expect(env.activeCompanySponsorAddress).toBe(localDeployment.l2.activeCompanySponsorAddress);
-    expect(env.rightsRegistryAddress).toBe(localDeployment.l2.rightsRegistryAddress);
+    expect(env.issuerAddress).toBe(deployment.l2.issuerAddress);
+    expect(env.orchestratorAddress).toBe(deployment.l2.webBootstrap?.orchestratorAddress);
+    expect(env.activeCompanySponsorAddress).toBe(deployment.l2.activeCompanySponsorAddress);
+    expect(env.rightsRegistryAddress).toBe(deployment.l2.rightsRegistryAddress);
   });
 });

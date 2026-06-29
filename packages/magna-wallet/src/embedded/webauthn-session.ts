@@ -1,4 +1,5 @@
 import { AccountManager } from "@aztec/aztec.js/wallet";
+import type { Account } from "@aztec/aztec.js/account";
 import { Fr } from "@aztec/aztec.js/fields";
 import { clearEmbeddedPxeCacheForNode, isAztecWorldStateAnchorError } from "../browser/pxe-cache.js";
 import { bytesToHex, hexToBytes } from "@magna/core";
@@ -18,6 +19,7 @@ import {
   createEmbeddedWallet,
   ensureAccountManagerDeployed,
   ensureAccountManagerRegistered,
+  type EmbeddedWalletWithInternals,
   type WalletSession,
 } from "./lifecycle.js";
 
@@ -55,6 +57,12 @@ export type WebAuthnWalletSessionOptions = {
 };
 
 const STORAGE_KEY = "magna-webauthn-accounts-v1";
+const WEB_AUTHN_ACCOUNT_RESOLVERS_KEY = Symbol.for("magna.webauthn.accountResolvers");
+
+type WebAuthnAccountResolverMap = Map<string, () => Promise<Account>>;
+type EmbeddedWalletWithWebAuthnResolvers = EmbeddedWalletWithInternals & {
+  [WEB_AUTHN_ACCOUNT_RESOLVERS_KEY]?: WebAuthnAccountResolverMap;
+};
 
 function base64urlEncode(bytes: Uint8Array): string {
   let binary = "";
@@ -276,6 +284,54 @@ export function storedWebAuthnAccountFromRegistration(
   };
 }
 
+async function installWebAuthnAccountResolverOnEmbeddedWallet(
+  wallet: EmbeddedWalletWithInternals,
+  accountManager: AccountManager,
+): Promise<void> {
+  const walletWithResolvers = wallet as EmbeddedWalletWithWebAuthnResolvers;
+  if (!walletWithResolvers[WEB_AUTHN_ACCOUNT_RESOLVERS_KEY]) {
+    walletWithResolvers[WEB_AUTHN_ACCOUNT_RESOLVERS_KEY] = new Map();
+    const originalGetAccountFromAddress = wallet.getAccountFromAddress?.bind(wallet);
+    wallet.getAccountFromAddress = async address => {
+      const resolver = walletWithResolvers[WEB_AUTHN_ACCOUNT_RESOLVERS_KEY]?.get(address.toString());
+      if (resolver) {
+        return resolver();
+      }
+      if (!originalGetAccountFromAddress) {
+        throw new Error(`Account not found in wallet for address: ${address.toString()}`);
+      }
+      return originalGetAccountFromAddress(address);
+    };
+  }
+  walletWithResolvers[WEB_AUTHN_ACCOUNT_RESOLVERS_KEY]!.set(accountManager.address.toString(), () =>
+    accountManager.getAccount(),
+  );
+}
+
+async function persistWebAuthnAccountOnEmbeddedWallet(
+  wallet: EmbeddedWalletWithInternals,
+  accountManager: AccountManager,
+  alias: string,
+): Promise<void> {
+  if (!wallet.walletDB?.storeAccount) {
+    throw new Error("Embedded wallet does not expose account storage for WebAuthn passkey accounts.");
+  }
+  await wallet.walletDB.storeAccount(accountManager.address, {
+    type: "ecdsasecp256r1",
+    secretKey: accountManager.getSecretKey(),
+    salt: Fr.ZERO,
+    signingKey: accountManager.getSecretKey().toBuffer(),
+    alias,
+  });
+}
+
+async function deleteWebAuthnAccountFromEmbeddedWallet(
+  wallet: EmbeddedWalletWithInternals,
+  accountManager: AccountManager,
+): Promise<void> {
+  await wallet.walletDB?.deleteAccount?.(accountManager.address);
+}
+
 export async function createWebAuthnWalletSession(options: WebAuthnWalletSessionOptions): Promise<WalletSession> {
   try {
     return await createWebAuthnWalletSessionOnce(options);
@@ -354,12 +410,16 @@ async function createWebAuthnWalletSessionOnce(options: WebAuthnWalletSessionOpt
     if (!stored) {
       saveStoredWebAuthnAccount(storage, storedAccount);
     }
+    const embeddedWallet = wallet as EmbeddedWalletWithInternals;
+    await installWebAuthnAccountResolverOnEmbeddedWallet(embeddedWallet, accountManager);
+    await deleteWebAuthnAccountFromEmbeddedWallet(embeddedWallet, accountManager);
     await ensureAccountManagerRegistered(wallet, accountManager);
     const deployment = await ensureAccountManagerDeployed(
       wallet,
       accountManager,
       options.deployWithLocalTestAccount ? { localTestAccountIndex: options.localTestAccountIndex ?? 0 } : undefined,
     );
+    await persistWebAuthnAccountOnEmbeddedWallet(embeddedWallet, accountManager, `WebAuthn ${options.alias}`);
 
     return buildWalletSession(
       "passkey",

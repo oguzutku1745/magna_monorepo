@@ -747,12 +747,12 @@ describe("MagnaVerificationEngine login flows", () => {
   });
 
   it("loginWithCompanySponsor uses first companySponsorContracts entry when primary is not set", async () => {
-    let capturedSendOptions: { from: string; fee?: unknown; additionalScopes?: unknown[] } | undefined;
+    let capturedSendOptions: { from: { toString(): string }; fee?: unknown; additionalScopes?: unknown[] } | undefined;
     const sponsorA = {
       address: { toString: () => "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
       methods: {
         sponsored_verify: () => ({
-          send: async (opts: { from: string; fee?: unknown; additionalScopes?: unknown[] }) => {
+          send: async (opts: { from: { toString(): string }; fee?: unknown; additionalScopes?: unknown[] }) => {
             capturedSendOptions = opts;
             return { ok: true };
           },
@@ -761,7 +761,10 @@ describe("MagnaVerificationEngine login flows", () => {
     };
     const client = new MagnaVerificationEngine({
       orchestratorAddress: "0x1111111111111111111111111111111111111111",
-      issuerContract: { methods: {} } as never,
+      issuerContract: {
+        address: { toString: () => "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+        methods: {},
+      } as never,
       companySponsorContracts: [sponsorA as never],
     });
 
@@ -778,10 +781,13 @@ describe("MagnaVerificationEngine login flows", () => {
           nationalityAlpha3Packed: 0x43414en,
         },
       },
-      "0x2222222222222222222222222222222222222222",
+      "0x2222222222222222222222222222222222222222222222222222222222222222",
     );
-    assert.equal(capturedSendOptions?.from, "0x2222222222222222222222222222222222222222");
-    assert.deepEqual(capturedSendOptions?.additionalScopes, [sponsorA.address]);
+    assert.equal(capturedSendOptions?.from.toString(), "0x2222222222222222222222222222222222222222222222222222222222222222");
+    assert.deepEqual(capturedSendOptions?.additionalScopes?.map(scope => String((scope as { toString(): string }).toString())), [
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    ]);
   });
 
   it("loginWithCompanySponsor supports explicit sponsor override", async () => {
@@ -827,7 +833,7 @@ describe("MagnaVerificationEngine login flows", () => {
           nationalityAlpha3Packed: 0x43414en,
         },
       },
-      "0x2222222222222222222222222222222222222222",
+      "0x2222222222222222222222222222222222222222222222222222222222222222",
       sponsorB as never,
     );
     assert.equal(calledSponsor, "B");

@@ -34,7 +34,7 @@ const DEFAULT_WAIT_FOR_NODE_MS = 120_000;
 const DEFAULT_FEE_JUICE_WITNESS_WAIT_MS = 420_000;
 const DEFAULT_FEE_JUICE_WITNESS_POLL_MS = 15_000;
 const DEFAULT_PXE_SYNC_AFTER_WARP_ATTEMPTS = 120;
-const DEFAULT_SPONSOR_MAX_FEE_CAP = 1_000_000_000_000_000n;
+const DEFAULT_SPONSOR_MAX_FEE_CAP = 100_000_000_000_000_000n;
 const DEFAULT_INITIAL_SPONSOR_RIGHTS = 1_000_000n;
 const DEFAULT_L2_PRICE_PER_VERIFY = 150_000n;
 const DEFAULT_L2_STABLE_MINT_AMOUNT = 10_000_000_000_000n;
@@ -99,6 +99,8 @@ Options:
   --network-name <name>               Default: local
   --manifest <path>                   Default: deployments/<network>.json
   --env-out <path>                    Default: apps/magna-web/.env.local
+  --management-env-out <path>         Default: apps/magna-management/.env
+  --reference-dapp-env-out <path>     Default: apps/reference-dapp/.env
   --aztec-node-url <url>              Optional override for node URL
   --l1-rpc-url <url>                  Optional override for L1 RPC URL
   --l1-mnemonic <mnemonic>            Optional override for test mnemonic
@@ -108,7 +110,7 @@ Options:
   --wait-for-node-ms <ms>             Default: 120000
   --fee-juice-witness-wait-ms <ms>    Default: 420000
   --fee-juice-witness-poll-ms <ms>    Default: 15000
-  --sponsor-max-fee-cap <integer>     Default: 1000000000000000
+  --sponsor-max-fee-cap <integer>     Default: 100000000000000000
   --initial-sponsor-rights <integer>  Default: 1000000
   --skip-rights-deploy                Reuse existing manifest instead of running magna:testnet deploy first
 `;
@@ -468,6 +470,8 @@ function syncWebBootstrapOutputs({
   networkName,
   manifestPath,
   envOutPath,
+  managementEnvOutPath,
+  referenceDappEnvOutPath,
   orchestratorAddress,
   issuerAddress,
   companySponsorAddress,
@@ -507,6 +511,52 @@ function syncWebBootstrapOutputs({
     ],
     description,
   );
+
+  if (managementEnvOutPath) {
+    runNodeScript(
+      resolve(repoRoot, "apps/magna-web/scripts/fill-env-from-local-deploy.mjs"),
+      [
+        "--network-name",
+        networkName,
+        "--manifest",
+        manifestPath,
+        "--template",
+        "apps/magna-management/.env.example",
+        "--out",
+        managementEnvOutPath,
+        "--issuer-address",
+        issuerAddress,
+        "--company-sponsor-address",
+        companySponsorAddress,
+        "--company-sponsor-addresses",
+        companySponsorAddress,
+        "--active-company-sponsor-address",
+        companySponsorAddress,
+        "--orchestrator-address",
+        orchestratorAddress,
+      ],
+      description.replace("apps/magna-web", "apps/magna-management"),
+    );
+  }
+
+  if (referenceDappEnvOutPath) {
+    runNodeScript(
+      resolve(repoRoot, "apps/magna-web/scripts/fill-env-from-local-deploy.mjs"),
+      [
+        "--network-name",
+        networkName,
+        "--manifest",
+        manifestPath,
+        "--template",
+        "apps/reference-dapp/.env.example",
+        "--out",
+        referenceDappEnvOutPath,
+        "--wallet-origin",
+        "http://localhost:5174",
+      ],
+      description.replace("apps/magna-web", "apps/reference-dapp"),
+    );
+  }
 }
 
 async function ensureL1PaymentTokenAddress({ existingAddress, l1Client }) {
@@ -567,6 +617,8 @@ async function main() {
   const networkName = String(args.networkName ?? DEFAULT_NETWORK_NAME);
   const manifestPath = resolve(repoRoot, String(args.manifest ?? `deployments/${networkName}.json`));
   const envOutPath = resolve(repoRoot, String(args.envOut ?? "apps/magna-web/.env.local"));
+  const managementEnvOutPath = resolve(repoRoot, String(args.managementEnvOut ?? "apps/magna-management/.env"));
+  const referenceDappEnvOutPath = resolve(repoRoot, String(args.referenceDappEnvOut ?? "apps/reference-dapp/.env"));
   const existingManifest = existsSync(manifestPath) ? readJson(manifestPath, "Deployment manifest") : undefined;
   const nodeUrl = String(
     args.aztecNodeUrl ?? existingManifest?.endpoints?.aztecNodeUrl ?? process.env.AZTEC_NODE_URL ?? "http://127.0.0.1:8080",
@@ -762,6 +814,8 @@ async function main() {
       networkName,
       manifestPath,
       envOutPath,
+      managementEnvOutPath,
+      referenceDappEnvOutPath,
       orchestratorAddress: orchestrator.toString(),
       issuerAddress: issuer.address.toString(),
       companySponsorAddress: companySponsor.address.toString(),
@@ -834,6 +888,8 @@ async function main() {
       networkName,
       manifestPath,
       envOutPath,
+      managementEnvOutPath,
+      referenceDappEnvOutPath,
       orchestratorAddress: orchestrator.toString(),
       issuerAddress: issuer.address.toString(),
       companySponsorAddress: companySponsor.address.toString(),

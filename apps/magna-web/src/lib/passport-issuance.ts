@@ -451,7 +451,7 @@ async function buildPassportA1Issuance(
     expiryTs: disclosures.expiryTs,
     minAgeProven: disclosures.minAgeProven,
     credentialValidUntil,
-    agePredicate: { minAge: disclosures.minAgeProven, maxAge: 255 },
+    agePredicate: { minAge: disclosures.minAgeProven, maxAge: 0 },
     bind: {
       customData:
         input.a1BindCustomData ??

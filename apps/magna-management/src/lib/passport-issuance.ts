@@ -35,7 +35,9 @@ export const A1_UNAVAILABLE_MESSAGE =
 export const A1_LOCAL_WITNESS_MISSING_MESSAGE =
   "Passport A1 credential is missing its local v2 witness. Re-issue this passport credential on this device to restore A1/v2 presentation.";
 export const PILOT_CREDENTIAL_UNUSABLE_MESSAGE =
-  "Pilot or rediscovered passport credentials cannot be used for relying-party verification, renewal, or recovery until A1/v2 presentation support is enabled. Re-issue with A1/v2 support before using this credential.";
+  "PII-blind pilot passport credentials cannot be used for relying-party verification, renewal, or recovery.";
+export const REDISCOVERED_PASSPORT_WITNESS_MISSING_MESSAGE =
+  "Passport note was found in PXE, but this browser is missing the local A1/v2 witness required to present it. Re-issue this passport credential on this device to restore A1/v2 presentation.";
 
 const PILOT_SCHEMA = "passport-pii-blind-v0";
 const A1_SCHEMA = "passport-a1-v1";
@@ -157,15 +159,16 @@ export function passportPilotCredentialUsageBlock(
     | undefined,
 ): string | undefined {
   if (!credential) return undefined;
+  if (credential.passportCommittedClaimsV2Witness) return undefined;
   if (credential.issuanceKind === "legacy") return undefined;
   if (credential.issuanceKind === "a1") {
-    return credential.passportCommittedClaimsV2Witness ? undefined : A1_LOCAL_WITNESS_MISSING_MESSAGE;
+    return A1_LOCAL_WITNESS_MISSING_MESSAGE;
   }
   if (credential.issuanceKind === "pilot") {
     return PILOT_CREDENTIAL_UNUSABLE_MESSAGE;
   }
   if (credential.normalizedClaims) return undefined;
-  return PILOT_CREDENTIAL_UNUSABLE_MESSAGE;
+  return REDISCOVERED_PASSPORT_WITNESS_MISSING_MESSAGE;
 }
 
 export function passportA1BindCustomData(input: { activeOwner: string; requestScope?: string }): string {
@@ -451,7 +454,7 @@ async function buildPassportA1Issuance(
     expiryTs: disclosures.expiryTs,
     minAgeProven: disclosures.minAgeProven,
     credentialValidUntil,
-    agePredicate: { minAge: disclosures.minAgeProven, maxAge: 255 },
+    agePredicate: { minAge: disclosures.minAgeProven, maxAge: 0 },
     bind: {
       customData:
         input.a1BindCustomData ??

@@ -1,5 +1,12 @@
 export type FeeConfig = {
   paymentMethod?: unknown;
+  gasSettings?: {
+    gasLimits?: { daGas: number; l2Gas: number };
+    teardownGasLimits?: { daGas: number; l2Gas: number };
+    maxFeesPerGas?: { feePerDaGas: bigint; feePerL2Gas: bigint };
+    maxPriorityFeesPerGas?: { feePerDaGas: bigint; feePerL2Gas: bigint };
+  };
+  congestionEstimate?: unknown;
   estimateGas?: boolean;
   estimatedGasPadding?: number;
 };

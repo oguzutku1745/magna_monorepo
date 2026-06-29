@@ -4,6 +4,7 @@ import {
   computePassportExpiryCommitment,
   computePassportNationalityCommitment,
   computeZkPassportParameterCommitmentManifest,
+  computeZkPassportParameterCommitmentManifestCandidates,
   packAlpha3,
   poseidon2FieldHasher,
 } from "@magna/wallet";
@@ -47,6 +48,10 @@ function u8From(value: number, label: string): number {
     throw new Error(`${label} must be an integer in [0, 255].`);
   }
   return value;
+}
+
+function localAgeMaxBound(ageMaxPredicate: number): number {
+  return ageMaxPredicate === 0 ? MAX_U8 : ageMaxPredicate;
 }
 
 function u64From(value: BigintLike, label: string): bigint {
@@ -222,6 +227,53 @@ function normalizeDeclaredOutputs(
   };
 }
 
+type ZkPassportParameterCommitmentManifest = Awaited<
+  ReturnType<typeof computeZkPassportParameterCommitmentManifest>
+>;
+
+const zkPassportParameterCommitmentManifestKeys = [
+  "nationalityDisclosureCommitment",
+  "expiryDisclosureCommitment",
+  "agePredicateCommitment",
+  "bindCommitment",
+] as const satisfies ReadonlyArray<keyof ZkPassportParameterCommitmentManifest>;
+
+function manifestsMatch(
+  left: ZkPassportParameterCommitmentManifest,
+  right: ZkPassportParameterCommitmentManifest,
+): boolean {
+  return zkPassportParameterCommitmentManifestKeys.every(key => left[key] === right[key]);
+}
+
+async function resolveZkPassportParameterCommitmentManifest(
+  witness: PassportWrapperLocalWitness,
+): Promise<ZkPassportParameterCommitmentManifest> {
+  if (!witness.expectedParameterCommitmentManifest) {
+    return computeZkPassportParameterCommitmentManifest(witness.minimalZkPassportWitness);
+  }
+
+  const candidates = await computeZkPassportParameterCommitmentManifestCandidates(
+    witness.minimalZkPassportWitness,
+  );
+  const expected = witness.expectedParameterCommitmentManifest;
+  const match = candidates.find(candidate => manifestsMatch(candidate.manifest, expected));
+  if (match) {
+    return match.manifest;
+  }
+
+  for (const key of zkPassportParameterCommitmentManifestKeys) {
+    const keyMatchesAnyCandidate = candidates.some(candidate => candidate.manifest[key] === expected[key]);
+    if (!keyMatchesAnyCandidate) {
+      throw new Error(`${key} does not match the local zkPassport witness.`);
+    }
+  }
+
+  const layouts = candidates.map(candidate => candidate.layout).join(", ");
+  throw new Error(
+    `zkPassport parameter commitment manifest does not match the local witness for any supported MRZ disclosure layout (${layouts}).`,
+  );
+}
+
 function assertWitnessConsistency(witness: PassportWrapperLocalWitness): void {
   if (!witness.zkPassportOuterProof || typeof witness.zkPassportOuterProof !== "object") {
     throw new Error("zkPassport outer proof artifact is required for the local witness.");
@@ -232,10 +284,11 @@ function assertWitnessConsistency(witness: PassportWrapperLocalWitness): void {
   const agePredicate = witness.agePredicate;
   u8From(agePredicate.minAge, "agePredicate.minAge");
   u8From(agePredicate.maxAge, "agePredicate.maxAge");
-  if (agePredicate.maxAge < agePredicate.minAge) {
+  if (agePredicate.maxAge !== 0 && agePredicate.maxAge < agePredicate.minAge) {
     throw new Error("agePredicate.maxAge must be greater than or equal to agePredicate.minAge.");
   }
-  if (witness.minAgeProven < agePredicate.minAge || witness.minAgeProven > agePredicate.maxAge) {
+  const ageMaxBound = localAgeMaxBound(agePredicate.maxAge);
+  if (witness.minAgeProven < agePredicate.minAge || witness.minAgeProven > ageMaxBound) {
     throw new Error("minAgeProven must satisfy the local age predicate bounds.");
   }
   if (
@@ -274,18 +327,7 @@ export async function buildPassportWrapperInputs(
   assertUnsigned(expiryBlind, "expiryBlind");
   assertUnsigned(scopedNullifier, "scopedNullifier");
 
-  const parameterCommitmentManifest = await computeZkPassportParameterCommitmentManifest(
-    witness.minimalZkPassportWitness,
-  );
-  if (witness.expectedParameterCommitmentManifest) {
-    for (const key of Object.keys(parameterCommitmentManifest) as Array<
-      keyof typeof parameterCommitmentManifest
-    >) {
-      if (parameterCommitmentManifest[key] !== witness.expectedParameterCommitmentManifest[key]) {
-        throw new Error(`${key} does not match the local zkPassport witness.`);
-      }
-    }
-  }
+  const parameterCommitmentManifest = await resolveZkPassportParameterCommitmentManifest(witness);
 
   const nationalityCommitment = computePassportNationalityCommitment(
     witness.nationalityAlpha3,
@@ -341,7 +383,7 @@ export async function buildPassportWrapperInputs(
       expiry_blind: fieldString(expiryBlind),
       min_age_proven: String(minAgeProven),
       age_min_bound: String(witness.agePredicate.minAge),
-      age_max_bound: String(witness.agePredicate.maxAge),
+      age_max_bound: String(localAgeMaxBound(witness.agePredicate.maxAge)),
       credential_valid_until: fieldString(credentialValidUntil),
       scoped_nullifier: fieldString(scopedNullifier),
       expected_claims_hash: outputs.claimsHash,

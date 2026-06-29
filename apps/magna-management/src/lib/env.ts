@@ -108,7 +108,7 @@ function parsePassportIssuanceKind(
       throw new Error("VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND must be one of legacy, pilot, or a1.");
     }
   }
-  return isProduction ? "a1" : "legacy";
+  return "a1";
 }
 
 function rejectProductionDevFlag(value: boolean, label: string): boolean {
@@ -150,7 +150,7 @@ export function getManagementEnv(source: EnvSource = import.meta.env): Managemen
     aztecNodeUrl: parseOptionalString(source.VITE_AZTEC_NODE_URL) ?? "http://localhost:8080",
     appId: parseOptionalString(source.VITE_MAGNA_APP_ID) ?? "magna-management",
     verificationApiUrl: parseOptionalString(source.VITE_MAGNA_VERIFICATION_API_URL) ?? "http://localhost:4310",
-    l1RpcUrl: parseOptionalString(source.VITE_L1_RPC_URL),
+    l1RpcUrl: parseOptionalString(source.VITE_MAGNA_L1_RPC_URL) ?? parseOptionalString(source.VITE_L1_RPC_URL),
     l1RightsPortalAddress:
       parseOptionalString(source.VITE_MAGNA_L1_RIGHTS_PORTAL_ADDRESS) ?? deployment.l1?.portalAddress,
     l1PaymentTokenAddress:

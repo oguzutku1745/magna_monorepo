@@ -1,11 +1,13 @@
 import {
   formatBoundData,
-  getAgeParameterCommitment,
-  getBindParameterCommitment,
-  getDiscloseParameterCommitment,
+  getAgeEVMParameterCommitment,
+  getBindEVMParameterCommitment,
+  getDiscloseEVMParameterCommitment,
+  getNumberOfPublicInputs,
   getNullifierFromOuterProof,
   getNullifierTypeFromOuterProof,
   getParamCommitmentsFromOuterProof,
+  getProofData,
   getScopeFromOuterProof,
   getSubscopeFromOuterProof,
 } from "@zkpassport/utils";
@@ -36,8 +38,20 @@ export type ZkPassportParameterCommitmentManifest = {
   bindCommitment: string;
 };
 
+export type ZkPassportMrzDisclosureLayout = "passport" | "id_card";
+
+export type ZkPassportParameterCommitmentManifestCandidate = {
+  layout: ZkPassportMrzDisclosureLayout;
+  manifest: ZkPassportParameterCommitmentManifest;
+};
+
 export type ZkPassportOuterProofArtifact = {
   proof: unknown;
+  name?: string;
+  version?: string;
+  vkeyHash?: string;
+  index?: number;
+  total?: number;
   verificationKey?: unknown;
   metadata?: Record<string, unknown>;
 };
@@ -154,6 +168,20 @@ const PASSPORT_A1_FORBIDDEN_ORCHESTRATOR_KEYS = new Set([
 const MAX_U8 = 255;
 const MAX_U64 = (1n << 64n) - 1n;
 const MIN_OUTER_PUBLIC_INPUT_COUNT = 8;
+const PASSPORT_MRZ_DISCLOSURE_LENGTH = 90;
+const ZK_PASSPORT_MRZ_DISCLOSURE_LAYOUTS: Record<
+  ZkPassportMrzDisclosureLayout,
+  { nationalityOffset: number; expiryOffset: number }
+> = {
+  passport: {
+    nationalityOffset: 54,
+    expiryOffset: 65,
+  },
+  id_card: {
+    nationalityOffset: 45,
+    expiryOffset: 38,
+  },
+};
 const asciiEncoder = new TextEncoder();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -340,6 +368,34 @@ function assertOuterProofPayload(value: unknown, path: string): void {
   throw new Error(`zkPassport outer proof payload at ${path} has an unsupported shape.`);
 }
 
+function requireNonEmptyString(value: unknown, label: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${label} must be a non-empty string.`);
+  }
+  return value.trim();
+}
+
+function normalizeProofHex(value: string, label: string): string {
+  const proof = value.trim().replace(/^0x/i, "");
+  if (!proof) {
+    throw new Error(`${label} must not be empty.`);
+  }
+  if (!/^[0-9a-fA-F]+$/.test(proof) || proof.length % 2 !== 0) {
+    throw new Error(`${label} must be an even-length hex string.`);
+  }
+  return proof;
+}
+
+function optionalSafeInteger(value: unknown, label: string): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Number.isSafeInteger(value) || Number(value) < 0) {
+    throw new Error(`${label} must be a non-negative safe integer.`);
+  }
+  return Number(value);
+}
+
 function verificationKeyFrom(
   proofContainer: Record<string, unknown>,
   rawProof: unknown,
@@ -348,6 +404,64 @@ function verificationKeyFrom(
     return rawProof.verificationKey ?? rawProof.verification_key ?? proofContainer.verificationKey ?? proofContainer.verification_key;
   }
   return proofContainer.verificationKey ?? proofContainer.verification_key;
+}
+
+function buildOuterProofArtifact(
+  proof: unknown,
+  options: {
+    proofPath: string;
+    publicInputsPath: string;
+    proofKey: "outerProof" | "proof";
+    publicInputsKey: "outerPublicInputs" | "publicInputs" | "derivedPublicInputs";
+    outerPublicInputs: readonly ZkPassportSafeBigintLike[];
+    verificationKey?: unknown;
+    sdkProof?: {
+      name: string;
+      version: string;
+      vkeyHash: string;
+      index?: number;
+      total?: number;
+    };
+  },
+): ZkPassportOuterProofArtifact {
+  let zkPassportUtils: ZkPassportOuterProofUtilityMetadata;
+  try {
+    zkPassportUtils = extractZkPassportOuterProofUtilityMetadata(options.outerPublicInputs);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`zkPassport outer public inputs at ${options.publicInputsPath} are malformed: ${message}`);
+  }
+
+  const outerProof: ZkPassportOuterProofArtifact = {
+    proof,
+    metadata: {
+      source: "zkpassport-completion",
+      localOnly: true,
+      proofPath: options.proofPath,
+      publicInputsPath: options.publicInputsPath,
+      proofKey: options.proofKey,
+      publicInputsKey: options.publicInputsKey,
+      zkPassportUtils,
+    },
+  };
+
+  if (options.sdkProof) {
+    outerProof.name = options.sdkProof.name;
+    outerProof.version = options.sdkProof.version;
+    outerProof.vkeyHash = options.sdkProof.vkeyHash;
+    if (options.sdkProof.index !== undefined) {
+      outerProof.index = options.sdkProof.index;
+    }
+    if (options.sdkProof.total !== undefined) {
+      outerProof.total = options.sdkProof.total;
+    }
+  }
+
+  if (options.verificationKey !== undefined) {
+    outerProof.verificationKey = options.verificationKey;
+  }
+
+  return outerProof;
 }
 
 function normalizeOuterProofArtifact(
@@ -364,29 +478,14 @@ function normalizeOuterProofArtifact(
   assertOuterProofPayload(proof, normalizedProofPath);
   const verificationKey = verificationKeyFrom(proofContainer, rawProof);
   const outerPublicInputs = normalizeOuterPublicInputs(proofContainer[publicInputsKey], publicInputsPath);
-  let zkPassportUtils: ZkPassportOuterProofUtilityMetadata;
-  try {
-    zkPassportUtils = extractZkPassportOuterProofUtilityMetadata(outerPublicInputs);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`zkPassport outer public inputs at ${publicInputsPath} are malformed: ${message}`);
-  }
-  const outerProof: ZkPassportOuterProofArtifact = {
-    proof,
-    metadata: {
-      source: "zkpassport-completion",
-      localOnly: true,
-      proofPath: normalizedProofPath,
-      publicInputsPath,
-      proofKey,
-      publicInputsKey,
-      zkPassportUtils,
-    },
-  };
-
-  if (verificationKey !== undefined) {
-    outerProof.verificationKey = verificationKey;
-  }
+  const outerProof = buildOuterProofArtifact(proof, {
+    proofPath: normalizedProofPath,
+    publicInputsPath,
+    proofKey,
+    publicInputsKey,
+    outerPublicInputs,
+    verificationKey,
+  });
 
   return {
     outerProof,
@@ -394,6 +493,53 @@ function normalizeOuterProofArtifact(
     shape: {
       proofPath: normalizedProofPath,
       publicInputsPath,
+    },
+  };
+}
+
+function tryExtractSdkOuterEvmProofResult(
+  record: Record<string, unknown>,
+  path: string,
+): ZkPassportOuterProofArtifacts | undefined {
+  if (
+    typeof record.proof !== "string" ||
+    typeof record.name !== "string" ||
+    !record.name.startsWith("outer_evm")
+  ) {
+    return undefined;
+  }
+
+  const proofPath = childPath(path, "proof");
+  const name = requireNonEmptyString(record.name, childPath(path, "name"));
+  const version = requireNonEmptyString(record.version, childPath(path, "version"));
+  const vkeyHash = requireNonEmptyString(record.vkeyHash, childPath(path, "vkeyHash"));
+  const proofHex = normalizeProofHex(record.proof, proofPath);
+  const proofData = getProofData(proofHex, getNumberOfPublicInputs(name));
+  const outerPublicInputs = normalizeOuterPublicInputs(
+    proofData.publicInputs,
+    childPath(path, "proof.derivedPublicInputs"),
+  );
+  const outerProof = buildOuterProofArtifact(record.proof, {
+    proofPath,
+    publicInputsPath: childPath(path, "proof.derivedPublicInputs"),
+    proofKey: "proof",
+    publicInputsKey: "derivedPublicInputs",
+    outerPublicInputs,
+    sdkProof: {
+      name,
+      version,
+      vkeyHash,
+      index: optionalSafeInteger(record.index, childPath(path, "index")),
+      total: optionalSafeInteger(record.total, childPath(path, "total")),
+    },
+  });
+
+  return {
+    outerProof,
+    outerPublicInputs,
+    shape: {
+      proofPath,
+      publicInputsPath: childPath(path, "proof.derivedPublicInputs"),
     },
   };
 }
@@ -442,7 +588,7 @@ export function buildMinimalZkPassportWitnessFromDisclosures(
   }
   const minAge = u8From(input.agePredicate.minAge, "agePredicate.minAge");
   const maxAge = u8From(input.agePredicate.maxAge, "agePredicate.maxAge");
-  if (maxAge < minAge) {
+  if (maxAge !== 0 && maxAge < minAge) {
     throw new Error("agePredicate.maxAge must be greater than or equal to agePredicate.minAge.");
   }
   const nationalityBytes = asciiBytes(input.nationalityAlpha3, "nationalityAlpha3");
@@ -469,6 +615,7 @@ export function buildMinimalZkPassportWitnessFromDisclosures(
 
 export function extractZkPassportOuterProofArtifacts(value: unknown): ZkPassportOuterProofArtifacts {
   const queue: Array<{ value: unknown; path: string }> = [{ value, path: "" }];
+  let sawSdkProofResultWithoutPublicInputs = false;
 
   while (queue.length > 0) {
     const current = queue.shift();
@@ -487,6 +634,19 @@ export function extractZkPassportOuterProofArtifacts(value: unknown): ZkPassport
     if (extracted) {
       return extracted;
     }
+    const sdkExtracted = tryExtractSdkOuterEvmProofResult(current.value, current.path);
+    if (sdkExtracted) {
+      return sdkExtracted;
+    }
+    if (
+      typeof current.value.proof === "string" &&
+      typeof current.value.name === "string" &&
+      current.value.name.startsWith("outer_evm") &&
+      !("publicInputs" in current.value) &&
+      !("outerPublicInputs" in current.value)
+    ) {
+      sawSdkProofResultWithoutPublicInputs = true;
+    }
 
     for (const [key, child] of Object.entries(current.value)) {
       if (Array.isArray(child) || isRecord(child)) {
@@ -495,38 +655,185 @@ export function extractZkPassportOuterProofArtifacts(value: unknown): ZkPassport
     }
   }
 
+  if (sawSdkProofResultWithoutPublicInputs) {
+    throw new Error(
+      "zkPassport returned an outer EVM ProofResult without explicit publicInputs. " +
+        "Magna A1 will not use committedInputs as a fallback because they can contain passport PII. " +
+        "Wire a PII-blind outer-proof verifier/public-input adapter for this SDK shape before A1 issuance can complete.",
+    );
+  }
+
   throw new Error("Could not find zkPassport outer proof and public inputs in the supplied local result.");
 }
 
 export async function computeZkPassportParameterCommitmentManifest(
   witness: MinimalZkPassportWitness,
+  options: { disclosureLayout?: ZkPassportMrzDisclosureLayout } = {},
 ): Promise<ZkPassportParameterCommitmentManifest> {
+  const layout = options.disclosureLayout ?? "passport";
+  const offsets = ZK_PASSPORT_MRZ_DISCLOSURE_LAYOUTS[layout];
   assertByteArray(witness.nationalityDisclosure.discloseMask, "nationality disclose mask");
   assertByteArray(witness.nationalityDisclosure.disclosedBytes, "nationality disclosed bytes");
   assertByteArray(witness.expiryDisclosure.discloseMask, "expiry disclose mask");
   assertByteArray(witness.expiryDisclosure.disclosedBytes, "expiry disclosed bytes");
 
+  const nationalityDisclosure = passportDisclosureForEvmCommitment(
+    witness.nationalityDisclosure,
+    offsets.nationalityOffset,
+    "nationality disclosure",
+  );
+  const expiryDisclosure = passportDisclosureForEvmCommitment(
+    witness.expiryDisclosure,
+    offsets.expiryOffset,
+    "expiry disclosure",
+  );
+  const combinedDisclosure = combineDisclosuresForEvmCommitment(
+    [nationalityDisclosure, expiryDisclosure],
+    "nationality and expiry disclosure",
+  );
   const bindBytes = formatBoundData({ custom_data: witness.bind.customData });
-  const [nationalityDisclosureCommitment, expiryDisclosureCommitment, agePredicateCommitment, bindCommitment] =
+  const [combinedDisclosureCommitment, agePredicateCommitment, bindCommitment] =
     await Promise.all([
-      getDiscloseParameterCommitment(
-        witness.nationalityDisclosure.discloseMask,
-        witness.nationalityDisclosure.disclosedBytes,
+      getDiscloseEVMParameterCommitment(
+        combinedDisclosure.discloseMask,
+        combinedDisclosure.disclosedBytes,
       ),
-      getDiscloseParameterCommitment(
-        witness.expiryDisclosure.discloseMask,
-        witness.expiryDisclosure.disclosedBytes,
-      ),
-      getAgeParameterCommitment(witness.agePredicate.minAge, witness.agePredicate.maxAge),
-      getBindParameterCommitment(bindBytes),
+      getAgeEVMParameterCommitment(witness.agePredicate.minAge, witness.agePredicate.maxAge),
+      getBindEVMParameterCommitment(bindBytes),
     ]);
 
+  const disclosureCommitment = combinedDisclosureCommitment.toString();
   return {
-    nationalityDisclosureCommitment: nationalityDisclosureCommitment.toString(),
-    expiryDisclosureCommitment: expiryDisclosureCommitment.toString(),
+    nationalityDisclosureCommitment: disclosureCommitment,
+    expiryDisclosureCommitment: disclosureCommitment,
     agePredicateCommitment: agePredicateCommitment.toString(),
     bindCommitment: bindCommitment.toString(),
   };
+}
+
+export async function computeZkPassportParameterCommitmentManifestCandidates(
+  witness: MinimalZkPassportWitness,
+): Promise<ZkPassportParameterCommitmentManifestCandidate[]> {
+  const candidates = await Promise.all(
+    (Object.keys(ZK_PASSPORT_MRZ_DISCLOSURE_LAYOUTS) as ZkPassportMrzDisclosureLayout[]).map(
+      async layout => ({
+        layout,
+        manifest: await computeZkPassportParameterCommitmentManifest(witness, {
+          disclosureLayout: layout,
+        }),
+      }),
+    ),
+  );
+
+  return candidates.filter((candidate, index) => {
+    const encoded = JSON.stringify(candidate.manifest);
+    return candidates.findIndex(other => JSON.stringify(other.manifest) === encoded) === index;
+  });
+}
+
+function parameterCommitmentManifestValues(
+  manifest: ZkPassportParameterCommitmentManifest,
+): string[] {
+  return [
+    manifest.nationalityDisclosureCommitment,
+    manifest.expiryDisclosureCommitment,
+    manifest.agePredicateCommitment,
+    manifest.bindCommitment,
+  ];
+}
+
+export async function resolveZkPassportParameterCommitmentManifestFromOuterPublicInputs(
+  witness: MinimalZkPassportWitness,
+  outerPublicInputs: readonly ZkPassportSafeBigintLike[],
+): Promise<ZkPassportParameterCommitmentManifest> {
+  const outerCommitments = new Set(
+    extractZkPassportOuterProofUtilityMetadata(outerPublicInputs).parameterCommitments.map(value =>
+      BigInt(value).toString(),
+    ),
+  );
+  const candidates = await computeZkPassportParameterCommitmentManifestCandidates(witness);
+  const match = candidates.find(candidate =>
+    parameterCommitmentManifestValues(candidate.manifest).every(value =>
+      outerCommitments.has(BigInt(value).toString()),
+    ),
+  );
+  if (match) {
+    return match.manifest;
+  }
+
+  const localKeys = [
+    "nationalityDisclosureCommitment",
+    "expiryDisclosureCommitment",
+    "agePredicateCommitment",
+    "bindCommitment",
+  ] as const satisfies ReadonlyArray<keyof ZkPassportParameterCommitmentManifest>;
+  for (const key of localKeys) {
+    const keyMatchesAnyCandidate = candidates.some(candidate =>
+      outerCommitments.has(BigInt(candidate.manifest[key]).toString()),
+    );
+    if (!keyMatchesAnyCandidate) {
+      throw new Error(`${key} is not present in the zkPassport outer proof parameter commitments.`);
+    }
+  }
+
+  throw new Error("Local zkPassport parameter commitments do not match a supported outer proof commitment set.");
+}
+
+function passportDisclosureForEvmCommitment(
+  disclosure: DisclosureWitness,
+  offset: number,
+  label: string,
+): DisclosureWitness {
+  if (
+    disclosure.discloseMask.length === PASSPORT_MRZ_DISCLOSURE_LENGTH &&
+    disclosure.disclosedBytes.length === PASSPORT_MRZ_DISCLOSURE_LENGTH
+  ) {
+    return {
+      discloseMask: [...disclosure.discloseMask],
+      disclosedBytes: [...disclosure.disclosedBytes],
+    };
+  }
+  if (disclosure.discloseMask.length !== disclosure.disclosedBytes.length) {
+    throw new Error(`${label} mask length must match disclosed bytes length.`);
+  }
+  if (offset + disclosure.disclosedBytes.length > PASSPORT_MRZ_DISCLOSURE_LENGTH) {
+    throw new Error(`${label} does not fit in zkPassport MRZ disclosure length.`);
+  }
+
+  const discloseMask = Array(PASSPORT_MRZ_DISCLOSURE_LENGTH).fill(0);
+  const disclosedBytes = Array(PASSPORT_MRZ_DISCLOSURE_LENGTH).fill(0);
+  for (let index = 0; index < disclosure.disclosedBytes.length; index += 1) {
+    discloseMask[offset + index] = disclosure.discloseMask[index];
+    disclosedBytes[offset + index] = disclosure.discloseMask[index] === 1 ? disclosure.disclosedBytes[index] : 0;
+  }
+  return { discloseMask, disclosedBytes };
+}
+
+function combineDisclosuresForEvmCommitment(
+  disclosures: readonly DisclosureWitness[],
+  label: string,
+): DisclosureWitness {
+  const discloseMask = Array(PASSPORT_MRZ_DISCLOSURE_LENGTH).fill(0);
+  const disclosedBytes = Array(PASSPORT_MRZ_DISCLOSURE_LENGTH).fill(0);
+  for (const disclosure of disclosures) {
+    if (
+      disclosure.discloseMask.length !== PASSPORT_MRZ_DISCLOSURE_LENGTH ||
+      disclosure.disclosedBytes.length !== PASSPORT_MRZ_DISCLOSURE_LENGTH
+    ) {
+      throw new Error(`${label} must be expanded before combining.`);
+    }
+    for (let index = 0; index < PASSPORT_MRZ_DISCLOSURE_LENGTH; index += 1) {
+      if (disclosure.discloseMask[index] !== 1) {
+        continue;
+      }
+      if (discloseMask[index] === 1 && disclosedBytes[index] !== disclosure.disclosedBytes[index]) {
+        throw new Error(`${label} has conflicting disclosed bytes at MRZ index ${index}.`);
+      }
+      discloseMask[index] = 1;
+      disclosedBytes[index] = disclosure.disclosedBytes[index];
+    }
+  }
+  return { discloseMask, disclosedBytes };
 }
 
 export async function buildPassportWrapperWitnessFromZkPassportResult(
@@ -536,7 +843,10 @@ export async function buildPassportWrapperWitnessFromZkPassportResult(
   const extracted = extractZkPassportOuterProofArtifacts(zkPassportResult);
   const minimalZkPassportWitness = buildMinimalZkPassportWitnessFromDisclosures(input);
   const expectedParameterCommitmentManifest =
-    await computeZkPassportParameterCommitmentManifest(minimalZkPassportWitness);
+    await resolveZkPassportParameterCommitmentManifestFromOuterPublicInputs(
+      minimalZkPassportWitness,
+      extracted.outerPublicInputs,
+    );
 
   return {
     zkPassportOuterProof: extracted.outerProof,

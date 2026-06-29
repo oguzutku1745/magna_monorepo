@@ -1087,18 +1087,17 @@ function assertPassportA1OuterInputsMatchWrapperOutputs(
   outputs: PassportWrapperPublicOutputs,
 ): void {
   const metadata = extractZkPassportOuterProofUtilityMetadata(outerPublicInputs);
-  const [nationalityDisclosureCommitment, expiryDisclosureCommitment, agePredicateCommitment, bindCommitment] =
-    metadata.parameterCommitments;
-  if (nationalityDisclosureCommitment !== outputs.nationalityDisclosureCommitment) {
+  const outerCommitments = new Set(metadata.parameterCommitments.map(value => BigInt(value).toString()));
+  if (!outerCommitments.has(outputs.nationalityDisclosureCommitment)) {
     throw new Error("zkPassport nationality disclosure commitment must match wrapper public outputs.");
   }
-  if (expiryDisclosureCommitment !== outputs.expiryDisclosureCommitment) {
+  if (!outerCommitments.has(outputs.expiryDisclosureCommitment)) {
     throw new Error("zkPassport expiry disclosure commitment must match wrapper public outputs.");
   }
-  if (agePredicateCommitment !== outputs.agePredicateCommitment) {
+  if (!outerCommitments.has(outputs.agePredicateCommitment)) {
     throw new Error("zkPassport age predicate commitment must match wrapper public outputs.");
   }
-  if (bindCommitment !== outputs.bindCommitment) {
+  if (!outerCommitments.has(outputs.bindCommitment)) {
     throw new Error("zkPassport bind commitment must match wrapper public outputs.");
   }
   if (metadata.scopedNullifier !== outputs.scopedNullifier) {

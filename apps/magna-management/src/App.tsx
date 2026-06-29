@@ -25,6 +25,7 @@ import { navigate, useRoute } from "./lib/router";
 import {
   loadCredentialRefs,
   loadWalletProfile,
+  hydratePassportA1Witness,
   reconcileStoredChainFingerprint,
   refsForOwner,
   saveWalletProfile,
@@ -192,6 +193,32 @@ function credentialId(
   ].join(":");
 }
 
+function matchesDiscoveredCredentialRef(existing: StoredCredentialRef, discovered: DiscoveredMagnaCredentialRef): boolean {
+  return (
+    existing.ownerAddress === discovered.ownerAddress &&
+    existing.kind === discovered.kind &&
+    existing.claimsHash === discovered.claimsHash &&
+    (existing.mode ?? "passport") === discovered.mode &&
+    (existing.rootCommitment ?? "") === (discovered.rootCommitment ?? "")
+  );
+}
+
+function hasSameCredentialClaims(existing: StoredCredentialRef, discovered: DiscoveredMagnaCredentialRef): boolean {
+  return (
+    existing.ownerAddress === discovered.ownerAddress &&
+    existing.kind === discovered.kind &&
+    existing.claimsHash === discovered.claimsHash
+  );
+}
+
+function credentialRefHasLocalA1Witness(ref?: Pick<StoredCredentialRef, "passportCommittedClaimsV2Witness">): boolean {
+  return Boolean(ref?.passportCommittedClaimsV2Witness);
+}
+
+function credentialRefHasLegacyClaims(ref?: Pick<StoredCredentialRef, "normalizedClaims">): boolean {
+  return Boolean(ref?.normalizedClaims);
+}
+
 function deploymentStatusFor(session: WalletSession | null, profile: WalletProfile | null): string {
   return session?.metadata?.deploymentStatus ?? profile?.deploymentStatus ?? "not opened";
 }
@@ -202,6 +229,54 @@ function sessionOriginFor(session: WalletSession | null, profile: WalletProfile 
 
 function feePayerFor(session: WalletSession | null, profile: WalletProfile | null): string {
   return session?.metadata?.feePayer ?? profile?.feePayer ?? "not configured";
+}
+
+function normalizeAddress(value?: string | null): string {
+  return value?.trim().toLowerCase() ?? "";
+}
+
+export function isFeePayerIdentityAddress(
+  address: string | undefined,
+  session: WalletSession | null,
+  profile: WalletProfile | null,
+  env: Pick<ManagementEnv, "orchestratorAddress">,
+): boolean {
+  const normalized = normalizeAddress(address);
+  if (!normalized) return false;
+  return [
+    session?.metadata?.feePayer,
+    profile?.feePayer,
+    env.orchestratorAddress,
+  ].some(candidate => normalizeAddress(candidate) === normalized);
+}
+
+export function walletIdentityAddress(
+  session: WalletSession | null,
+  profile: WalletProfile | null,
+  env: Pick<ManagementEnv, "orchestratorAddress">,
+): string | undefined {
+  const sessionAddress = session?.activeAccount.address;
+  if (sessionAddress && !isFeePayerIdentityAddress(sessionAddress, session, profile, env)) {
+    return sessionAddress;
+  }
+  const profileAddress = profile?.address;
+  if (profileAddress && !isFeePayerIdentityAddress(profileAddress, session, profile, env)) {
+    return profileAddress;
+  }
+  return undefined;
+}
+
+function requireSessionIdentityAddress(
+  session: WalletSession,
+  env: Pick<ManagementEnv, "orchestratorAddress">,
+): string {
+  const address = walletIdentityAddress(session, null, env);
+  if (!address) {
+    throw new Error(
+      "Passkey session resolved to the local fee payer/orchestrator account, not the passkey wallet. Reopen the passkey wallet before continuing.",
+    );
+  }
+  return address;
 }
 
 export type RecoveryGhostDeploymentAttempt = {
@@ -234,6 +309,14 @@ function isDeployedProfile(profile: WalletProfile | null): boolean {
   return profile?.deploymentStatus === "deployed";
 }
 
+function isReadyWallet(
+  session: WalletSession | null,
+  profile: WalletProfile | null,
+  env: Pick<ManagementEnv, "orchestratorAddress">,
+): boolean {
+  return isDeployedSession(session) && Boolean(walletIdentityAddress(session, profile, env));
+}
+
 function claimsFormFromRef(ref: StoredCredentialRef): PassportClaimsForm {
   if (!ref.normalizedClaims) {
     throw new Error("Credential reference is missing normalized passport claims.");
@@ -251,7 +334,7 @@ export function passportCredentialAuthenticityLabel(
   if (ref.kind !== "passport") {
     return undefined;
   }
-  if (ref.issuanceKind === "a1") {
+  if (ref.issuanceKind === "a1" || ref.passportCommittedClaimsV2Witness) {
     return "passport A1 wrapper proof (PII-blind)";
   }
   if (ref.issuanceKind === "pilot") {
@@ -260,7 +343,7 @@ export function passportCredentialAuthenticityLabel(
   if (ref.issuanceKind === "legacy" || ref.normalizedClaims) {
     return "legacy zkPassport backend verification";
   }
-  return "unsupported passport credential (re-issue with A1/v2 support)";
+  return "passport note found (local A1/v2 witness missing)";
 }
 
 function committedClaimsV2WitnessFromA1LocalWitness(
@@ -321,7 +404,7 @@ export function App() {
   const [gatewayCandidate, setGatewayCandidate] = useState(env.activeCompanySponsorAddress ?? "");
   const [restoreAttempted, setRestoreAttempted] = useState(false);
 
-  const activeAddress = session?.activeAccount.address ?? walletProfile?.address;
+  const activeAddress = walletIdentityAddress(session, walletProfile, env);
   const activeCredentialRefs = useMemo(
     () => refsForOwner(activeAddress, { issuerAddress: env.issuerAddress }),
     [activeAddress, credentials, env.issuerAddress],
@@ -429,7 +512,7 @@ export function App() {
     if (!isDeployedSession(nextSession)) {
       throw new Error("This passkey wallet is counterfactual. Deploy it before running sponsor or credential actions.");
     }
-    return new MagnaBrowserClient(nextSession.wallet, env, nextSession.activeAccount.address);
+    return new MagnaBrowserClient(nextSession.wallet, env, requireSessionIdentityAddress(nextSession, env));
   }
 
   function requireDeployedWallet(action: string): WalletSession | null {
@@ -446,17 +529,24 @@ export function App() {
       });
       return null;
     }
+    try {
+      requireSessionIdentityAddress(session, env);
+    } catch (error) {
+      setNotice({ tone: "danger", text: errorMessage(error) });
+      return null;
+    }
     return session;
   }
 
   async function loadHintsForCredentialRefs(nextSession: WalletSession, refs: StoredCredentialRef[]) {
-    const passportRefs = refs.filter(ref => ref.kind === "passport" && ref.status === "active");
-    if (passportRefs.length === 0 || !env.issuerAddress) return;
+    const ownerAddress = requireSessionIdentityAddress(nextSession, env);
+    const activeRefs = refs.filter(ref => (ref.kind === "passport" || ref.kind === "instagram") && ref.status === "active");
+    if (activeRefs.length === 0 || !env.issuerAddress) return;
 
-    const client = new MagnaBrowserClient(nextSession.wallet, env, nextSession.activeAccount.address);
+    const client = new MagnaBrowserClient(nextSession.wallet, env, ownerAddress);
     await client.syncOrchestratorSender();
-    for (const ref of passportRefs) {
-      const pilotBlock = passportPilotCredentialUsageBlock(ref);
+    for (const ref of activeRefs) {
+      const pilotBlock = ref.kind === "passport" ? passportPilotCredentialUsageBlock(ref) : null;
       if (pilotBlock) {
         setCredentialHints(current => ({
           ...current,
@@ -470,7 +560,7 @@ export function App() {
       }));
       try {
         const hints =
-          ref.mode === "rooted" && ref.rootCommitment
+          ref.kind === "passport" && ref.mode === "rooted" && ref.rootCommitment
             ? await client.fetchRootedPassportHintsByClaimsHash(ref.ownerAddress, ref.rootCommitment, ref.claimsHash)
             : await client.fetchPassportHintsByClaimsHash(ref.ownerAddress, ref.claimsHash);
         setCredentialHints(current => ({
@@ -491,7 +581,7 @@ export function App() {
     existing?: StoredCredentialRef,
   ): StoredCredentialRef {
     const now = new Date().toISOString();
-    return {
+    return hydratePassportA1Witness({
       ...existing,
       id: credentialId({
         ownerAddress: discovered.ownerAddress,
@@ -510,13 +600,19 @@ export function App() {
       issuanceTxHash: discovered.issuanceTxHash ?? existing?.issuanceTxHash,
       issuerAddress: env.issuerAddress,
       mode: discovered.mode,
-      issuanceKind: existing?.issuanceKind ?? (existing?.normalizedClaims ? "legacy" : undefined),
+      issuanceKind:
+        existing?.issuanceKind ??
+        (credentialRefHasLocalA1Witness(existing)
+          ? "a1"
+          : credentialRefHasLegacyClaims(existing)
+            ? "legacy"
+            : undefined),
       rootCommitment: discovered.rootCommitment ?? existing?.rootCommitment,
-    };
+    });
   }
 
   async function refreshCredentialRefsFromPxe(nextSession: WalletSession): Promise<StoredCredentialRef[]> {
-    const ownerAddress = nextSession.activeAccount.address;
+    const ownerAddress = requireSessionIdentityAddress(nextSession, env);
     if (!env.issuerAddress) {
       return refsForOwner(ownerAddress);
     }
@@ -538,7 +634,14 @@ export function App() {
           mode: ref.mode,
           rootCommitment: ref.rootCommitment,
         });
-        nextById.set(id, storedRefFromDiscovered(ref, nextById.get(id)));
+        const existing =
+          nextById.get(id) ??
+          currentRefs.find(existingRef => matchesDiscoveredCredentialRef(existingRef, ref)) ??
+          currentRefs.find(existingRef => hasSameCredentialClaims(existingRef, ref));
+        if (existing?.id && existing.id !== id) {
+          nextById.delete(existing.id);
+        }
+        nextById.set(id, storedRefFromDiscovered(ref, existing));
       }
       const nextRefs = Array.from(nextById.values());
       saveCredentialRefs(nextRefs);
@@ -612,8 +715,15 @@ export function App() {
         }),
         sleep(WALLET_OPEN_MINIMUM_MS),
       ]);
+      let address: string;
+      try {
+        address = requireSessionIdentityAddress(nextSession, env);
+      } catch (error) {
+        await nextSession.disconnect().catch(() => undefined);
+        throw error;
+      }
       const profile: WalletProfile = {
-        address: nextSession.activeAccount.address,
+        address,
         walletKind: nextSession.kind,
         role,
         createdAt: new Date().toISOString(),
@@ -629,12 +739,10 @@ export function App() {
     });
     if (!next) return;
 
-    setSession(next.nextSession);
-    setWalletProfile(next.profile);
-    setLatestRecoveryBundle(next.profile.publicKey ?? "");
-    saveWalletProfile(next.profile);
     if (options.captureRecoveryTarget) {
+      setLatestRecoveryBundle(next.profile.publicKey ?? "");
       if (!isDeployedSession(next.nextSession)) {
+        await next.nextSession.disconnect().catch(() => undefined);
         setNotice({
           tone: "danger",
           text: "Recovery target is counterfactual. Deploy the new passkey wallet before rotating credentials to it.",
@@ -642,9 +750,16 @@ export function App() {
         return;
       }
       setRecoveryTarget(next.profile);
+      appendLog(`Recovery target prepared: ${next.profile.address}`);
+      await next.nextSession.disconnect().catch(() => undefined);
       route.go("/user/recovery");
       return;
     }
+
+    setSession(next.nextSession);
+    setWalletProfile(next.profile);
+    setLatestRecoveryBundle(next.profile.publicKey ?? "");
+    saveWalletProfile(next.profile);
     if (!isDeployedSession(next.nextSession)) {
       setNotice({
         tone: "danger",
@@ -661,7 +776,7 @@ export function App() {
         tone: "success",
         text: `Passkey wallet restored. Loaded ${refs.length} credential reference${refs.length === 1 ? "" : "s"}.`,
       });
-      appendLog(`Passkey wallet restored: ${next.nextSession.activeAccount.address}`);
+      appendLog(`Passkey wallet restored: ${next.profile.address}`);
       return;
     }
     await syncAfterLogin(next.nextSession, role);
@@ -722,6 +837,7 @@ export function App() {
   async function startZkPassportIssuance() {
     const activeSession = requireDeployedWallet("issuance");
     if (!activeSession) return;
+    const activeOwner = requireSessionIdentityAddress(activeSession, env);
     const parsedAge = Number.parseInt(ageThreshold, 10);
     if (!Number.isFinite(parsedAge)) {
       setNotice({ tone: "danger", text: "Age threshold must be a valid number." });
@@ -743,7 +859,7 @@ export function App() {
     const a1BindCustomData =
       env.zkPassportIssuanceKind === "a1"
         ? passportA1BindCustomData({
-            activeOwner: activeSession.activeAccount.address,
+            activeOwner,
             requestScope: env.zkPassportRequestScope,
           })
         : undefined;
@@ -764,7 +880,7 @@ export function App() {
     let finalResultTimeout: number | undefined;
     let timedOutWaitingForResult = false;
     let activeZkPassportRequest: ActiveZkPassportRequest | null = null;
-    const request = await runAction("Create zkPassport request", async () =>
+    const request = await runAction("Create zkPassport QR request", async () =>
       startPassportZkRequest({
         ageThreshold: parsedAge,
         proofMode,
@@ -800,6 +916,10 @@ export function App() {
     if (!request) return;
     activeZkPassportRequest = request;
     setZkRequest(request);
+    setNotice({
+      tone: "info",
+      text: "zkPassport request created. Continue in the mobile app; proof generation is still in progress.",
+    });
 
     request.completion
       .then(async completion => {
@@ -825,7 +945,7 @@ export function App() {
             issuanceKind: env.zkPassportIssuanceKind,
             verificationApiUrl: env.verificationApiUrl!,
             completion,
-            activeOwner: activeSession.activeAccount.address,
+            activeOwner,
             ageThreshold: parsedAge,
             mode: env.zkPassportPrimaryIssuanceMode,
             ghostDerivationVersion: env.zkPassportGhostDerivationVersion,
@@ -863,14 +983,14 @@ export function App() {
           issueResult.issuanceKind === "legacy" ? issueResult.response.normalizedClaims : undefined;
         const ref: StoredCredentialRef = {
           id: credentialId({
-            ownerAddress: activeSession.activeAccount.address,
+            ownerAddress: activeOwner,
             kind: "passport",
             claimsHash: issued.claimsHash,
             issuerAddress: issued.issuerAddress,
             mode: issued.mode,
             rootCommitment: issued.rootCommitment,
           }),
-          ownerAddress: activeSession.activeAccount.address,
+          ownerAddress: activeOwner,
           kind: "passport",
           status: "active",
           claimsHash: issued.claimsHash,
@@ -926,6 +1046,7 @@ export function App() {
   async function issueInstagramCredential() {
     const activeSession = requireDeployedWallet("collecting Instagram");
     if (!activeSession) return;
+    const activeOwner = requireSessionIdentityAddress(activeSession, env);
     if (!env.verificationApiUrl) {
       setNotice({ tone: "danger", text: "VITE_MAGNA_VERIFICATION_API_URL is required for Instagram issuance." });
       return;
@@ -946,7 +1067,7 @@ export function App() {
           return await verifyAndIssueInstagramThroughBackend(env.verificationApiUrl!, {
             emlBase64,
             claimedHandle: handle,
-            activeOwner: activeSession.activeAccount.address,
+            activeOwner,
           });
         } catch (error) {
           if (isInstagramUsernameError(error)) {
@@ -960,12 +1081,12 @@ export function App() {
       }
       const ref: StoredCredentialRef = {
         id: credentialId({
-          ownerAddress: activeSession.activeAccount.address,
+          ownerAddress: activeOwner,
           kind: "instagram",
           claimsHash: issued.claimsHash,
           issuerAddress: issued.issuerAddress,
         }),
-        ownerAddress: activeSession.activeAccount.address,
+        ownerAddress: activeOwner,
         kind: "instagram",
         status: "active",
         claimsHash: issued.claimsHash,
@@ -1078,6 +1199,7 @@ export function App() {
   async function startRootRecovery(ref: StoredCredentialRef) {
     const activeSession = requireDeployedWallet("recovery");
     if (!activeSession) return;
+    const activeOwner = requireSessionIdentityAddress(activeSession, env);
     const pilotBlock = passportPilotCredentialUsageBlock(ref);
     if (pilotBlock) {
       setNotice({ tone: "danger", text: pilotBlock });
@@ -1091,6 +1213,14 @@ export function App() {
       setNotice({ tone: "danger", text: "The recovery target is counterfactual. Deploy the target wallet before root recovery." });
       return;
     }
+    if (isFeePayerIdentityAddress(recoveryTarget.address, null, recoveryTarget, env)) {
+      setNotice({
+        tone: "danger",
+        text: "The recovery target resolved to the local fee payer/orchestrator account. Create or open the actual passkey target before recovery.",
+      });
+      return;
+    }
+    const recoveryTargetAddress = recoveryTarget.address;
     if (!env.verificationApiUrl) {
       setNotice({ tone: "danger", text: "VITE_MAGNA_VERIFICATION_API_URL is required for rooted recovery." });
       return;
@@ -1147,7 +1277,7 @@ export function App() {
         setZkStage("recovering_root");
         const attempts = buildRecoveryGhostDeploymentAttempts({
           feePayer: activeSession.metadata?.feePayer,
-          activeAddress: activeSession.activeAccount.address,
+          activeAddress: activeOwner,
           enableLocalTestBootstrap: env.enableLocalTestBootstrap,
           localTestAccountIndex: env.localTestAccountIndex,
         });
@@ -1173,7 +1303,7 @@ export function App() {
                 transientGhost.ghostAddress,
                 ref.rootCommitment!,
               );
-              const recovered = await ghostClient.recoverRoot(hintedRootRecovery, recoveryTarget.address);
+              const recovered = await ghostClient.recoverRoot(hintedRootRecovery, recoveryTargetAddress);
               recoveredTxHash = recovered.txHash;
               break;
             } finally {
@@ -1193,7 +1323,7 @@ export function App() {
         }
         const recoveredRef: StoredCredentialRef = {
           ...ref,
-          ownerAddress: recoveryTarget.address,
+          ownerAddress: recoveryTargetAddress,
           status: "recovery_pending",
           updatedAt: new Date().toISOString(),
           renewalTxHash: recoveredTxHash ?? ref.renewalTxHash,
@@ -1248,6 +1378,7 @@ export function App() {
     if (route.path === "/company/login") {
       return (
         <CompanyLogin
+          env={env}
           busy={busy}
           session={session}
           profile={walletProfile}
@@ -1311,7 +1442,7 @@ export function App() {
         >
           <Issuance
             busy={busy}
-            walletReady={isDeployedSession(session)}
+            walletReady={isReadyWallet(session, walletProfile, env)}
             zkRequest={zkRequest}
             zkStage={zkStage}
             zkProofCount={zkProofCount}
@@ -1347,7 +1478,7 @@ export function App() {
             credentials={activeCredentialRefs}
             hints={credentialHints}
             busy={busy}
-            walletReady={isDeployedSession(session)}
+            walletReady={isReadyWallet(session, walletProfile, env)}
             zkRequest={zkRequest}
             zkStage={zkStage}
             zkProofCount={zkProofCount}
@@ -1371,7 +1502,7 @@ export function App() {
         >
           <Recovery
             busy={busy}
-            walletReady={isDeployedSession(session)}
+            walletReady={isReadyWallet(session, walletProfile, env)}
             recoveryTarget={recoveryTarget}
             storedPublicKeyInput={storedPublicKeyInput}
             setStoredPublicKeyInput={setStoredPublicKeyInput}
@@ -1382,6 +1513,7 @@ export function App() {
             zkProofCount={zkProofCount}
             onCreateTarget={() => openPasskeyWallet("user", { captureRecoveryTarget: true, forceCreate: true })}
             onStoredTarget={() => useStoredPasskey("user", true)}
+            onCopyTargetPublicKey={() => void copyRecoveryBundle()}
             onRecover={ref => void startRootRecovery(ref)}
           />
         </UserFrame>
@@ -1401,6 +1533,7 @@ export function App() {
           onReconnect={() => void openPasskeyWallet("user", { stayOnCurrentPage: true })}
         >
           <Settings
+            env={env}
             profile={walletProfile}
             session={session}
             recoveryBundle={latestRecoveryBundle}
@@ -1447,12 +1580,14 @@ export function App() {
 }
 
 function WalletStatusPanel(props: {
+  env: ManagementEnv;
   session: WalletSession | null;
   profile: WalletProfile | null;
   recoveryBundle: string;
   onCopyRecoveryBundle: () => void;
 }) {
-  const status = deploymentStatusFor(props.session, props.profile);
+  const identityAddress = walletIdentityAddress(props.session, props.profile, props.env);
+  const status = identityAddress ? deploymentStatusFor(props.session, props.profile) : "not opened";
   const isReady = status === "deployed";
   return (
     <article className={`wallet-status-panel ${isReady ? "ready" : "blocked"}`}>
@@ -1460,7 +1595,7 @@ function WalletStatusPanel(props: {
         <span>Wallet readiness</span>
         <strong>{status}</strong>
       </div>
-      <KeyValue label="Address" value={props.session?.activeAccount.address ?? props.profile?.address ?? "not opened"} />
+      <KeyValue label="Address" value={identityAddress ?? "not opened"} />
       <KeyValue label="Session origin" value={sessionOriginFor(props.session, props.profile)} />
       <KeyValue label="Fee payer" value={feePayerFor(props.session, props.profile)} />
       <KeyValue label="Last opened" value={props.profile?.lastOpenedAt ?? "unknown"} />
@@ -1557,6 +1692,7 @@ function Landing(props: { go: (path: string) => void }) {
 }
 
 function CompanyLogin(props: {
+  env: ManagementEnv;
   busy: string | null;
   session: WalletSession | null;
   profile: WalletProfile | null;
@@ -1567,6 +1703,7 @@ function CompanyLogin(props: {
   onStored: () => void;
   onCopyRecoveryBundle: () => void;
 }) {
+  const identityAddress = walletIdentityAddress(props.session, props.profile, props.env);
   return (
     <main className="login-split">
       <section>
@@ -1574,6 +1711,7 @@ function CompanyLogin(props: {
         <h1>Sponsorship console login</h1>
         <p className="hero-copy">Open an operator passkey wallet before reading sponsor state or preparing top-ups.</p>
         <WalletStatusPanel
+          env={props.env}
           session={props.session}
           profile={props.profile}
           recoveryBundle={props.recoveryBundle}
@@ -1799,7 +1937,7 @@ function Issuance(props: {
               label="A1 wrapper status"
               value={
                 props.zkPassportIssuanceKind === "a1"
-                  ? "fail-closed unless production wrapper proving is available"
+                  ? "local wrapper proving enabled"
                   : "not selected"
               }
             />
@@ -1972,6 +2110,7 @@ export function Recovery(props: {
   zkProofCount: number;
   onCreateTarget: () => void;
   onStoredTarget: () => void;
+  onCopyTargetPublicKey: () => void;
   onRecover: (ref: StoredCredentialRef) => void;
 }) {
   const rootedPassport = props.credentials.find(ref => ref.kind === "passport" && ref.mode === "rooted");
@@ -1998,6 +2137,19 @@ export function Recovery(props: {
               <KeyValue label="Target address" value={props.recoveryTarget.address} />
               <KeyValue label="Target deployment" value={props.recoveryTarget.deploymentStatus ?? "unknown"} />
               <KeyValue label="Target fee payer" value={props.recoveryTarget.feePayer ?? "not configured"} />
+              {props.recoveryTarget.publicKey ? (
+                <div className="recovery-bundle">
+                  <label>
+                    Target passkey public key
+                    <textarea readOnly value={props.recoveryTarget.publicKey} />
+                  </label>
+                  <button className="secondary" type="button" onClick={props.onCopyTargetPublicKey}>
+                    Copy target public key
+                  </button>
+                </div>
+              ) : (
+                <KeyValue label="Target public key" value="not available" />
+              )}
             </>
           ) : null}
         </article>
@@ -2036,11 +2188,13 @@ export function Recovery(props: {
 }
 
 function Settings(props: {
+  env: ManagementEnv;
   profile: WalletProfile | null;
   session: WalletSession | null;
   recoveryBundle: string;
   onCopyRecoveryBundle: () => void;
 }) {
+  const identityAddress = walletIdentityAddress(props.session, props.profile, props.env);
   return (
     <section className="settings-surface">
       <div className="section-heading">
@@ -2051,16 +2205,17 @@ function Settings(props: {
       </div>
       <div className="settings-grid">
         <WalletStatusPanel
+          env={props.env}
           session={props.session}
           profile={props.profile}
           recoveryBundle={props.recoveryBundle}
           onCopyRecoveryBundle={props.onCopyRecoveryBundle}
         />
         <article className="credential-card">
-          <KeyValue label="Address" value={props.profile?.address ?? "not connected"} />
+          <KeyValue label="Address" value={identityAddress ?? "not connected"} />
           <KeyValue label="Wallet kind" value={props.profile?.walletKind ?? "unknown"} />
           <KeyValue label="Created at" value={props.profile?.createdAt ?? "unknown"} />
-          <KeyValue label="Deployment" value={deploymentStatusFor(props.session, props.profile)} />
+          <KeyValue label="Deployment" value={identityAddress ? deploymentStatusFor(props.session, props.profile) : "not opened"} />
           <KeyValue label="Session origin" value={sessionOriginFor(props.session, props.profile)} />
           <KeyValue label="Fee payer" value={feePayerFor(props.session, props.profile)} />
           <KeyValue label="RP ID" value={props.profile?.rpId ?? "unknown"} />
@@ -2103,7 +2258,8 @@ function CompanyDashboard(props: {
       </main>
     );
   }
-  const walletReady = isDeployedSession(props.session);
+  const walletReady = isReadyWallet(props.session, props.profile, props.env);
+  const identityAddress = walletIdentityAddress(props.session, props.profile, props.env);
   return (
     <main className="company-grid">
       <section className="section-heading wide-heading">
@@ -2114,8 +2270,8 @@ function CompanyDashboard(props: {
       </section>
       <article className="credential-card">
         <h3>Sponsor identity</h3>
-        <KeyValue label="Operator" value={props.session.activeAccount.address} />
-        <KeyValue label="Deployment" value={deploymentStatusFor(props.session, props.profile)} />
+        <KeyValue label="Operator" value={identityAddress ?? "not connected"} />
+        <KeyValue label="Deployment" value={identityAddress ? deploymentStatusFor(props.session, props.profile) : "not opened"} />
         <KeyValue label="Session origin" value={sessionOriginFor(props.session, props.profile)} />
         <KeyValue label="Fee payer" value={feePayerFor(props.session, props.profile)} />
         <KeyValue label="Active sponsor" value={props.env.activeCompanySponsorAddress ?? "not configured"} />

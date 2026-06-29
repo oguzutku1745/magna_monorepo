@@ -5,6 +5,7 @@ import {
   issuePassportThroughConfiguredBackend,
   passportPilotCredentialUsageBlock,
   PILOT_CREDENTIAL_UNUSABLE_MESSAGE,
+  REDISCOVERED_PASSPORT_WITNESS_MISSING_MESSAGE,
   proofModeForPassportIssuanceKind,
   type VerifiedPassportCompletion,
 } from "./passport-issuance";
@@ -334,7 +335,23 @@ describe("passport issuance routing", () => {
   });
 
   it("blocks rediscovered passport refs that lack legacy evidence", () => {
-    expect(passportPilotCredentialUsageBlock({})).toBe(PILOT_CREDENTIAL_UNUSABLE_MESSAGE);
+    expect(passportPilotCredentialUsageBlock({})).toBe(REDISCOVERED_PASSPORT_WITNESS_MISSING_MESSAGE);
+  });
+
+  it("allows refs with a local A1 witness even when issuance kind metadata is missing", () => {
+    expect(
+      passportPilotCredentialUsageBlock({
+        passportCommittedClaimsV2Witness: {
+          schema: "passport-committed-claims-v2",
+          credentialAuthenticity: "passport-a1",
+          minAgeProven: 21,
+          nationalityAlpha3Packed: "5526610",
+          nationalityBlind: "111",
+          expiryTs: "1942358399",
+          expiryBlind: "222",
+        },
+      }),
+    ).toBeUndefined();
   });
 
   it("allows older local legacy refs when normalized claims prove legacy issuance", () => {

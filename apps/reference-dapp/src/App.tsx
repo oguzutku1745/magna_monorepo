@@ -101,7 +101,7 @@ function AppGate(props: {
         <div><span>Requirement 03</span><strong>Instagram handle ownership</strong></div>
         <label>
           Instagram handle
-          <input value={props.handle} onChange={event => props.setHandle(event.target.value)} placeholder="akinspur" />
+          <input value={props.handle} onChange={event => props.setHandle(event.target.value)} placeholder="magnasocial" />
         </label>
         <button type="button" disabled={props.login.status === "pending"} onClick={props.onLogin}>
           {props.login.status === "pending" ? "Opening Magna..." : "Login with Magna"}

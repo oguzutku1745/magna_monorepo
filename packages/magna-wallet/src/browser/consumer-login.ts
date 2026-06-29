@@ -1,13 +1,15 @@
 import { ClaimId, ConstraintOp, CredentialType, type Policy } from "@magna/core";
 import { AztecAddress } from "@aztec/aztec.js/addresses";
 import type { Wallet } from "@aztec/aztec.js/wallet";
-import { MagnaConsumerContract, MagnaIssuerContract } from "@magna/contracts-bindings";
+import { MagnaCompanySponsorContract, MagnaConsumerContract, MagnaIssuerContract } from "@magna/contracts-bindings";
 import { MagnaVerificationEngine } from "../engine/verification-engine.js";
 import { packAlpha3 } from "../engine/encoding.js";
 import type { PassportCommittedClaimsWitness } from "../engine/types.js";
+import { buildCompanySponsorNetworkFeeConfig } from "../engine/sponsorship.js";
 import { registerKnownIssuerSender } from "../embedded/note-discovery.js";
 import { syncEmbeddedWalletPxeIfAvailable } from "../embedded/lifecycle.js";
 import { readTxHash, registerContractArtifactAtAddress } from "./aztec.js";
+import { MagnaBrowserClient } from "./client.js";
 import type { MagnaBrowserEnv } from "./env.js";
 
 type StoredPassportCommittedClaimsWitness = {
@@ -49,6 +51,17 @@ export type MagnaConsumerLoginOutcome = {
   receipts?: { id: string; kind: string; receipt: string | null }[];
 };
 
+type MagnaConsumerLoginEnv = Pick<
+  MagnaBrowserEnv,
+  "aztecNodeUrl" | "issuerAddress" | "orchestratorAddress" | "activeCompanySponsorAddress" | "companySponsorAddresses"
+> &
+  Partial<
+    Pick<
+      MagnaBrowserEnv,
+      "requireRealSends" | "enableDevOrchestrator" | "enableLocalTestBootstrap" | "localTestAccountIndex"
+    >
+  >;
+
 function toAddress(value: string): AztecAddress {
   return AztecAddress.fromString(value);
 }
@@ -86,6 +99,51 @@ function normalizeCommittedWitness(
     expiryTs: BigInt(witness.expiryTs),
     expiryBlind: BigInt(witness.expiryBlind),
   };
+}
+
+function requireActiveCompanySponsorAddress(
+  env: Pick<MagnaBrowserEnv, "activeCompanySponsorAddress" | "companySponsorAddresses">,
+): string {
+  const sponsorAddress = env.activeCompanySponsorAddress?.trim() || env.companySponsorAddresses?.[0]?.trim();
+  if (!sponsorAddress) {
+    throw new Error(
+      "Login with Magna requires a configured company sponsor so verification can be fee-sponsored. " +
+        "Set VITE_MAGNA_ACTIVE_COMPANY_SPONSOR_ADDRESS or configure companySponsorAddresses.",
+    );
+  }
+  return sponsorAddress;
+}
+
+function browserEnvForConsumerLogin(env: MagnaConsumerLoginEnv): MagnaBrowserEnv {
+  return {
+    ...env,
+    companySponsorAddresses: env.companySponsorAddresses ?? [],
+    requireRealSends: env.requireRealSends ?? true,
+    enableDevOrchestrator: env.enableDevOrchestrator ?? false,
+    enableLocalTestBootstrap: env.enableLocalTestBootstrap ?? false,
+    localTestAccountIndex: env.localTestAccountIndex ?? 0,
+  };
+}
+
+function unwrapSimulationResult<T>(value: T | { result: T }): T {
+  if (value && typeof value === "object" && "result" in value) {
+    return value.result as T;
+  }
+  return value as T;
+}
+
+async function readSponsorMaxFeeCap(sponsor: unknown, from: AztecAddress): Promise<bigint | undefined> {
+  const methods = (sponsor as { methods?: Record<string, unknown> }).methods;
+  const getMaxFeeCap = methods?.get_max_fee_cap;
+  if (typeof getMaxFeeCap !== "function") {
+    return undefined;
+  }
+  const call = getMaxFeeCap();
+  if (!call || typeof (call as { simulate?: unknown }).simulate !== "function") {
+    return undefined;
+  }
+  const result = await (call as { simulate: (opts: { from: AztecAddress }) => Promise<unknown> }).simulate({ from });
+  return BigInt(unwrapSimulationResult(result) as string | number | bigint);
 }
 
 function assertConsumerCredential(
@@ -138,7 +196,7 @@ function assertConsumerCredential(
 }
 
 export async function runMagnaConsumerLogin(input: {
-  env: Pick<MagnaBrowserEnv, "aztecNodeUrl" | "issuerAddress" | "orchestratorAddress">;
+  env: MagnaConsumerLoginEnv;
   wallet: Wallet;
   activeAddress: string;
   policy: Policy;
@@ -160,6 +218,7 @@ export async function runMagnaConsumerLogin(input: {
   if (credential.ownerAddress !== input.activeAddress) {
     throw new Error("Stored credential belongs to a different active wallet.");
   }
+  const sponsorAddress = requireActiveCompanySponsorAddress(input.env);
 
   await registerContractArtifactAtAddress(
     input.wallet,
@@ -167,78 +226,102 @@ export async function runMagnaConsumerLogin(input: {
     input.env.issuerAddress,
     MagnaIssuerContract.artifact,
   );
-  if (input.policy.credentialType === CredentialType.Passport) {
-    await registerContractArtifactAtAddress(
-      input.wallet,
-      input.env.aztecNodeUrl,
-      input.consumerGatewayAddress,
-      MagnaConsumerContract.artifact,
-    );
-  }
+  await registerContractArtifactAtAddress(
+    input.wallet,
+    input.env.aztecNodeUrl,
+    sponsorAddress,
+    MagnaCompanySponsorContract.artifact,
+  );
   await registerKnownIssuerSender(input.wallet, input.env.orchestratorAddress);
   input.onVerifying?.();
 
+  const hintClient = new MagnaBrowserClient(input.wallet, browserEnvForConsumerLogin(input.env), input.activeAddress);
+  await hintClient.syncOrchestratorSender();
+  // Warm the active account's own signing-key note into PXE before the verify send. The embedded
+  // wallet's pre-flight stub simulation cannot decode the custom WebAuthn account's note and skips
+  // it, which would otherwise leave `is_valid_impl` unable to read it during proving ("Failed to
+  // get a note"). Discovering it here against the real account artifact populates the note store.
+  await hintClient.ensureAccountAuthNoteDiscovered(input.activeAddress);
   const issuer = MagnaIssuerContract.at(toAddress(input.env.issuerAddress), input.wallet);
+  const sponsor = MagnaCompanySponsorContract.at(toAddress(sponsorAddress), input.wallet);
+  const activeAddress = toAddress(input.activeAddress);
+  const sponsorMaxFeeCap = await readSponsorMaxFeeCap(sponsor, activeAddress);
+  const companySponsorFeeConfig = sponsorMaxFeeCap !== undefined
+    ? await buildCompanySponsorNetworkFeeConfig(toAddress(sponsorAddress), {
+        aztecNodeUrl: input.env.aztecNodeUrl,
+        maxFeeCap: sponsorMaxFeeCap,
+      })
+    : undefined;
   const engine = new MagnaVerificationEngine({
     orchestratorAddress: input.env.orchestratorAddress,
     issuerContract: issuer,
+    companySponsorContract: sponsor,
+    companySponsorFeeConfig,
     consumerContractFactory: (address: string) => MagnaConsumerContract.at(toAddress(address), input.wallet),
     syncBeforeHintLookup: async () => {
       await syncEmbeddedWalletPxeIfAvailable(input.wallet as never);
     },
+    hintLookupAttempts: 1,
   });
   const receipt = input.policy.credentialType === CredentialType.Instagram
-    ? await engine.loginWithInstagram(
+    ? await engine.loginWithInstagramCompanySponsor(
         {
           policy: input.policy,
-          ...(await engine.findCredentialHints(input.activeAddress, credential.claimsHash)),
+          ...(await hintClient.fetchPassportHintsByClaimsHash(input.activeAddress, credential.claimsHash)),
           claimsWitness: {
             handleHash: BigInt((credential as MagnaInstagramConsumerLoginCredential).handleHash),
           },
         },
         input.activeAddress,
+        sponsor,
       )
     : await (async () => {
         const passportCredential = credential as MagnaPassportConsumerLoginCredential;
         const committedClaimsWitness = normalizeCommittedWitness(passportCredential.committedClaimsWitness);
         if (committedClaimsWitness) {
           return passportCredential.mode === "rooted"
-            ? engine.loginWithLinkedMagnaV2ThroughConsumer({
+            ? engine.loginWithLinkedCompanySponsorV2({
                 policy: input.policy,
-                consumerGatewayAddress: input.consumerGatewayAddress,
-                rootCommitment: passportCredential.rootCommitment!,
-                claimsHash: passportCredential.claimsHash,
+                ...(await hintClient.fetchRootedPassportHintsByClaimsHash(
+                  input.activeAddress,
+                  passportCredential.rootCommitment!,
+                  passportCredential.claimsHash,
+                )),
                 claimsWitness: committedClaimsWitness,
-                from: input.activeAddress,
-              })
-            : engine.loginWithMagnaV2ThroughConsumer({
+              },
+              input.activeAddress,
+              sponsor)
+            : engine.loginWithCompanySponsorV2({
                 policy: input.policy,
-                consumerGatewayAddress: input.consumerGatewayAddress,
-                claimsHash: passportCredential.claimsHash,
+                ...(await hintClient.fetchPassportHintsByClaimsHash(input.activeAddress, passportCredential.claimsHash)),
                 claimsWitness: committedClaimsWitness,
-                from: input.activeAddress,
-              });
+              },
+              input.activeAddress,
+              sponsor);
         }
         const claimsWitness = {
           minAgeProven: passportCredential.normalizedClaims!.minAgeProven,
           nationalityAlpha3Packed: packAlpha3(passportCredential.normalizedClaims!.nationalityAlpha3),
         };
         return passportCredential.mode === "rooted"
-          ? engine.loginWithLinkedMagnaThroughConsumer({
+          ? engine.loginWithLinkedCompanySponsor({
               policy: input.policy,
-              consumerGatewayAddress: input.consumerGatewayAddress,
-              rootCommitment: passportCredential.rootCommitment!,
-              claimsHash: passportCredential.claimsHash,
+              ...(await hintClient.fetchRootedPassportHintsByClaimsHash(
+                input.activeAddress,
+                passportCredential.rootCommitment!,
+                passportCredential.claimsHash,
+              )),
               claimsWitness,
-              from: input.activeAddress,
-            })
-          : engine.loginWithMagnaThroughConsumer({
+            },
+            input.activeAddress,
+            sponsor)
+          : engine.loginWithCompanySponsor({
               policy: input.policy,
-              consumerGatewayAddress: input.consumerGatewayAddress,
-              claimsHash: passportCredential.claimsHash,
+              ...(await hintClient.fetchPassportHintsByClaimsHash(input.activeAddress, passportCredential.claimsHash)),
               claimsWitness,
-              from: input.activeAddress,
-            });
+            },
+            input.activeAddress,
+            sponsor);
       })();
 
   return { verified: true, receipt: readTxHash(receipt) ?? null };

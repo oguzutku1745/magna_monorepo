@@ -11,6 +11,7 @@ import { Fr } from "@aztec/aztec.js/fields";
 import { prepareGhostAccountOnWallet, type GhostAccountLifecycleOptions, type GhostAccountLifecycleResult } from "../embedded/lifecycle.js";
 import type { EmbeddedWallet } from "@aztec/wallets/embedded";
 import { buildCompanySponsorFeeConfig } from "./sponsorship.js";
+import type { FeeConfig } from "./fees.js";
 import type { ContractLike } from "@magna/contracts-bindings";
 import type {
   GhostDerivationInput,
@@ -116,7 +117,13 @@ function requireSimulate(methodName: string, call: ContractCall): (opts: any) =>
   if (!call.simulate) {
     throw new Error(`${methodName} does not support simulate`);
   }
-  return (opts: any) => call.simulate!(opts);
+  return async (opts: any) => {
+    try {
+      return await call.simulate!(opts);
+    } catch (error) {
+      throw new Error(`${methodName} failed: ${errorDetails(error)}`);
+    }
+  };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -168,7 +175,8 @@ function isPendingHintLookupError(error: unknown): boolean {
     message.includes("linked credential note not found") ||
     message.includes("linked status note not found") ||
     message.includes("root status note not found") ||
-    message.includes("root authority note not found")
+    message.includes("root authority note not found") ||
+    message.includes("Failed to get a note")
   );
 }
 
@@ -177,6 +185,11 @@ export type MagnaVerificationEngineConfig = {
   issuerContract: SendableContract;
   companySponsorContract?: SendableContract;
   companySponsorContracts?: SendableContract[];
+  companySponsorFeeConfig?: FeeConfig | ((input: {
+    from: string;
+    sponsorAddress: AztecAddress;
+    sponsorContract: AztecContract;
+  }) => FeeConfig | Promise<FeeConfig>);
   consumerContractFactory?: (address: string) => SendableContract;
   syncBeforeHintLookup?: () => Promise<void>;
   hintLookupAttempts?: number;
@@ -194,6 +207,7 @@ export class MagnaVerificationEngine {
   private readonly companySponsorContract?: AztecContract;
   private readonly companySponsorContracts: AztecContract[];
   private readonly companySponsorContractsByAddress: Map<string, AztecContract>;
+  private readonly companySponsorFeeConfig?: MagnaVerificationEngineConfig["companySponsorFeeConfig"];
   private readonly consumerContractFactory?: (address: string) => SendableContract;
   private readonly syncBeforeHintLookup?: () => Promise<void>;
   private readonly hintLookupAttempts: number;
@@ -205,6 +219,7 @@ export class MagnaVerificationEngine {
     this.issuerContract = config.issuerContract;
     this.companySponsorContract = config.companySponsorContract;
     this.companySponsorContracts = config.companySponsorContracts ?? [];
+    this.companySponsorFeeConfig = config.companySponsorFeeConfig;
     this.consumerContractFactory = config.consumerContractFactory;
     this.syncBeforeHintLookup = config.syncBeforeHintLookup;
     this.hintLookupAttempts = config.hintLookupAttempts ?? 12;
@@ -258,13 +273,20 @@ export class MagnaVerificationEngine {
     return sponsorContract;
   }
 
-  private buildCompanySponsorSendOptions(from: string, sponsorContract: AztecContract) {
-    const sponsorAddress = sponsorContract.address as never;
+  private async buildCompanySponsorSendOptions(from: string, sponsorContract: AztecContract) {
+    const sponsorAddress = sponsorContract.address as AztecAddress;
+    const issuerAddress = this.issuerContract.address as AztecAddress | undefined;
+    const fee = typeof this.companySponsorFeeConfig === "function"
+      ? await this.companySponsorFeeConfig({ from, sponsorAddress, sponsorContract })
+      : this.companySponsorFeeConfig ?? buildCompanySponsorFeeConfig(sponsorAddress);
+    const additionalScopes = issuerAddress
+      ? [sponsorAddress, issuerAddress]
+      : [sponsorAddress];
     return {
-      from,
-      fee: buildCompanySponsorFeeConfig(sponsorAddress),
-      // External fee payers still need sponsor-scoped note visibility during proving.
-      additionalScopes: [sponsorAddress],
+      from: AztecAddress.fromString(from),
+      fee,
+      // Sponsored private calls enter through the sponsor but prove issuer-owned notes.
+      additionalScopes,
     };
   }
 
@@ -655,7 +677,21 @@ export class MagnaVerificationEngine {
         input.claimsWitness.nationalityAlpha3Packed,
         input.sponsorSlot ?? 0,
       )
-      .send(this.buildCompanySponsorSendOptions(from, sponsorContract));
+      .send(await this.buildCompanySponsorSendOptions(from, sponsorContract));
+  }
+
+  async loginWithCompanySponsorV2(input: VerifyPassportV2Input, from: string, sponsorContractOverride?: SendableContract) {
+    const sponsorContract = this.resolveCompanySponsorContract(sponsorContractOverride);
+    const policy = toContractPolicy(input.policy);
+    return sponsorContract.methods
+      .sponsored_verify_v2(
+        policy,
+        input.hintedCredentialNote,
+        input.hintedStatusNote,
+        toContractPassportCommittedClaimsWitness(input.claimsWitness),
+        input.sponsorSlot ?? 0,
+      )
+      .send(await this.buildCompanySponsorSendOptions(from, sponsorContract));
   }
 
   async loginWithInstagramCompanySponsor(input: VerifyInstagramInput, from: string, sponsorContractOverride?: SendableContract) {
@@ -669,7 +705,7 @@ export class MagnaVerificationEngine {
         input.claimsWitness.handleHash,
         input.sponsorSlot ?? 0,
       )
-      .send(this.buildCompanySponsorSendOptions(from, sponsorContract));
+      .send(await this.buildCompanySponsorSendOptions(from, sponsorContract));
   }
 
   async loginWithLinkedCompanySponsor(input: VerifyLinkedPassportInput, from: string, sponsorContractOverride?: SendableContract) {
@@ -686,7 +722,27 @@ export class MagnaVerificationEngine {
         input.claimsWitness.nationalityAlpha3Packed,
         input.sponsorSlot ?? 0,
       )
-      .send(this.buildCompanySponsorSendOptions(from, sponsorContract));
+      .send(await this.buildCompanySponsorSendOptions(from, sponsorContract));
+  }
+
+  async loginWithLinkedCompanySponsorV2(
+    input: VerifyLinkedPassportV2Input,
+    from: string,
+    sponsorContractOverride?: SendableContract,
+  ) {
+    const sponsorContract = this.resolveCompanySponsorContract(sponsorContractOverride);
+    const policy = toContractPolicy(input.policy);
+    return sponsorContract.methods
+      .sponsored_verify_linked_v2(
+        policy,
+        input.hintedRootStatusNote,
+        input.hintedRootAuthorityNote,
+        input.hintedCredentialNote,
+        input.hintedStatusNote,
+        toContractPassportCommittedClaimsWitness(input.claimsWitness),
+        input.sponsorSlot ?? 0,
+      )
+      .send(await this.buildCompanySponsorSendOptions(from, sponsorContract));
   }
 
   async loginWithLinkedInstagramCompanySponsor(
@@ -706,7 +762,7 @@ export class MagnaVerificationEngine {
         input.claimsWitness.handleHash,
         input.sponsorSlot ?? 0,
       )
-      .send(this.buildCompanySponsorSendOptions(from, sponsorContract));
+      .send(await this.buildCompanySponsorSendOptions(from, sponsorContract));
   }
 
   async refreshRootAuthority(input: RefreshRootAuthorityInput) {

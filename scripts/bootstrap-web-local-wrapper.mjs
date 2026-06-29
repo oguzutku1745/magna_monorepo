@@ -43,13 +43,22 @@ function envHasLine(envText, key, value) {
   return envText.split(/\r?\n/u).includes(`${key}=${value}`);
 }
 
-function outputsAreComplete({ manifestPath, envOutPath }) {
+function outputsAreComplete({ manifestPath, envOutPath, managementEnvOutPath, referenceDappEnvOutPath }) {
   try {
-    if (!existsSync(manifestPath) || !existsSync(envOutPath)) return false;
+    if (
+      !existsSync(manifestPath) ||
+      !existsSync(envOutPath) ||
+      !existsSync(managementEnvOutPath) ||
+      !existsSync(referenceDappEnvOutPath)
+    ) {
+      return false;
+    }
 
     const manifest = readJson(manifestPath);
     const l2 = manifest?.l2 ?? {};
     const envText = readText(envOutPath);
+    const managementEnvText = readText(managementEnvOutPath);
+    const referenceDappEnvText = readText(referenceDappEnvOutPath);
 
     const requiredManifestFields = [
       l2.adminAddress,
@@ -64,13 +73,23 @@ function outputsAreComplete({ manifestPath, envOutPath }) {
     ];
     if (requiredManifestFields.some(value => !value)) return false;
 
-    return (
+    const webEnvMatchesManifest =
       envHasLine(envText, "VITE_MAGNA_ISSUER_ADDRESS", l2.issuerAddress) &&
       envHasLine(envText, "VITE_MAGNA_COMPANY_SPONSOR_ADDRESS", l2.companySponsorAddress) &&
       envHasLine(envText, "VITE_MAGNA_RIGHTS_REGISTRY_ADDRESS", l2.rightsRegistryAddress) &&
       envHasLine(envText, "VITE_MAGNA_RIGHTS_PURCHASE_L2_ADDRESS", l2.purchaseAdapterAddress) &&
-      envHasLine(envText, "VITE_MAGNA_L2_PAYMENT_TOKEN_ADDRESS", l2.paymentTokenAddress)
-    );
+      envHasLine(envText, "VITE_MAGNA_L2_PAYMENT_TOKEN_ADDRESS", l2.paymentTokenAddress);
+    const managementEnvMatchesManifest =
+      envHasLine(managementEnvText, "VITE_MAGNA_ISSUER_ADDRESS", l2.issuerAddress) &&
+      envHasLine(managementEnvText, "VITE_MAGNA_COMPANY_SPONSOR_ADDRESS", l2.companySponsorAddress) &&
+      envHasLine(managementEnvText, "VITE_MAGNA_RIGHTS_REGISTRY_ADDRESS", l2.rightsRegistryAddress) &&
+      envHasLine(managementEnvText, "VITE_MAGNA_RIGHTS_PURCHASE_L2_ADDRESS", l2.purchaseAdapterAddress) &&
+      envHasLine(managementEnvText, "VITE_MAGNA_L2_PAYMENT_TOKEN_ADDRESS", l2.paymentTokenAddress) &&
+      envHasLine(managementEnvText, "VITE_REFERENCE_DAPP_GATEWAY", l2.referenceDappConsumerAddress);
+    const referenceDappEnvIsReady =
+      envHasLine(referenceDappEnvText, "VITE_MAGNA_WALLET_ORIGIN", "http://localhost:5174");
+
+    return webEnvMatchesManifest && managementEnvMatchesManifest && referenceDappEnvIsReady;
   } catch {
     return false;
   }
@@ -132,6 +151,8 @@ const repoRoot = resolve(here, "..");
 const networkName = String(args.networkName ?? "local");
 const manifestPath = resolve(repoRoot, args.manifest ?? `deployments/${networkName}.json`);
 const envOutPath = resolve(repoRoot, args.envOut ?? "apps/magna-web/.env.local");
+const managementEnvOutPath = resolve(repoRoot, args.managementEnvOut ?? "apps/magna-management/.env");
+const referenceDappEnvOutPath = resolve(repoRoot, args.referenceDappEnvOut ?? "apps/reference-dapp/.env");
 
 const result = await runWorker(resolve(here, "bootstrap-web-local.mjs"), process.argv.slice(2));
 
@@ -139,7 +160,9 @@ if ((result.status ?? 1) === 0) {
   process.exit(0);
 }
 
-if (outputsAreComplete({ manifestPath, envOutPath })) {
+if (
+  outputsAreComplete({ manifestPath, envOutPath, managementEnvOutPath, referenceDappEnvOutPath })
+) {
   console.info("[web-bootstrap] verified complete local outputs after Aztec worker teardown.");
   process.exit(0);
 }

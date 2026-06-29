@@ -5,10 +5,14 @@ const WORLD_STATE_ANCHOR_ERROR_MARKERS = [
   "not found when querying world state",
   "anchor block hash",
 ] as const;
+const BLOCK_STREAM_TIP_ERROR_MARKER = "Block hash not found for block number";
 
 export function isAztecWorldStateAnchorError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return WORLD_STATE_ANCHOR_ERROR_MARKERS.every(marker => message.includes(marker));
+  return (
+    WORLD_STATE_ANCHOR_ERROR_MARKERS.every(marker => message.includes(marker)) ||
+    message.includes(BLOCK_STREAM_TIP_ERROR_MARKER)
+  );
 }
 
 export function getEmbeddedPxeDatabaseName(rollupAddress: string): string {

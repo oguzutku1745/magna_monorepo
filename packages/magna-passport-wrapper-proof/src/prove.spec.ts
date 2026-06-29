@@ -1,8 +1,37 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
-import { buildPassportWrapperWitnessFromZkPassportResult } from "@magna/wallet";
+import {
+  buildMinimalZkPassportWitnessFromDisclosures,
+  buildPassportWrapperWitnessFromZkPassportResult,
+  computeZkPassportParameterCommitmentManifest,
+} from "@magna/wallet";
 import { parsePassportWrapperPublicInputs, provePassportWrapper } from "./prove.js";
 import { verifyPassportWrapperProof } from "./verify.js";
+
+async function a1OuterPublicInputs(): Promise<string[]> {
+  const manifest = await computeZkPassportParameterCommitmentManifest(
+    buildMinimalZkPassportWitnessFromDisclosures({
+      nationalityAlpha3: "TUR",
+      expiryTs: 1_942_358_399n,
+      agePredicate: { minAge: 18, maxAge: 0 },
+      bind: { customData: "magna-wrapper-bind" },
+    }),
+  );
+  return [
+    "0",
+    "1",
+    "2",
+    "33",
+    "44",
+    manifest.nationalityDisclosureCommitment,
+    manifest.expiryDisclosureCommitment,
+    manifest.agePredicateCommitment,
+    manifest.bindCommitment,
+    "1",
+    "999",
+    "1000",
+  ];
+}
 
 describe("parsePassportWrapperPublicInputs", () => {
   it("parses the fixed passport wrapper public input order", () => {
@@ -45,14 +74,14 @@ describe("passport wrapper proving", () => {
     const witness = await buildPassportWrapperWitnessFromZkPassportResult(
       {
         outerProof: { proof: { bytes: [1, 2, 3] }, verificationKey: { key: "vk" } },
-        outerPublicInputs: ["0", "1", "2", "33", "44", "555", "666", "1", "999", "1000"],
+        outerPublicInputs: await a1OuterPublicInputs(),
       },
       {
         nationalityAlpha3: "TUR",
         expiryTs: 1_942_358_399n,
         minAgeProven: 18,
         credentialValidUntil: 1_893_456_000n,
-        agePredicate: { minAge: 18, maxAge: 255 },
+        agePredicate: { minAge: 18, maxAge: 0 },
         bind: { customData: "magna-wrapper-bind" },
         nationalityBlind: 111n,
         expiryBlind: 222n,

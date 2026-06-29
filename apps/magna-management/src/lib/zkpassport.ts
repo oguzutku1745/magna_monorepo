@@ -246,10 +246,16 @@ function summarizeQueryResultErrors(errors?: Partial<QueryResultErrors>): string
 function sanitizeForJson(value: unknown): unknown {
   if (typeof value === "bigint") return value.toString();
   if (value instanceof Date) return value.toISOString();
+  if (value instanceof ArrayBuffer) return bytesToHex(new Uint8Array(value));
+  if (ArrayBuffer.isView(value)) return bytesToHex(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
   if (Array.isArray(value)) return value.map(entry => sanitizeForJson(entry));
   if (!value || typeof value !== "object") return value;
   const record = value as Record<string, unknown>;
   return Object.fromEntries(Object.keys(record).map(key => [key, sanitizeForJson(record[key])]));
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return `0x${Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
 async function postVerificationApi<TResponse>(

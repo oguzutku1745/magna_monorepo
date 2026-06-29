@@ -2,13 +2,13 @@ import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
 import { AztecAddress } from "@aztec/aztec.js/addresses";
 import { MagnaVerificationEngine } from "./verification-engine.js";
-import { buildSponsoredFeeConfig } from "./sponsorship.js";
+import { buildCompanySponsorFeeConfig, buildSponsoredFeeConfig } from "./sponsorship.js";
 import { CredentialType } from "@magna/core";
 
 describe("company sponsor fee config", () => {
   it("attaches an external fee payer when logging in via the company sponsor gateway", async () => {
     const sponsorAddress = { kind: "company-sponsor-address" };
-    let capturedSendOptions: { from: string; fee?: unknown } | undefined;
+    let capturedSendOptions: { from: { toString(): string }; fee?: unknown } | undefined;
 
     const client = new MagnaVerificationEngine({
       orchestratorAddress: "0x1111111111111111111111111111111111111111",
@@ -17,7 +17,7 @@ describe("company sponsor fee config", () => {
         address: sponsorAddress,
         methods: {
           sponsored_verify: () => ({
-            send: async (opts: { from: string; fee?: unknown }) => {
+            send: async (opts: { from: { toString(): string }; fee?: unknown }) => {
               capturedSendOptions = opts;
               return { ok: true };
             },
@@ -40,12 +40,14 @@ describe("company sponsor fee config", () => {
         },
         sponsorSlot: 2,
       },
-      "0x2222222222222222222222222222222222222222",
+      "0x2222222222222222222222222222222222222222222222222222222222222222",
     );
 
     assert.ok(capturedSendOptions, "expected send options to be captured");
-    assert.equal(capturedSendOptions.from, "0x2222222222222222222222222222222222222222");
+    assert.equal(capturedSendOptions.from.toString(), "0x2222222222222222222222222222222222222222222222222222222222222222");
     assert.ok(capturedSendOptions.fee, "expected a fee config to be attached");
+    assert.equal((capturedSendOptions.fee as { gasSettings?: unknown }).gasSettings, undefined);
+    assert.equal((capturedSendOptions.fee as { congestionEstimate?: unknown }).congestionEstimate, "none");
 
     const paymentMethod = (capturedSendOptions.fee as { paymentMethod: {
       getFeePayer: () => Promise<unknown>;
@@ -57,6 +59,21 @@ describe("company sponsor fee config", () => {
     const executionPayload = await paymentMethod.getExecutionPayload();
     assert.deepEqual(executionPayload.calls, []);
     assert.equal(executionPayload.feePayer, sponsorAddress);
+  });
+
+  it("can attach network-derived gas limits and max fees without hardcoded protocol maxima", () => {
+    const sponsorAddress = AztecAddress.fromString(
+      "0x0000000000000000000000000000000000000000000000000000000000000005",
+    );
+    const feeConfig = buildCompanySponsorFeeConfig(sponsorAddress, {
+      gasLimits: { daGas: 55_882, l2Gas: 1_000_000 },
+      maxFeesPerGas: { feePerDaGas: 10n, feePerL2Gas: 20n },
+    });
+
+    assert.deepEqual(feeConfig.gasSettings, {
+      gasLimits: { daGas: 55_882, l2Gas: 1_000_000 },
+      maxFeesPerGas: { feePerDaGas: 10n, feePerL2Gas: 20n },
+    });
   });
 });
 

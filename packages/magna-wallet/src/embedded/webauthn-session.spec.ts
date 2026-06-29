@@ -115,6 +115,10 @@ test("Aztec world-state anchor errors are recognized without matching unrelated 
     ),
     true,
   );
+  assert.equal(
+    isAztecWorldStateAnchorError(new Error("Block hash not found for block number 24")),
+    true,
+  );
   assert.equal(isAztecWorldStateAnchorError(new Error("Invalid tx: Block header not found")), false);
 });
 

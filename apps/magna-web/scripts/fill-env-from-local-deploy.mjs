@@ -86,6 +86,8 @@ Options:
   --manifest <path>                Default: deployments/<network>.json
   --out <path>                     Default: apps/magna-web/.env.local
   --template <path>                Default: apps/magna-web/.env.example
+  --wallet-origin <url>            Default: http://localhost:5174
+  --public-key-jwk <json>          Optional Login with Magna public verification key for dApps
   --issuer-address <aztec address> Optional explicit issuer address
   --company-sponsor-address <aztec address> Optional explicit sponsor address
   --company-sponsor-addresses <csv> Optional explicit sponsor address list
@@ -93,6 +95,15 @@ Options:
   --orchestrator-address <aztec address> Optional explicit orchestrator sender
   --verification-api-url <url>       Optional explicit zkPassport verification API URL
 `;
+}
+
+function preferString(...values) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return "";
 }
 
 function main() {
@@ -122,6 +133,10 @@ function main() {
   const rightsPurchaseAddress = requireString(manifest?.l2?.purchaseAdapterAddress, "l2.purchaseAdapterAddress", "manifest");
   const l2PaymentTokenAddress = requireString(manifest?.l2?.paymentTokenAddress, "l2.paymentTokenAddress", "manifest");
   const adminAddress = requireString(manifest?.l2?.adminAddress, "l2.adminAddress", "manifest");
+  const referenceDappConsumerAddress =
+    typeof manifest?.l2?.referenceDappConsumerAddress === "string"
+      ? manifest.l2.referenceDappConsumerAddress.trim()
+      : "";
 
   const manifestSponsorAddresses = dedupeList([
     ...parseAddressList(manifest?.l2?.companySponsorAddresses),
@@ -214,6 +229,31 @@ function main() {
     existingOutPairs.get("VITE_MAGNA_VERIFICATION_API_URL") ||
     templatePairs.get("VITE_MAGNA_VERIFICATION_API_URL") ||
     "";
+  const walletOrigin = preferString(
+    typeof args.walletOrigin === "string" ? args.walletOrigin : "",
+    existingOutPairs.get("VITE_MAGNA_WALLET_ORIGIN"),
+    templatePairs.get("VITE_MAGNA_WALLET_ORIGIN"),
+    "http://localhost:5174",
+  );
+  const publicKeyJwk = preferString(
+    typeof args.publicKeyJwk === "string" ? args.publicKeyJwk : "",
+    existingOutPairs.get("VITE_MAGNA_PUBLIC_KEY_JWK"),
+    templatePairs.get("VITE_MAGNA_PUBLIC_KEY_JWK"),
+  );
+  const referenceDappOrigin = preferString(
+    existingOutPairs.get("VITE_REFERENCE_DAPP_ORIGIN"),
+    templatePairs.get("VITE_REFERENCE_DAPP_ORIGIN"),
+    "http://localhost:5175",
+  );
+  const referenceDappGateway = preferString(
+    referenceDappConsumerAddress,
+    existingOutPairs.get("VITE_REFERENCE_DAPP_GATEWAY"),
+    templatePairs.get("VITE_REFERENCE_DAPP_GATEWAY"),
+  );
+  const sessionSigningKey = preferString(
+    existingOutPairs.get("VITE_MAGNA_SESSION_SIGNING_KEY"),
+    templatePairs.get("VITE_MAGNA_SESSION_SIGNING_KEY"),
+  );
 
   const merged = new Map(templatePairs);
   merged.set("VITE_AZTEC_NODE_URL", aztecNodeUrl);
@@ -231,6 +271,11 @@ function main() {
   merged.set("VITE_MAGNA_COMPANY_SPONSOR_ADDRESS", companySponsorAddress);
   merged.set("VITE_MAGNA_COMPANY_SPONSOR_ADDRESSES", companySponsorAddresses);
   merged.set("VITE_MAGNA_ACTIVE_COMPANY_SPONSOR_ADDRESS", activeCompanySponsorAddress);
+  merged.set("VITE_REFERENCE_DAPP_ORIGIN", referenceDappOrigin);
+  merged.set("VITE_REFERENCE_DAPP_GATEWAY", referenceDappGateway);
+  merged.set("VITE_MAGNA_WALLET_ORIGIN", walletOrigin);
+  merged.set("VITE_MAGNA_PUBLIC_KEY_JWK", publicKeyJwk);
+  merged.set("VITE_MAGNA_SESSION_SIGNING_KEY", sessionSigningKey);
 
   const lines = templateRaw.split(/\r?\n/).map((line) => {
     const trimmed = line.trim();
@@ -245,15 +290,31 @@ function main() {
   writeFileSync(outPath, `${lines.join("\n").replace(/\n+$/, "\n")}`, "utf8");
 
   const warnings = [];
-  if (!issuerAddress) warnings.push("VITE_MAGNA_ISSUER_ADDRESS is still empty (pass --issuer-address)");
-  if (!companySponsorAddress) warnings.push("VITE_MAGNA_COMPANY_SPONSOR_ADDRESS is still empty (pass --company-sponsor-address)");
-  if (!companySponsorAddresses) {
+  if (templatePairs.has("VITE_MAGNA_ISSUER_ADDRESS") && !issuerAddress) {
+    warnings.push("VITE_MAGNA_ISSUER_ADDRESS is still empty (pass --issuer-address)");
+  }
+  if (templatePairs.has("VITE_MAGNA_COMPANY_SPONSOR_ADDRESS") && !companySponsorAddress) {
+    warnings.push("VITE_MAGNA_COMPANY_SPONSOR_ADDRESS is still empty (pass --company-sponsor-address)");
+  }
+  if (templatePairs.has("VITE_MAGNA_COMPANY_SPONSOR_ADDRESSES") && !companySponsorAddresses) {
     warnings.push("VITE_MAGNA_COMPANY_SPONSOR_ADDRESSES is still empty (pass --company-sponsor-addresses)");
   }
-  if (!l1RpcUrl) warnings.push("VITE_MAGNA_L1_RPC_URL is still empty");
-  if (!l1RightsPortalAddress) warnings.push("VITE_MAGNA_L1_RIGHTS_PORTAL_ADDRESS is still empty");
-  if (!l1PaymentTokenAddress) warnings.push("VITE_MAGNA_L1_PAYMENT_TOKEN_ADDRESS is still empty");
-  if (!verificationApiUrl) warnings.push("VITE_MAGNA_VERIFICATION_API_URL is still empty");
+  if (templatePairs.has("VITE_MAGNA_L1_RPC_URL") && !l1RpcUrl) warnings.push("VITE_MAGNA_L1_RPC_URL is still empty");
+  if (templatePairs.has("VITE_MAGNA_L1_RIGHTS_PORTAL_ADDRESS") && !l1RightsPortalAddress) {
+    warnings.push("VITE_MAGNA_L1_RIGHTS_PORTAL_ADDRESS is still empty");
+  }
+  if (templatePairs.has("VITE_MAGNA_L1_PAYMENT_TOKEN_ADDRESS") && !l1PaymentTokenAddress) {
+    warnings.push("VITE_MAGNA_L1_PAYMENT_TOKEN_ADDRESS is still empty");
+  }
+  if (templatePairs.has("VITE_MAGNA_VERIFICATION_API_URL") && !verificationApiUrl) {
+    warnings.push("VITE_MAGNA_VERIFICATION_API_URL is still empty");
+  }
+  if (templatePairs.has("VITE_REFERENCE_DAPP_GATEWAY") && !referenceDappGateway) {
+    warnings.push("VITE_REFERENCE_DAPP_GATEWAY is still empty");
+  }
+  if (templatePairs.has("VITE_MAGNA_PUBLIC_KEY_JWK") && !publicKeyJwk) {
+    warnings.push("VITE_MAGNA_PUBLIC_KEY_JWK is still empty");
+  }
 
   console.info(`Wrote ${outPath} from ${manifestPath}`);
   if (warnings.length > 0) {

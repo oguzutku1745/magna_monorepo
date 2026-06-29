@@ -235,6 +235,12 @@ function sanitizeForJson(value: unknown): unknown {
   if (value instanceof Date) {
     return value.toISOString();
   }
+  if (value instanceof ArrayBuffer) {
+    return bytesToHex(new Uint8Array(value));
+  }
+  if (ArrayBuffer.isView(value)) {
+    return bytesToHex(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+  }
   if (Array.isArray(value)) {
     return value.map(entry => sanitizeForJson(entry));
   }
@@ -255,6 +261,10 @@ function sanitizeForJson(value: unknown): unknown {
 
   const keys = Object.keys(record);
   return Object.fromEntries(keys.map(key => [key, sanitizeForJson(record[key])]));
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return `0x${Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
 async function postVerificationApi<TResponse>(verificationApiUrl: string, path: string, payload: unknown): Promise<TResponse> {

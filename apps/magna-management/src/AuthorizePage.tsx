@@ -13,6 +13,22 @@ import { runWalletLoginForRequest } from "./lib/wallet-login";
 
 type Phase = "waiting" | "authenticating" | "verifying" | "done" | "error";
 
+function describeLoginError(cause: unknown): string {
+  if (cause instanceof Error) {
+    if (cause.message) return cause.message;
+    return cause.name ? `${cause.name} (no message)` : "Unknown error (no message).";
+  }
+  if (cause === undefined || cause === null) return "Unknown error.";
+  if (typeof cause === "string") return cause || "Unknown error.";
+  try {
+    const json = JSON.stringify(cause);
+    if (json && json !== "{}") return json;
+  } catch {
+    // fall through to String() below
+  }
+  return String(cause);
+}
+
 async function createRedirectCode(assertion: unknown): Promise<string> {
   const apiUrl = import.meta.env.VITE_MAGNA_VERIFICATION_API_URL ?? "http://localhost:4310";
   const response = await fetch(`${apiUrl}/api/session/code`, {
@@ -120,7 +136,7 @@ export function AuthorizePage() {
         setPhase("done");
         window.close();
       } catch (cause) {
-        const message = cause instanceof Error ? cause.message : String(cause);
+        const message = describeLoginError(cause);
         setError(message);
         setPhase("error");
         if (requestRef.current) {

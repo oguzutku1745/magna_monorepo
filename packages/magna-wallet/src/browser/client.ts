@@ -11,6 +11,7 @@ import {
   MagnaCompanySponsorContract,
   MagnaIssuerContract,
   MagnaRightsPurchaseL2Contract,
+  MagnaWebAuthnAccountContract,
 } from "@magna/contracts-bindings";
 import { TokenContract } from "@aztec/noir-contracts.js/Token";
 import { buildCompanySponsorFeeConfig } from "../engine/sponsorship.js";
@@ -264,6 +265,13 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+function errorDetails(error: unknown): string {
+  if (error instanceof Error) {
+    return `${error.name}: ${error.message}`;
+  }
+  return String(error);
+}
+
 type WalletWithOptionalPxeDebugSync = Wallet & {
   pxe?: {
     debug?: {
@@ -286,6 +294,18 @@ function unwrapSimulationResult<T>(value: T | { result: T }): T {
     return value.result as T;
   }
   return value as T;
+}
+
+async function simulateHintedNote(
+  methodName: string,
+  call: { simulate: (opts: { from: AztecAddress }) => Promise<unknown> },
+  from: AztecAddress,
+): Promise<unknown> {
+  try {
+    return unwrapSimulationResult(await call.simulate({ from }));
+  } catch (error) {
+    throw new Error(`${methodName} failed: ${errorDetails(error)}`);
+  }
 }
 
 function toBigIntValue(value: unknown): bigint {
@@ -837,6 +857,81 @@ export class MagnaBrowserClient {
     });
   }
 
+  private async readAccountAuthNotes(accountAddress: string): Promise<NoteDao[]> {
+    const debug = (this.wallet as WalletWithOptionalPxeDebugSync).pxe?.debug;
+    if (!debug?.getNotes) {
+      throw new Error("Wallet PXE does not expose note enumeration.");
+    }
+    const account = toAddress(accountAddress);
+    return await debug.getNotes({
+      contractAddress: account,
+      owner: account,
+      // The passkey account's signing-key note lives in MagnaWebAuthnAccount's sole
+      // SinglePrivateImmutable storage field.
+      storageSlot: MagnaWebAuthnAccountContract.storage.signing_public_key.slot,
+      status: NoteStatus.ACTIVE,
+      scopes: [account],
+    });
+  }
+
+  /**
+   * Ensures the active account's own auth note (MagnaWebAuthnAccount.signing_public_key, a
+   * SinglePrivateImmutable) is discovered into this PXE's note store before a transaction the
+   * account must authorize. The embedded wallet's pre-flight kernelless simulation replaces the
+   * account with a built-in stub (it has no notion of the custom WebAuthn account contract); that
+   * stub's note layout differs, so the account's real note is skipped during the simulation's note
+   * discovery and never reaches the store. Proactively discovering it here against the real,
+   * registered account artifact guarantees `is_valid_impl` can read it during proving. Best-effort:
+   * any failure is left for the verify send to surface (with its own clearer error).
+   */
+  async ensureAccountAuthNoteDiscovered(accountAddress: string): Promise<number> {
+    try {
+      const notes = await this.readAccountAuthNotes(accountAddress);
+      return notes.length;
+    } catch (error) {
+      console.warn(
+        "[magna] account auth-note pre-discovery skipped (verify will surface details if it matters):",
+        errorDetails(error),
+      );
+      return -1;
+    }
+  }
+
+  /**
+   * Diagnostic only: reports whether the passkey account's own `signing_public_key` note is
+   * present in this session's PXE, plus the PXE-registered senders/accounts, so a missing account
+   * auth-note can be told apart from a missing issuer credential note. Reading notes triggers a
+   * just-in-time sync of the account contract.
+   */
+  async diagnoseAccountAuthNote(
+    accountAddress: string,
+  ): Promise<{ noteCount: number; senders: string[]; accounts: string[]; error?: string }> {
+    let senders: string[] = [];
+    let accounts: string[] = [];
+    try {
+      const pxe = (this.wallet as unknown as { pxe?: { getSenders?: () => Promise<unknown[]> } }).pxe;
+      senders = ((await pxe?.getSenders?.()) ?? []).map(value => String(value));
+    } catch {
+      // best-effort diagnostic
+    }
+    try {
+      accounts = (await this.wallet.getAccounts()).map(account_ => String(account_.item ?? account_));
+    } catch {
+      // best-effort diagnostic
+    }
+    try {
+      const notes = await this.readAccountAuthNotes(accountAddress);
+      return { noteCount: notes.length, senders, accounts };
+    } catch (error) {
+      return {
+        noteCount: -1,
+        senders,
+        accounts,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
   private credentialRefFromNote(ownerAddress: string, note: NoteDao): DiscoveredMagnaCredentialRef | undefined {
     const fields = noteItems(note);
     if (fields.length < 3) return undefined;
@@ -913,14 +1008,18 @@ export class MagnaBrowserClient {
   }
 
   private async readPassportHintsOnce(ownerAddress: string, claimsHash: bigint): Promise<PassportHints> {
-    const hintedCredentialNote = await this.issuer.methods
-      .get_credential_hinted(toAddress(ownerAddress), toField(claimsHash))
-      .simulate({ from: toAddress(ownerAddress) })
-      .then((simulation: unknown) => unwrapSimulationResult(simulation));
-    const hintedStatusNote = await this.issuer.methods
-      .get_status_hinted(toAddress(ownerAddress), toField(claimsHash))
-      .simulate({ from: toAddress(ownerAddress) })
-      .then((simulation: unknown) => unwrapSimulationResult(simulation));
+    const owner = toAddress(ownerAddress);
+    const claims = toField(claimsHash);
+    const hintedCredentialNote = await simulateHintedNote(
+      "get_credential_hinted",
+      this.issuer.methods.get_credential_hinted(owner, claims),
+      owner,
+    );
+    const hintedStatusNote = await simulateHintedNote(
+      "get_status_hinted",
+      this.issuer.methods.get_status_hinted(owner, claims),
+      owner,
+    );
 
     return {
       claimsHash: claimsHash.toString(),
@@ -934,22 +1033,29 @@ export class MagnaBrowserClient {
     rootCommitment: bigint,
     claimsHash: bigint,
   ): Promise<RootedPassportHints> {
-    const hintedCredentialNote = await this.issuer.methods
-      .get_linked_credential_hinted(toAddress(ownerAddress), toField(rootCommitment), toField(claimsHash))
-      .simulate({ from: toAddress(ownerAddress) })
-      .then((simulation: unknown) => unwrapSimulationResult(simulation));
-    const hintedStatusNote = await this.issuer.methods
-      .get_linked_status_hinted(toAddress(ownerAddress), toField(rootCommitment), toField(claimsHash))
-      .simulate({ from: toAddress(ownerAddress) })
-      .then((simulation: unknown) => unwrapSimulationResult(simulation));
-    const hintedRootStatusNote = await this.issuer.methods
-      .get_root_status_hinted(toAddress(ownerAddress), toField(rootCommitment))
-      .simulate({ from: toAddress(ownerAddress) })
-      .then((simulation: unknown) => unwrapSimulationResult(simulation));
-    const hintedRootAuthorityNote = await this.issuer.methods
-      .get_root_authority_hinted(toAddress(ownerAddress), toField(rootCommitment), toField(claimsHash))
-      .simulate({ from: toAddress(ownerAddress) })
-      .then((simulation: unknown) => unwrapSimulationResult(simulation));
+    const owner = toAddress(ownerAddress);
+    const root = toField(rootCommitment);
+    const claims = toField(claimsHash);
+    const hintedCredentialNote = await simulateHintedNote(
+      "get_linked_credential_hinted",
+      this.issuer.methods.get_linked_credential_hinted(owner, root, claims),
+      owner,
+    );
+    const hintedStatusNote = await simulateHintedNote(
+      "get_linked_status_hinted",
+      this.issuer.methods.get_linked_status_hinted(owner, root, claims),
+      owner,
+    );
+    const hintedRootStatusNote = await simulateHintedNote(
+      "get_root_status_hinted",
+      this.issuer.methods.get_root_status_hinted(owner, root),
+      owner,
+    );
+    const hintedRootAuthorityNote = await simulateHintedNote(
+      "get_root_authority_hinted",
+      this.issuer.methods.get_root_authority_hinted(owner, root, claims),
+      owner,
+    );
 
     return {
       claimsHash: claimsHash.toString(),
@@ -1152,8 +1258,8 @@ export class MagnaBrowserClient {
       .send({
         from: toAddress(this.userAddress),
         fee,
-        // External fee payers still need sponsor-scoped note visibility during proving.
-        additionalScopes: [sponsorScope],
+        // Sponsored private calls enter through the sponsor but prove issuer-owned notes.
+        additionalScopes: [sponsorScope, toAddress(this.env.issuerAddress!)],
       });
 
     return {
@@ -1279,7 +1385,7 @@ export class MagnaBrowserClient {
       .send({
         from: toAddress(this.userAddress),
         fee,
-        additionalScopes: [sponsorScope],
+        additionalScopes: [sponsorScope, toAddress(this.env.issuerAddress!)],
       });
 
     return {

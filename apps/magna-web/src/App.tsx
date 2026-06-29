@@ -2525,7 +2525,7 @@ export function App() {
               label="A1 wrapper status"
               value={
                 env.zkPassportIssuanceKind === "a1"
-                  ? "fail-closed unless production wrapper proving is available"
+                  ? "local wrapper proving enabled"
                   : "not selected"
               }
             />

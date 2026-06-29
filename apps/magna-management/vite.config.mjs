@@ -51,6 +51,13 @@ const aztecBrowserDependencies = [
   "@aztec/wallets/embedded",
 ];
 
+const magnaWorkspaceDependencies = [
+  "@magna/client",
+  "@magna/contracts-bindings",
+  "@magna/core",
+  "@magna/wallet",
+];
+
 function aztecNoirWasmDevAssets() {
   const wasmByName = new Map([
     [
@@ -147,7 +154,9 @@ export default defineConfig({
   optimizeDeps: {
     // Aztec/Noir browser packages rely on package-authored worker and WASM URLs.
     // Pre-bundling rewrites those to broken `.vite/deps/main.worker.js` URLs in dev.
-    exclude: aztecBrowserDependencies,
+    // Magna workspace packages are also excluded so local dist rebuilds are not
+    // hidden behind a stale Vite dependency cache during wallet-flow debugging.
+    exclude: [...aztecBrowserDependencies, ...magnaWorkspaceDependencies],
     esbuildOptions: {
       target: "esnext",
       supported: {

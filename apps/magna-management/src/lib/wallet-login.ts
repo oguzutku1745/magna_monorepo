@@ -9,20 +9,62 @@ import {
 import {
   computeInstagramHandleHash,
   createWebAuthnWalletSession,
+  MagnaBrowserClient,
   runMagnaConsumerLogin,
+  type DiscoveredMagnaCredentialRef,
+  type MagnaConsumerLoginCredential,
   type MagnaConsumerLoginOutcome,
 } from "@magna/wallet";
 import { getManagementEnv } from "./env";
-import { clearStoredWalletState, refsForOwner } from "./storage";
+import { hydratePassportA1Witness, refsForOwner, upsertCredentialRef, type StoredCredentialRef } from "./storage";
+
+const A1_LOCAL_WITNESS_MISSING_MESSAGE =
+  "Passport A1 credential is missing its local v2 witness. Re-issue this passport credential on this device to restore A1/v2 presentation.";
+const PILOT_CREDENTIAL_UNUSABLE_MESSAGE =
+  "PII-blind pilot credentials are non-production and cannot be used for Login with Magna. Re-issue with A1/v2 support before using this credential.";
+const ACCOUNT_AUTH_NOTE_MISSING_MESSAGE =
+  "Login with Magna could not authorize the verification transaction: the passkey wallet's own signing-key " +
+  "note is not present in this session's private state (PXE), so the account cannot sign. This is an " +
+  "account/PXE sync issue, not a missing credential. Reopen the passkey wallet to resync its private state, " +
+  "then try again.";
 
 function loadPassportCredential(ownerAddress: string, issuerAddress?: string) {
-  const credential = refsForOwner(ownerAddress, { issuerAddress }).find(
-    ref => ref.kind === "passport" && ref.status === "active" && ref.normalizedClaims,
+  const passports = refsForOwner(ownerAddress, { issuerAddress }).filter(
+    ref => ref.kind === "passport" && ref.status === "active",
   );
+  const credential = passports.find(ref => ref.normalizedClaims || ref.passportCommittedClaimsV2Witness);
   if (!credential) {
+    if (passports.some(ref => ref.issuanceKind === "a1")) {
+      throw new Error(A1_LOCAL_WITNESS_MISSING_MESSAGE);
+    }
+    if (passports.some(ref => ref.issuanceKind === "pilot")) {
+      throw new Error(PILOT_CREDENTIAL_UNUSABLE_MESSAGE);
+    }
     throw new Error("No active Magna passport credential is available in this wallet session.");
   }
-  return credential;
+  return toConsumerCredential(credential);
+}
+
+function toConsumerCredential(ref: StoredCredentialRef): Partial<MagnaConsumerLoginCredential> {
+  if (ref.kind !== "passport") return ref;
+  return {
+    ...ref,
+    committedClaimsWitness: ref.passportCommittedClaimsV2Witness,
+  };
+}
+
+function credentialId(
+  ref: Pick<StoredCredentialRef, "ownerAddress" | "kind" | "claimsHash"> &
+    Partial<Pick<StoredCredentialRef, "issuerAddress" | "mode" | "rootCommitment">>,
+): string {
+  return [
+    ref.issuerAddress?.trim().toLowerCase() ?? "issuer:unknown",
+    ref.ownerAddress,
+    ref.kind,
+    ref.mode ?? "",
+    ref.claimsHash,
+    ref.rootCommitment ?? "",
+  ].join(":");
 }
 
 function instagramHandleHashFromPolicy(policy: Policy): bigint {
@@ -56,13 +98,166 @@ function loadInstagramCredential(ownerAddress: string, handleHash: bigint, issue
 
 function isMissingHintedNoteError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
+  // A missing issuer hint is identified by the client-side fetch wrappers (which wrap the issuer's
+  // specific "<x> note not found" assertions / lookup timeouts) and by those specific messages
+  // themselves. The generic aztec-nr "Failed to get a note" assertion on its OWN — i.e. NOT wrapped
+  // by a hint fetch — comes from a singular note read such as the passkey account reading its
+  // signing-key note in `is_valid_impl`, and must NOT be treated as a missing issuer hint
+  // (see isAccountAuthNoteError). The previous code matched the bare "Failed to get a note" string,
+  // which misclassified an account-auth failure as a missing credential note and produced a
+  // misleading "reopen wallet to resync" message pointing at the credential notes.
   return (
-    message.includes("Failed to get a note") ||
+    message.includes("Fetch rooted hinted notes failed") ||
+    message.includes("Fetch hinted notes failed") ||
+    message.includes("Fetch rooted hinted notes timed out") ||
+    message.includes("Fetch hinted notes timed out") ||
     message.includes("credential note not found") ||
     message.includes("status note not found") ||
     message.includes("linked credential note not found") ||
-    message.includes("linked status note not found")
+    message.includes("linked status note not found") ||
+    message.includes("root status note not found") ||
+    message.includes("root authority note not found")
   );
+}
+
+function isAccountAuthNoteError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Failed to get a note") && !isMissingHintedNoteError(error);
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string" && error) return error;
+  return String(error);
+}
+
+function verificationFailureLabel(verification: ReturnType<typeof resolveRequirementCredential>): string {
+  const credential = verification.credential;
+  const details = [
+    `requirement ${verification.id}`,
+    verification.kind,
+    `${credential.kind ?? "credential"} claims hash ${credential.claimsHash}`,
+  ];
+  if (credential.kind === "passport" && "rootCommitment" in credential && credential.rootCommitment) {
+    details.push(`root ${credential.rootCommitment}`);
+  }
+  if (credential.kind === "instagram" && "instagramHandle" in credential && credential.instagramHandle) {
+    details.push(`@${credential.instagramHandle}`);
+  }
+  return details.join(", ");
+}
+
+function annotateMissingHintedNoteError(
+  error: unknown,
+  verification: ReturnType<typeof resolveRequirementCredential>,
+): Error {
+  return new Error(
+    `PXE could not read private notes for ${verificationFailureLabel(verification)}. Cause: ${errorMessage(error)}`,
+  );
+}
+
+function annotateAccountAuthNoteError(error: unknown): Error {
+  return new Error(`${ACCOUNT_AUTH_NOTE_MISSING_MESSAGE} Cause: ${errorMessage(error)}`);
+}
+
+/**
+ * Diagnostic only (no behavioral change to the verify path). Runs after a verify send fails with
+ * the generic "Failed to get a note" assertion to determine whether the cause is the passkey
+ * account's own signing-key note being absent from this session's PXE. Logs the note count plus
+ * the PXE-registered senders/accounts so we can confirm the root cause from the console.
+ */
+async function logAccountAuthNoteDiagnostic(input: {
+  wallet: Awaited<ReturnType<typeof createWebAuthnWalletSession>>["wallet"];
+  ownerAddress: string;
+  env: ReturnType<typeof getManagementEnv>;
+  cause: unknown;
+}): Promise<void> {
+  try {
+    const client = new MagnaBrowserClient(input.wallet, input.env, input.ownerAddress);
+    const diagnostic = await client.diagnoseAccountAuthNote(input.ownerAddress);
+    const interpretation =
+      diagnostic.noteCount === 0
+        ? "Account signing-key note is MISSING from PXE even after an on-demand account-contract sync -> the note is not discoverable in this session (delivery/decryption/anchor-block issue)."
+        : diagnostic.noteCount > 0
+          ? "Account signing-key note IS discoverable on demand -> the verify send did not have it populated in time; proactively warming the account's own note before the send should fix login."
+          : "Account note enumeration unavailable in this PXE; cannot determine.";
+    console.warn("[magna][login-diagnostic] passkey account signing-key note check", {
+      ownerAddress: input.ownerAddress,
+      signingKeyNoteCount: diagnostic.noteCount,
+      diagnosticError: diagnostic.error,
+      pxeRegisteredSenders: diagnostic.senders,
+      pxeRegisteredAccounts: diagnostic.accounts,
+      verifyFailureCause: errorMessage(input.cause),
+      interpretation,
+    });
+  } catch (diagnosticError) {
+    console.warn("[magna][login-diagnostic] failed to run account auth-note diagnostic", diagnosticError);
+  }
+}
+
+function matchesDiscoveredRef(existing: StoredCredentialRef, discovered: DiscoveredMagnaCredentialRef): boolean {
+  return (
+    existing.ownerAddress === discovered.ownerAddress &&
+    existing.kind === discovered.kind &&
+    existing.claimsHash === discovered.claimsHash &&
+    (existing.mode ?? "passport") === discovered.mode &&
+    (existing.rootCommitment ?? "") === (discovered.rootCommitment ?? "")
+  );
+}
+
+function hasSameCredentialClaims(existing: StoredCredentialRef, discovered: DiscoveredMagnaCredentialRef): boolean {
+  return (
+    existing.ownerAddress === discovered.ownerAddress &&
+    existing.kind === discovered.kind &&
+    existing.claimsHash === discovered.claimsHash
+  );
+}
+
+function storedRefFromDiscovered(
+  discovered: DiscoveredMagnaCredentialRef,
+  issuerAddress: string | undefined,
+  existing?: StoredCredentialRef,
+): StoredCredentialRef {
+  const now = new Date().toISOString();
+  return hydratePassportA1Witness({
+    ...existing,
+    id: credentialId({
+      ownerAddress: discovered.ownerAddress,
+      kind: discovered.kind,
+      claimsHash: discovered.claimsHash,
+      issuerAddress: issuerAddress ?? existing?.issuerAddress,
+      mode: discovered.mode,
+      rootCommitment: discovered.rootCommitment,
+    }),
+    ownerAddress: discovered.ownerAddress,
+    kind: discovered.kind,
+    status: "active",
+    claimsHash: discovered.claimsHash,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+    issuerAddress: issuerAddress ?? existing?.issuerAddress,
+    mode: discovered.mode,
+    rootCommitment: discovered.rootCommitment ?? existing?.rootCommitment,
+    issuanceTxHash: discovered.issuanceTxHash ?? existing?.issuanceTxHash,
+  });
+}
+
+function normalizeAddress(value?: string): string {
+  return value?.trim().toLowerCase() ?? "";
+}
+
+function sessionOwnerAddress(session: { activeAccount: { address: string }; metadata?: Record<string, string> }, env: ReturnType<typeof getManagementEnv>): string {
+  const activeAddress = session.activeAccount.address;
+  const normalizedActive = normalizeAddress(activeAddress);
+  const isFeePayer =
+    normalizedActive !== "" &&
+    [session.metadata?.feePayer, env.orchestratorAddress].some(value => normalizeAddress(value) === normalizedActive);
+  if (isFeePayer) {
+    throw new Error(
+      "Magna passkey session resolved to the local fee payer/orchestrator account, not the passkey wallet. Reopen the passkey wallet before Login with Magna.",
+    );
+  }
+  return activeAddress;
 }
 
 function verificationRequirements(policy: Policy, requirements?: LoginRequirement[]): LoginRequirement[] {
@@ -109,6 +304,28 @@ function resolveRequirementCredential(input: {
   throw new Error("Unsupported Magna credential type for wallet login.");
 }
 
+async function reconcileStoredRefsFromPxe(input: {
+  session: Awaited<ReturnType<typeof createWebAuthnWalletSession>>;
+  ownerAddress: string;
+  env: ReturnType<typeof getManagementEnv>;
+}): Promise<StoredCredentialRef[]> {
+  const client = new MagnaBrowserClient(input.session.wallet, input.env, input.ownerAddress);
+  const discovered = await client.discoverCredentialRefs(input.ownerAddress);
+  const existingRefs = refsForOwner(input.ownerAddress, { issuerAddress: input.env.issuerAddress });
+  const reconciled: StoredCredentialRef[] = [];
+
+  for (const discoveredRef of discovered) {
+    const existing =
+      existingRefs.find(ref => matchesDiscoveredRef(ref, discoveredRef)) ??
+      existingRefs.find(ref => hasSameCredentialClaims(ref, discoveredRef));
+    const stored = storedRefFromDiscovered(discoveredRef, input.env.issuerAddress, existing);
+    upsertCredentialRef(stored);
+    reconciled.push(stored);
+  }
+
+  return reconciled;
+}
+
 export async function runWalletLoginForRequest(input: {
   policy: Policy;
   requirements?: LoginRequirement[];
@@ -130,24 +347,73 @@ export async function runWalletLoginForRequest(input: {
         `Magna wallet is ${session.metadata?.deploymentStatus ?? "not deployed"}. Deploy the passkey wallet before Login with Magna.`,
       );
     }
-    const resolved = verificationRequirements(input.policy, input.requirements).map(requirement =>
-      resolveRequirementCredential({
-        requirement,
-        ownerAddress: session.activeAccount.address,
-        issuerAddress: env.issuerAddress,
-      }),
-    );
+    const ownerAddress = sessionOwnerAddress(session, env);
+    const requirements = verificationRequirements(input.policy, input.requirements);
+    let reconciledBeforeVerification = false;
+    try {
+      await reconcileStoredRefsFromPxe({ session, ownerAddress, env });
+      reconciledBeforeVerification = true;
+    } catch (reconcileError) {
+      console.warn("magna credential preflight discovery failed", reconcileError);
+    }
     input.onVerifying?.();
     const receipts = [];
-    for (const verification of resolved) {
-      const outcome = await runMagnaConsumerLogin({
-        env,
-        wallet: session.wallet,
-        activeAddress: session.activeAccount.address,
-        policy: verification.policy,
-        consumerGatewayAddress: input.consumerGatewayAddress,
-        credential: verification.credential,
+    for (const requirement of requirements) {
+      let reconciledFromPxe = false;
+      let verification = resolveRequirementCredential({
+        requirement,
+        ownerAddress,
+        issuerAddress: env.issuerAddress,
       });
+      let outcome: MagnaConsumerLoginOutcome;
+      try {
+        outcome = await runMagnaConsumerLogin({
+          env,
+          wallet: session.wallet,
+          activeAddress: ownerAddress,
+          policy: verification.policy,
+          consumerGatewayAddress: input.consumerGatewayAddress,
+          credential: verification.credential,
+        });
+      } catch (error) {
+        if (isAccountAuthNoteError(error)) {
+          await logAccountAuthNoteDiagnostic({ wallet: session.wallet, ownerAddress, env, cause: error });
+          throw annotateAccountAuthNoteError(error);
+        }
+        if (!isMissingHintedNoteError(error) || reconciledFromPxe || reconciledBeforeVerification) {
+          throw isMissingHintedNoteError(error) ? annotateMissingHintedNoteError(error, verification) : error;
+        }
+
+        const reconciled = await reconcileStoredRefsFromPxe({ session, ownerAddress, env });
+        reconciledFromPxe = true;
+        if (reconciled.length === 0) {
+          throw annotateMissingHintedNoteError(error, verification);
+        }
+
+        verification = resolveRequirementCredential({
+          requirement,
+          ownerAddress,
+          issuerAddress: env.issuerAddress,
+        });
+        try {
+          outcome = await runMagnaConsumerLogin({
+            env,
+            wallet: session.wallet,
+            activeAddress: ownerAddress,
+            policy: verification.policy,
+            consumerGatewayAddress: input.consumerGatewayAddress,
+            credential: verification.credential,
+          });
+        } catch (retryError) {
+          if (isAccountAuthNoteError(retryError)) {
+            await logAccountAuthNoteDiagnostic({ wallet: session.wallet, ownerAddress, env, cause: retryError });
+            throw annotateAccountAuthNoteError(retryError);
+          }
+          throw isMissingHintedNoteError(retryError)
+            ? annotateMissingHintedNoteError(retryError, verification)
+            : retryError;
+        }
+      }
       receipts.push({
         id: verification.id,
         kind: verification.kind,
@@ -158,10 +424,10 @@ export async function runWalletLoginForRequest(input: {
   } catch (error) {
     console.warn("magna verification failed", error);
     if (isMissingHintedNoteError(error)) {
-      clearStoredWalletState();
       throw new Error(
-        "Stored Magna credential notes were not found on the current Aztec chain. " +
-          "Reopen your wallet and re-issue the required credentials.",
+        "Stored Magna credential metadata exists, but PXE could not read the matching private notes for this wallet, issuer, and chain. " +
+          "Reopen the wallet to resync PXE, then try Login with Magna again. " +
+          `Last lookup failure: ${errorMessage(error)}`,
       );
     }
     throw error;

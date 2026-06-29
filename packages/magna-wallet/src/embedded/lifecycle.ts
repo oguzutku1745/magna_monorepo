@@ -1,6 +1,7 @@
 import { getInitialTestAccountsData, INITIAL_TEST_SIGNING_KEYS } from "@aztec/accounts/testing";
 import { getSchnorrAccountContractAddress } from "@aztec/accounts/schnorr";
 import { AztecAddress } from "@aztec/aztec.js/addresses";
+import type { Account } from "@aztec/aztec.js/account";
 import { createAztecNodeClient, waitForNode } from "@aztec/aztec.js/node";
 import type { ChainInfo } from "@aztec/aztec.js/account";
 import { ContractInitializationStatus, type AccountManager } from "@aztec/aztec.js/wallet";
@@ -109,15 +110,25 @@ type EmbeddedWalletStoredAccount = {
   signingKey: Buffer;
 };
 
+type EmbeddedWalletStoreAccountRecord = EmbeddedWalletStoredAccount & {
+  alias?: string;
+};
+
 export type EmbeddedWalletWithInternals = EmbeddedWallet & {
   walletDB?: {
     retrieveAccount: (address: AztecAddress | string) => Promise<EmbeddedWalletStoredAccount>;
+    deleteAccount?: (address: AztecAddress) => Promise<void>;
+    storeAccount?: (
+      address: AztecAddress,
+      account: EmbeddedWalletStoreAccountRecord,
+    ) => Promise<void>;
   };
   pxe?: {
     debug?: {
       sync?: () => Promise<void>;
     };
   };
+  getAccountFromAddress?: (address: AztecAddress) => Promise<Account>;
 };
 
 function readStorageMode(ephemeral: boolean): "ephemeral" | "persistent" {
@@ -395,6 +406,23 @@ function getPreferredAccount(accounts: WalletAccount[], preferredAddress?: strin
   return first;
 }
 
+function includePreferredAccount(
+  accounts: WalletAccount[],
+  preferredAddress: string | undefined,
+  fallbackAlias: string,
+): WalletAccount[] {
+  if (!preferredAddress || accounts.some(account => account.address === preferredAddress)) {
+    return accounts;
+  }
+  return [
+    ...accounts,
+    {
+      alias: fallbackAlias,
+      address: preferredAddress,
+    },
+  ];
+}
+
 export async function buildWalletSession(
   kind: WalletSessionKind,
   label: string,
@@ -425,6 +453,11 @@ export async function buildWalletSession(
       label,
       accountCount: accounts.length,
     });
+  }
+  accounts = includePreferredAccount(accounts, preferredAddress, label);
+  const feePayerAddress = metadata?.feePayer;
+  if (feePayerAddress?.startsWith("0x") && feePayerAddress !== preferredAddress) {
+    accounts = accounts.filter(account => account.address !== feePayerAddress);
   }
   return {
     kind,

@@ -226,7 +226,7 @@ describe("verifyRootRecoveryPreflightThroughBackend", () => {
       rootCommitment: "12345",
       credentialValidUntil: "1893456000",
       wrapperProof: {
-        proof: "wrapper-proof",
+        proof: new Uint8Array([0, 1, 2, 255]),
         publicInputs: ["67890", "2", "3", "21", "1893456000", "0", "555", "666", "777", "888"],
       },
       wrapperPublicInputs: ["67890", "2", "3", "21", "1893456000", "0", "555", "666", "777", "888"],
@@ -239,6 +239,7 @@ describe("verifyRootRecoveryPreflightThroughBackend", () => {
 
     const body = JSON.parse(String(fetchMock.mock.calls[0][1].body));
     expect(body.schema).toBe("passport-a1-v1");
+    expect(body.wrapperProof.proof).toBe("0x000102ff");
     expect(body.queryResult).toBeUndefined();
     expect(body.committedInputs).toBeUndefined();
     expect(body.originalQuery).toBeUndefined();

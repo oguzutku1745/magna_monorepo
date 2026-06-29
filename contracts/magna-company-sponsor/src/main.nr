@@ -6,7 +6,7 @@ use aztec::macros::aztec;
 pub contract MagnaCompanySponsor {
     use aztec::{
         macros::{
-            functions::{allow_phase_change, external, initializer, only_self, view},
+            functions::{allow_phase_change, external, initializer, internal, only_self, view},
             storage::storage,
         },
         note::HintedNote,
@@ -25,7 +25,7 @@ pub contract MagnaCompanySponsor {
         },
     };
     use magna_company_rights_registry::MagnaCompanyRightsRegistry;
-    use magna_lib::Policy;
+    use magna_lib::{PassportCommittedClaimsWitness, Policy};
 
     #[storage]
     struct Storage<Context> {
@@ -81,6 +81,14 @@ pub contract MagnaCompanySponsor {
         self.storage.max_fee_cap.read()
     }
 
+    #[internal("private")]
+    fn assert_fee_cap() {
+        let gas_settings = self.context.gas_settings();
+        let max_fee_upper_bound = (gas_settings.gas_limits.l2_gas as u128 * gas_settings.max_fees_per_gas.fee_per_l2_gas)
+            + (gas_settings.gas_limits.da_gas as u128 * gas_settings.max_fees_per_gas.fee_per_da_gas);
+        assert(max_fee_upper_bound <= self.storage.max_fee_cap.read(), "fee cap exceeded");
+    }
+
     #[external("private")]
     #[allow_phase_change]
     fn sponsored_verify(
@@ -92,14 +100,7 @@ pub contract MagnaCompanySponsor {
         sponsor_slot: u8,
     ) {
         let caller = self.msg_sender();
-        let gas_settings = self.context.gas_settings();
-        let l2_gas_limit = (gas_settings.gas_limits.l2_gas as u128)
-            + (gas_settings.teardown_gas_limits.l2_gas as u128);
-        let da_gas_limit = (gas_settings.gas_limits.da_gas as u128)
-            + (gas_settings.teardown_gas_limits.da_gas as u128);
-        let max_fee_upper_bound = (l2_gas_limit * gas_settings.max_fees_per_gas.fee_per_l2_gas)
-            + (da_gas_limit * gas_settings.max_fees_per_gas.fee_per_da_gas);
-        assert(max_fee_upper_bound <= self.storage.max_fee_cap.read(), "fee cap exceeded");
+        self.internal.assert_fee_cap();
 
         // This contract becomes the fee payer for the transaction before it forwards
         // the verification call into the issuer's sponsored path.
@@ -126,6 +127,38 @@ pub contract MagnaCompanySponsor {
 
     #[external("private")]
     #[allow_phase_change]
+    fn sponsored_verify_v2(
+        policy: Policy,
+        hinted_credential: HintedNote<CredentialNote>,
+        hinted_status: HintedNote<StatusNote>,
+        claims_witness: PassportCommittedClaimsWitness,
+        sponsor_slot: u8,
+    ) {
+        let caller = self.msg_sender();
+        self.internal.assert_fee_cap();
+
+        self.context.set_as_fee_payer();
+        self.context.end_setup();
+
+        MagnaIssuer::at(self.storage.issuer.read())
+            .verify_sponsored_v2(
+                caller,
+                policy,
+                hinted_credential,
+                hinted_status,
+                claims_witness,
+                sponsor_slot,
+            )
+            .call(self.context);
+
+        MagnaCompanyRightsRegistry::at(self.storage.rights_registry.read())
+            .consume_right(1 as u128)
+            .enqueue(self.context);
+        self.enqueue_self._meter_sponsored_verify();
+    }
+
+    #[external("private")]
+    #[allow_phase_change]
     fn sponsored_verify_instagram(
         policy: Policy,
         hinted_credential: HintedNote<CredentialNote>,
@@ -134,14 +167,7 @@ pub contract MagnaCompanySponsor {
         sponsor_slot: u8,
     ) {
         let caller = self.msg_sender();
-        let gas_settings = self.context.gas_settings();
-        let l2_gas_limit = (gas_settings.gas_limits.l2_gas as u128)
-            + (gas_settings.teardown_gas_limits.l2_gas as u128);
-        let da_gas_limit = (gas_settings.gas_limits.da_gas as u128)
-            + (gas_settings.teardown_gas_limits.da_gas as u128);
-        let max_fee_upper_bound = (l2_gas_limit * gas_settings.max_fees_per_gas.fee_per_l2_gas)
-            + (da_gas_limit * gas_settings.max_fees_per_gas.fee_per_da_gas);
-        assert(max_fee_upper_bound <= self.storage.max_fee_cap.read(), "fee cap exceeded");
+        self.internal.assert_fee_cap();
 
         self.context.set_as_fee_payer();
         self.context.end_setup();
@@ -176,14 +202,7 @@ pub contract MagnaCompanySponsor {
         sponsor_slot: u8,
     ) {
         let caller = self.msg_sender();
-        let gas_settings = self.context.gas_settings();
-        let l2_gas_limit = (gas_settings.gas_limits.l2_gas as u128)
-            + (gas_settings.teardown_gas_limits.l2_gas as u128);
-        let da_gas_limit = (gas_settings.gas_limits.da_gas as u128)
-            + (gas_settings.teardown_gas_limits.da_gas as u128);
-        let max_fee_upper_bound = (l2_gas_limit * gas_settings.max_fees_per_gas.fee_per_l2_gas)
-            + (da_gas_limit * gas_settings.max_fees_per_gas.fee_per_da_gas);
-        assert(max_fee_upper_bound <= self.storage.max_fee_cap.read(), "fee cap exceeded");
+        self.internal.assert_fee_cap();
 
         self.context.set_as_fee_payer();
         self.context.end_setup();
@@ -210,6 +229,42 @@ pub contract MagnaCompanySponsor {
 
     #[external("private")]
     #[allow_phase_change]
+    fn sponsored_verify_linked_v2(
+        policy: Policy,
+        hinted_root_status: HintedNote<RootStatusNote>,
+        hinted_root_authority: HintedNote<RootAuthorityNote>,
+        hinted_credential: HintedNote<LinkedCredentialNote>,
+        hinted_status: HintedNote<LinkedStatusNote>,
+        claims_witness: PassportCommittedClaimsWitness,
+        sponsor_slot: u8,
+    ) {
+        let caller = self.msg_sender();
+        self.internal.assert_fee_cap();
+
+        self.context.set_as_fee_payer();
+        self.context.end_setup();
+
+        MagnaIssuer::at(self.storage.issuer.read())
+            .verify_linked_sponsored_v2(
+                caller,
+                policy,
+                hinted_root_status,
+                hinted_root_authority,
+                hinted_credential,
+                hinted_status,
+                claims_witness,
+                sponsor_slot,
+            )
+            .call(self.context);
+
+        MagnaCompanyRightsRegistry::at(self.storage.rights_registry.read())
+            .consume_right(1 as u128)
+            .enqueue(self.context);
+        self.enqueue_self._meter_sponsored_verify();
+    }
+
+    #[external("private")]
+    #[allow_phase_change]
     fn sponsored_verify_linked_instagram(
         policy: Policy,
         hinted_root_status: HintedNote<RootStatusNote>,
@@ -220,14 +275,7 @@ pub contract MagnaCompanySponsor {
         sponsor_slot: u8,
     ) {
         let caller = self.msg_sender();
-        let gas_settings = self.context.gas_settings();
-        let l2_gas_limit = (gas_settings.gas_limits.l2_gas as u128)
-            + (gas_settings.teardown_gas_limits.l2_gas as u128);
-        let da_gas_limit = (gas_settings.gas_limits.da_gas as u128)
-            + (gas_settings.teardown_gas_limits.da_gas as u128);
-        let max_fee_upper_bound = (l2_gas_limit * gas_settings.max_fees_per_gas.fee_per_l2_gas)
-            + (da_gas_limit * gas_settings.max_fees_per_gas.fee_per_da_gas);
-        assert(max_fee_upper_bound <= self.storage.max_fee_cap.read(), "fee cap exceeded");
+        self.internal.assert_fee_cap();
 
         self.context.set_as_fee_payer();
         self.context.end_setup();

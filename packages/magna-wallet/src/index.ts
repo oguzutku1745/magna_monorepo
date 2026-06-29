@@ -7,6 +7,10 @@ export * from "./webauthn/account-contract.js";
 export * from "./engine/verification-engine.js";
 export * from "./engine/encoding.js";
 export * from "./engine/zkpassport-safe-witness.js";
+export {
+  computeZkPassportParameterCommitmentManifestCandidates,
+  resolveZkPassportParameterCommitmentManifestFromOuterPublicInputs,
+} from "./engine/zkpassport-safe-witness.js";
 export * from "./engine/fees.js";
 export * from "./engine/ghost.js";
 export * from "./engine/root.js";

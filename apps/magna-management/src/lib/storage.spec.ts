@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   loadCredentialRefs,
   loadWalletProfile,
+  readPassportA1Witness,
   reconcileStoredChainFingerprint,
   refsForOwner,
   saveCredentialRefs,
+  savePassportA1Witness,
   saveWalletProfile,
   upsertCredentialRef,
   type StoredCredentialRef,
@@ -99,6 +101,40 @@ describe("credential ref storage", () => {
     expect(stored.normalizedClaims).toBeUndefined();
   });
 
+  it("hydrates rediscovered passport refs from the separate A1 witness cache", () => {
+    const witness = {
+      schema: "passport-committed-claims-v2" as const,
+      credentialAuthenticity: "passport-a1" as const,
+      minAgeProven: 21,
+      nationalityAlpha3Packed: "5526610",
+      nationalityBlind: "111",
+      expiryTs: "1942358399",
+      expiryBlind: "222",
+    };
+    const ref = passportRef({
+      id: "a1",
+      issuerAddress: "0xissuer",
+      issuanceKind: "a1",
+      normalizedClaims: undefined,
+      passportCommittedClaimsV2Witness: witness,
+    });
+
+    savePassportA1Witness(ref);
+    saveCredentialRefs([
+      passportRef({
+        id: "rediscovered",
+        issuerAddress: "0xissuer",
+        normalizedClaims: undefined,
+        passportCommittedClaimsV2Witness: undefined,
+      }),
+    ]);
+
+    expect(loadCredentialRefs()[0]).toMatchObject({
+      issuanceKind: "a1",
+      passportCommittedClaimsV2Witness: witness,
+    });
+  });
+
   it("preserves existing legacy refs with normalized claims", () => {
     const legacy = passportRef({ id: "legacy", issuanceKind: "legacy" });
 
@@ -114,7 +150,24 @@ describe("credential ref storage", () => {
   });
 
   it("clears wallet-local credential state when the chain fingerprint changes", () => {
+    const witness = {
+      schema: "passport-committed-claims-v2" as const,
+      credentialAuthenticity: "passport-a1" as const,
+      minAgeProven: 21,
+      nationalityAlpha3Packed: "5526610",
+      nationalityBlind: "111",
+      expiryTs: "1942358399",
+      expiryBlind: "222",
+    };
     saveCredentialRefs([passportRef({ id: "stale", issuerAddress: "0xoldissuer" })]);
+    savePassportA1Witness(
+      passportRef({
+        id: "a1",
+        issuerAddress: "0xoldissuer",
+        normalizedClaims: undefined,
+        passportCommittedClaimsV2Witness: witness,
+      }),
+    );
     saveWalletProfile({
       address: ownerAddress,
       walletKind: "webauthn",
@@ -128,6 +181,15 @@ describe("credential ref storage", () => {
     expect(reconcileStoredChainFingerprint("chain-b")).toBe(true);
     expect(loadCredentialRefs()).toEqual([]);
     expect(loadWalletProfile()).toBeNull();
+    expect(
+      readPassportA1Witness({
+        ownerAddress,
+        issuerAddress: "0xoldissuer",
+        mode: "rooted",
+        rootCommitment: "99",
+        claimsHash: "123",
+      }),
+    ).toEqual(witness);
     expect(reconcileStoredChainFingerprint("chain-b")).toBe(false);
   });
 });
