@@ -19,7 +19,6 @@ const expectedParameters = [
   "zkpassport_outer_public_inputs",
   "disclose_mask",
   "disclosed_bytes",
-  "is_id_card",
   "nationality",
   "expiry_mrz",
   "nationality_blind",
@@ -65,7 +64,7 @@ const bundle = {
 };
 const bundleBytes = Buffer.from(JSON.stringify(bundle));
 const bundleHash = createHash("sha256").update(bundleBytes).digest("hex");
-const expectedBundleHash = "a3b6b963911d5ec9021a302a38be59b4016f7def2d182e15dbb280a8a19f844a";
+const expectedBundleHash = "562cc3ad7b512e6b0ad966313c43e2c497bb80747a0df822f07b87520ae7e91f";
 if (bundleHash !== expectedBundleHash) {
   throw new Error(`Refusing to sync unpinned Passport A2 bundle hash ${bundleHash}.`);
 }

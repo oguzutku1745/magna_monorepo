@@ -10,7 +10,6 @@ expiry_blind = 0
 expiry_mrz = [0, 0, 0, 0, 0, 0]
 expiry_ts = 0
 ghost_owner = 0
-is_id_card = false
 issuer = 0
 min_age_proven = 0
 nationality = [0, 0, 0]

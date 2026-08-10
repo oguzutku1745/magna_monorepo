@@ -44,6 +44,10 @@ async function fixture(): Promise<{
   const bytes = Array<number>(90).fill(0);
   const nationality = Array.from(new TextEncoder().encode("TUR"));
   const expiry = Array.from(new TextEncoder().encode("310720"));
+  mask[0] = 1;
+  mask[1] = 1;
+  bytes[0] = "P".charCodeAt(0);
+  bytes[1] = "<".charCodeAt(0);
   nationality.forEach((value, index) => {
     mask[54 + index] = 1;
     bytes[54 + index] = value;
@@ -128,12 +132,31 @@ describe("Passport A2 inputs", () => {
     assert.equal("scopedNullifier" in built.outputs, false);
     assert.equal("bindCommitment" in built.outputs, false);
     assert.equal(built.outputs.rootCommitment, built.metadata.rootCommitment.toString());
+    assert.equal("is_id_card" in built.inputs, false);
+    assert.equal(built.metadata.mrzLayout, "passport");
   });
 
   it("rejects fabricated nationality before proving", async () => {
     const { witness, registryClient } = await fixture();
     await assert.rejects(
       () => buildPassportWrapperInputs({ ...witness, nationalityAlpha3: "USA" }, { registryClient }),
+      /do not match the authenticated zkPassport disclosure/,
+    );
+  });
+
+  it("requires an authenticated supported document type", async () => {
+    const { witness, registryClient } = await fixture();
+    const fields = witness.zkPassportOuterProof.proof.replace(/^0x/, "").match(/.{64}/g) ?? [];
+    fields[5] = fieldHex(123n);
+    await assert.rejects(
+      () =>
+        buildPassportWrapperInputs(
+          {
+            ...witness,
+            zkPassportOuterProof: { ...witness.zkPassportOuterProof, proof: fields.join("") },
+          },
+          { registryClient },
+        ),
       /do not match the authenticated zkPassport disclosure/,
     );
   });

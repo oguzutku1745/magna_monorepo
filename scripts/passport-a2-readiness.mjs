@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const failures = [];
-const expectedArtifactHash = "a3b6b963911d5ec9021a302a38be59b4016f7def2d182e15dbb280a8a19f844a";
+const expectedArtifactHash = "562cc3ad7b512e6b0ad966313c43e2c497bb80747a0df822f07b87520ae7e91f";
 
 function parseEnvFile(path) {
   if (!existsSync(path)) return {};

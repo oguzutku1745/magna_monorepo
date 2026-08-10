@@ -20,6 +20,8 @@ global ZKPASSPORT_OUTER_VKEY_SIZE: u32 = 115;
 global ZKPASSPORT_PROOF_TYPE_HONK_ZK: u32 = 6;
 global ZKPASSPORT_MRZ_LENGTH: u32 = 90;
 global ZKPASSPORT_BIND_LENGTH: u32 = 509;
+global PASSPORT_DOCUMENT_TYPE: u8 = 80; // "P"
+global ID_CARD_DOCUMENT_TYPE: u8 = 73; // "I"
 
 fn contains(values: [Field; 3], expected: Field) -> bool {
     (values[0] == expected) | (values[1] == expected) | (values[2] == expected)
@@ -28,10 +30,14 @@ fn contains(values: [Field; 3], expected: Field) -> bool {
 fn assert_disclosed_claims(
     disclose_mask: [bool; ZKPASSPORT_MRZ_LENGTH],
     disclosed_bytes: [u8; ZKPASSPORT_MRZ_LENGTH],
-    is_id_card: bool,
     nationality: [u8; 3],
     expiry_mrz: [u8; 6],
 ) {
+    assert(disclose_mask[0], "Document type byte is not disclosed");
+    assert(disclose_mask[1], "Document subtype byte is not disclosed");
+    let is_passport = disclosed_bytes[0] == PASSPORT_DOCUMENT_TYPE;
+    let is_id_card = disclosed_bytes[0] == ID_CARD_DOCUMENT_TYPE;
+    assert(is_passport | is_id_card, "Unsupported authenticated document type");
     let nationality_offset = if is_id_card { 45 } else { 54 };
     let expiry_offset = if is_id_card { 38 } else { 65 };
 
@@ -102,7 +108,6 @@ fn main(
     zkpassport_outer_public_inputs: [Field; ZKPASSPORT_OUTER_PUBLIC_INPUT_COUNT],
     disclose_mask: [bool; ZKPASSPORT_MRZ_LENGTH],
     disclosed_bytes: [u8; ZKPASSPORT_MRZ_LENGTH],
-    is_id_card: bool,
     nationality: [u8; 3],
     expiry_mrz: [u8; 6],
     nationality_blind: Field,
@@ -136,7 +141,6 @@ fn main(
     assert_disclosed_claims(
         disclose_mask,
         disclosed_bytes,
-        is_id_card,
         nationality,
         expiry_mrz,
     );

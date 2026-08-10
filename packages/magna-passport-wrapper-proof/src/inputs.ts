@@ -36,6 +36,9 @@ const FIELD_MODULUS =
 const MAX_U64 = (1n << 64n) - 1n;
 const MRZ_LENGTH = 90;
 const BIND_LENGTH = 509;
+const MRZ_SUBTYPE_BYTES = Array.from("<ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", char =>
+  char.charCodeAt(0),
+);
 const LAYOUTS: Record<ZkPassportMrzLayout, { nationality: number; expiry: number }> = {
   passport: { nationality: 54, expiry: 65 },
   id_card: { nationality: 45, expiry: 38 },
@@ -107,12 +110,17 @@ function expiryMrz(expiryTs: bigint): number[] {
 
 function buildDisclosure(
   layout: ZkPassportMrzLayout,
+  documentType: number[],
   nationality: number[],
   expiry: number[],
 ): { mask: number[]; bytes: number[] } {
   const mask = Array<number>(MRZ_LENGTH).fill(0);
   const bytes = Array<number>(MRZ_LENGTH).fill(0);
   const offsets = LAYOUTS[layout];
+  documentType.forEach((value, index) => {
+    mask[index] = 1;
+    bytes[index] = value;
+  });
   nationality.forEach((value, index) => {
     mask[offsets.nationality + index] = 1;
     bytes[offsets.nationality + index] = value;
@@ -228,18 +236,29 @@ export async function buildPassportWrapperInputs(
     getParamCommitmentsFromOuterProof(outerProofData).map(value => value.toString()),
   );
   const expiryBytes = expiryMrz(expiryTs);
+  const documentTypeCandidates = (Object.keys(LAYOUTS) as ZkPassportMrzLayout[]).flatMap(layout => {
+    const firstByte = layout === "passport" ? "P".charCodeAt(0) : "I".charCodeAt(0);
+    return MRZ_SUBTYPE_BYTES.map(secondByte => ({ layout, bytes: [firstByte, secondByte] }));
+  });
   const disclosureCandidates = await Promise.all(
-    (Object.keys(LAYOUTS) as ZkPassportMrzLayout[]).map(async layout => {
-      const disclosure = buildDisclosure(layout, nationalityBytes, expiryBytes);
+    documentTypeCandidates.map(async candidate => {
+      const disclosure = buildDisclosure(
+        candidate.layout,
+        candidate.bytes,
+        nationalityBytes,
+        expiryBytes,
+      );
       const commitment = await getDiscloseParameterCommitment(disclosure.mask, disclosure.bytes);
-      return { layout, disclosure, commitment };
+      return { layout: candidate.layout, disclosure, commitment };
     }),
   );
   const disclosureMatch = disclosureCandidates.find(candidate =>
     outerCommitments.has(candidate.commitment.toString()),
   );
   if (!disclosureMatch) {
-    throw new Error("Nationality and expiry do not match the authenticated zkPassport disclosure.");
+    throw new Error(
+      "Document type, nationality, and expiry do not match the authenticated zkPassport disclosure.",
+    );
   }
   const bindData = paddedBindData(witness.bind.customData);
   const [ageCommitment, bindCommitment] = await Promise.all([
@@ -306,7 +325,6 @@ export async function buildPassportWrapperInputs(
       zkpassport_outer_public_inputs: recursive.publicInputs,
       disclose_mask: disclosureMatch.disclosure.mask.map(Boolean),
       disclosed_bytes: disclosureMatch.disclosure.bytes.map(String),
-      is_id_card: disclosureMatch.layout === "id_card",
       nationality: nationalityBytes.map(String),
       expiry_mrz: expiryBytes.map(String),
       nationality_blind: nationalityBlind.toString(),

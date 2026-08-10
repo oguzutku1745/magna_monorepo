@@ -102,6 +102,9 @@ describe("startPassportZkRequest", () => {
       metadata: { name: "Magna", logo: "https://magna.test/logo.png", purpose: "Issue" },
     });
     expect(mockState.sdk?.request).toHaveBeenCalledWith(expect.objectContaining({ mode: "compressed" }));
+    expect(queryBuilder.disclose).toHaveBeenNthCalledWith(1, "document_type");
+    expect(queryBuilder.disclose).toHaveBeenNthCalledWith(2, "nationality");
+    expect(queryBuilder.disclose).toHaveBeenNthCalledWith(3, "expiry_date");
     expect(queryBuilder.bind).toHaveBeenCalledWith("custom_data", "magna-passport-a2:issue:scope:0xactive");
   });
 

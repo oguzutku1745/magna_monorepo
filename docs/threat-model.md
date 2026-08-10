@@ -229,23 +229,7 @@ deterministic function of the proof-bound scoped nullifier, so it is a stable pe
 that can be emitted as an issuance nullifier. Placing that check in the contract rather than the API
 preserves the guarantee even if the API is compromised.
 
-### 6.2 `is_id_card` is an unconstrained prover input
-
-`is_id_card` selects which MRZ offsets are read for nationality and expiry, but is not constrained
-against the document type actually proven — the zkPassport disclosure commitment covers the mask and
-disclosed bytes, not the layout.
-
-**Impact is bounded.** A prover cannot inject arbitrary bytes, only reinterpret bytes from their own
-authenticated MRZ at the alternate offsets, and only where the disclosure mask shows those bytes
-were genuinely revealed. For a TD3 passport read with ID-card offsets, the nationality offset falls
-in the document-number field, limiting reachable values to the characters present there.
-
-**Status:** no satisfying witness has been demonstrated, so this is a hardening item rather than a
-known exploit. An input that selects a read offset should nonetheless be constrained — either by
-binding the layout into the disclosure commitment or by deriving `is_id_card` from authenticated
-data.
-
-### 6.3 Verification receipts not emitted
+### 6.2 Verification receipts not emitted
 
 `MagnaIssuer.verify` updates `verify_meter_count` but emits no receipt event. A relying party
 receives only the verification transaction hash through the signed session assertion. Typed private
@@ -309,6 +293,17 @@ note randomness — to the verification API. Those keys are now in `PASSPORT_A2_
 A2 requests reject any unexpected field outright. Renewal is split into an orchestrator call to
 `authorize_root_authority_refresh` and a local private `refresh_root_authority_authorized` call from
 the holder's wallet, making renewal credential-state-blind as well as passport-PII-blind.
+
+### 7.4 Prover-selected MRZ layout
+
+The first A2 circuit accepted `is_id_card` as a private prover input. Although nationality and
+expiry still had to be authenticated disclosed bytes, a prover could ask the circuit to interpret
+those bytes using the wrong document layout.
+
+A2 now requires the zkPassport disclosure proof to include both MRZ document-type bytes. The
+wrapper accepts only authenticated `P` (passport) or `I` (ID card) document types and derives the
+nationality and expiry offsets from that proof-bound byte. `is_id_card` no longer exists in the
+circuit ABI.
 
 ---
 

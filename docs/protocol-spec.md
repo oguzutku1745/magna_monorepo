@@ -204,6 +204,9 @@ magna-verification-api
   circuit cannot be substituted.
 - `assert_disclosed_claims` requires the nationality and expiry MRZ bytes to be *disclosed* in the
   mask and to equal the claimed values.
+- The same disclosure authenticates both MRZ document-type bytes. The circuit accepts `P`
+  (passport) or `I` (ID card) and derives the nationality and expiry offsets from that byte; the
+  prover cannot select a layout independently.
 - The disclose, age, and bind parameter commitments are recomputed in-circuit from those same
   witnesses and each asserted to appear among the outer proof's parameter commitments — this is the
   link that was missing in A1.
@@ -450,33 +453,19 @@ a stable per-passport value that could be emitted as an issuance nullifier to en
 Placing that check in the contract rather than the API would preserve the guarantee even if the API
 were compromised.
 
-### 11.2 `is_id_card` is an unconstrained prover input
-
-`assert_disclosed_claims` selects the MRZ offsets for nationality and expiry from the `is_id_card`
-input, but nothing constrains that input against the document type actually proven — the zkPassport
-disclose parameter commitment covers the mask and disclosed bytes, not the layout.
-
-The consequence is bounded. A prover cannot introduce arbitrary bytes, only reinterpret bytes from
-their own authenticated MRZ at the alternate offsets, and only where the disclosure mask shows those
-bytes were genuinely revealed. For a TD3 passport read with ID-card offsets, the nationality offset
-falls inside the document-number field, so reachable values are limited to the characters present
-there. No satisfying witness has been demonstrated, so this is a hardening item rather than a known
-exploit. Candidate fixes: bind the layout into the disclosure commitment, or derive `is_id_card`
-from authenticated data.
-
-### 11.3 Verification receipts not emitted
+### 11.2 Verification receipts not emitted
 
 `MagnaIssuer.verify` updates `verify_meter_count` but emits no receipt event, so a relying party
 receives only a transaction hash. Typed private verification receipts are not implemented.
 
-### 11.4 Residual risks
+### 11.3 Residual risks
 
 - Node metadata leakage from query patterns (a known Aztec tradeoff).
 - Randomness oracle assumptions for note blinding.
 - `claims_hash` and `root_commitment` are stable correlators visible to the verification API.
 - Upstream breaking changes across Aztec devnet versions.
 
-### 11.5 Previously open, now closed
+### 11.4 Previously open, now closed
 
 Recorded because these shaped the current design:
 
@@ -492,3 +481,6 @@ Recorded because these shaped the current design:
 - **Renewal note hints.** A1 renewal serialized `RootStatusNote` and `RootAuthorityNote` hints —
   including revocation secrets — to the verification API. A2 forbids those keys and splits renewal
   into orchestrator authorization plus a local private call (§9.4).
+- **Prover-selected MRZ layout.** The first A2 circuit accepted `is_id_card` as a private input.
+  The current circuit instead authenticates the MRZ document-type bytes through the disclosure
+  commitment and derives the layout internally (§5.1).

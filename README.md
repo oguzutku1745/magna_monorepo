@@ -282,13 +282,13 @@ scripts/                         tooling: contract compile/codegen, bootstrap, l
 
 ---
 
-## 11. v1 scope & stability notes
+## 11. Current scope & stability notes
 
-- **Primary credential source:** `zkPassport` (canonical claims: `age`, `nationality`, `expiry`), issued via the **A1 / PII-blind** flow. A1 issuance excludes raw passport claims, `queryResult`, committed-input material, claim blinds, and the unscoped `uniqueIdentifier` from the verification API payload. The API still receives proofs, public inputs, owner addresses, commitments, the scoped nullifier, and lifecycle-specific metadata; rooted renewal additionally sends private root note hints.
-- **Rooted identity is the canonical path:** `register_rooted_passport` + linked verify paths. Legacy rootless flows are compatibility-only and must be explicitly selected.
+- **Primary credential source:** `zkPassport` (canonical claims: `age`, `nationality`, `expiry`), issued via the **A2 recursive / PII-blind** flow. The browser recursively proves a pinned zkPassport outer proof and sends only the wrapper proof, its eight public outputs, registry context, owner addresses, and lifecycle metadata. Raw passport claims, outer proofs and private note hints remain local.
+- **Rooted identity is the canonical path:** `register_rooted_passport_v2` + linked verify paths. Legacy rootless flows are compatibility-only and must be explicitly selected.
 - **Recovery** uses deterministic **Ghost account** derivation from a scoped zkPassport identifier. Ghost derivation is versioned (`v1_legacy_unscoped`, `v2_scoped`) to avoid silent recovery breakage.
 - **Issuance** is accepted only from the immutable `ORCHESTRATOR_ADDRESS` (a stable orchestrator account, required by Aztec sender-for-tags discovery).
 - **Renewal/revocation:** passport expiry *pauses* linked authority until `refresh_root_authority(...)` rotates the rooted authority note under the same `root_commitment`. Root revocation kills every linked descendant.
-- `root_commitment` derivation is v1-stable and derived client-side from the scoped zkPassport `uniqueIdentifier` during onboarding. If upstream identity primitives move to salted/vOPRF-backed identifiers, add an explicit migration/versioning path rather than silently changing the derivation.
+- Under A2, `root_commitment` is derived in-circuit from the proof-bound scoped nullifier. Ghost derivation remains versioned separately so changes to upstream salted/vOPRF-backed identifiers require an explicit migration path.
 
 For protocol internals see `docs/protocol-spec.md`, `docs/threat-model.md`, and `docs/integration-guide.md`.

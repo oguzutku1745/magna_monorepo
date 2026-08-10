@@ -236,6 +236,7 @@ export async function startPassportZkRequest(options: {
 
   let query = queryBuilder
     .gte("age", options.ageThreshold)
+    .disclose("document_type")
     .disclose("nationality")
     .disclose("expiry_date");
   if (options.a2BindCustomData) {
