@@ -20,7 +20,8 @@
     "@magna/instagram-proof": "0.1.0",
     "@magna/passport-wrapper-proof": "0.1.0",
     "@magna/wallet": "0.1.0",
-    "@zkpassport/sdk": "0.15.1",
+    "@zkpassport/utils": "0.37.3",
+    "@zkpassport/registry": "0.14.0",
     "cors": "latest",
     "express": "latest"
   },

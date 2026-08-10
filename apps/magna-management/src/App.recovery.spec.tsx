@@ -24,7 +24,6 @@ vi.mock("./lib/zkpassport", () => ({
   startPassportZkRequest: vi.fn(),
   verifyAndRefreshRootAuthorityThroughBackend: vi.fn(),
   verifyAndIssueInstagramThroughBackend: vi.fn(),
-  verifyAndIssuePassportA1ThroughBackend: vi.fn(),
   verifyAndIssuePassportPilotThroughBackend: vi.fn(),
   verifyAndIssueThroughBackend: vi.fn(),
   verifyRootRecoveryPreflightThroughBackend: vi.fn(),
@@ -178,23 +177,20 @@ describe("Instagram handle input", () => {
 });
 
 describe("passportCredentialAuthenticityLabel", () => {
-  it("does not label rediscovered witness-missing passport refs as legacy", () => {
+  it("labels rediscovered witness-missing passport refs explicitly", () => {
     expect(passportCredentialAuthenticityLabel({ kind: "passport" })).toBe(
-      "passport note found (local A1/v2 witness missing)",
+      "passport note found (local A2 committed-claims witness missing)",
     );
   });
 
-  it("labels explicit pilot and legacy passport refs", () => {
-    expect(passportCredentialAuthenticityLabel({ kind: "passport", issuanceKind: "pilot" })).toBe(
-      "PII-blind pilot (non-production; not passport-authentic)",
-    );
+  it("labels only an A2 ref with its local witness as authentic", () => {
     expect(
       passportCredentialAuthenticityLabel({
         kind: "passport",
-        issuanceKind: "a1",
+        issuanceKind: "a2",
         passportCommittedClaimsV2Witness: {
           schema: "passport-committed-claims-v2",
-          credentialAuthenticity: "passport-a1",
+          credentialAuthenticity: "passport-a2",
           minAgeProven: 21,
           nationalityAlpha3Packed: "5526610",
           nationalityBlind: "111",
@@ -202,19 +198,16 @@ describe("passportCredentialAuthenticityLabel", () => {
           expiryBlind: "222",
         },
       }),
-    ).toBe("passport A1 wrapper proof (PII-blind)");
-    expect(passportCredentialAuthenticityLabel({ kind: "passport", issuanceKind: "legacy" })).toBe(
-      "legacy zkPassport backend verification",
-    );
+    ).toBe("passport A2 recursive proof (PII-blind)");
   });
 
-  it("labels local A1 witness refs even when issuance kind metadata is missing", () => {
+  it("does not infer A2 authenticity when issuance metadata is missing", () => {
     expect(
       passportCredentialAuthenticityLabel({
         kind: "passport",
         passportCommittedClaimsV2Witness: {
           schema: "passport-committed-claims-v2",
-          credentialAuthenticity: "passport-a1",
+          credentialAuthenticity: "passport-a2",
           minAgeProven: 21,
           nationalityAlpha3Packed: "5526610",
           nationalityBlind: "111",
@@ -222,20 +215,6 @@ describe("passportCredentialAuthenticityLabel", () => {
           expiryBlind: "222",
         },
       }),
-    ).toBe("passport A1 wrapper proof (PII-blind)");
-  });
-
-  it("uses normalized claims as legacy evidence for older local refs", () => {
-    expect(
-      passportCredentialAuthenticityLabel({
-        kind: "passport",
-        normalizedClaims: {
-          nationalityAlpha3: "TUR",
-          minAgeProven: 21,
-          passportExpiryDate: "2031-07-20",
-          expiryTs: "1942358399",
-        },
-      }),
-    ).toBe("legacy zkPassport backend verification");
+    ).toBe("passport note found (local A2 committed-claims witness missing)");
   });
 });

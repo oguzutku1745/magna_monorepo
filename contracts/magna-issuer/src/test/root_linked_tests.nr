@@ -256,6 +256,195 @@ unconstrained fn test_refresh_root_authority_rotates_authority_and_mints_new_lin
     );
 }
 
+#[test]
+unconstrained fn test_owner_refreshes_root_authority_after_orchestrator_public_authorization() {
+    let (mut env, issuer, orchestrator, active_owner, ghost_owner, _) = setup();
+    let initial_claims_hash = claims_hash_for_min_age(21);
+    let refreshed_claims_hash = claims_hash_for_min_age(22);
+
+    env.call_private(
+        orchestrator,
+        MagnaIssuer::at(issuer).register_rooted_passport(
+            active_owner,
+            ghost_owner,
+            ROOT_COMMITMENT_1,
+            initial_claims_hash,
+            EXPIRY_TS,
+        ),
+    );
+    let hinted_root_status = env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).get_root_status_hinted(active_owner, ROOT_COMMITMENT_1),
+    );
+    let hinted_root_authority = env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).get_root_authority_hinted(active_owner, ROOT_COMMITMENT_1, initial_claims_hash),
+    );
+
+    env.call_public(
+        orchestrator,
+        MagnaIssuer::at(issuer).authorize_root_authority_refresh(
+            active_owner,
+            ghost_owner,
+            ROOT_COMMITMENT_1,
+            refreshed_claims_hash,
+            EXPIRY_TS,
+        ),
+    );
+    env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).refresh_root_authority_authorized(
+            ghost_owner,
+            hinted_root_status,
+            hinted_root_authority,
+            refreshed_claims_hash,
+            EXPIRY_TS,
+        ),
+    );
+
+    let refreshed_root_authority = env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).get_root_authority_hinted(active_owner, ROOT_COMMITMENT_1, refreshed_claims_hash),
+    );
+    assert(refreshed_root_authority.note.claims_hash == refreshed_claims_hash);
+}
+
+#[test(should_fail)]
+unconstrained fn test_owner_refresh_rejects_unapproved_claims_hash() {
+    let (mut env, issuer, orchestrator, active_owner, ghost_owner, _) = setup();
+    let initial_claims_hash = claims_hash_for_min_age(21);
+    let approved_claims_hash = claims_hash_for_min_age(22);
+    let unapproved_claims_hash = claims_hash_for_min_age(23);
+    env.call_private(
+        orchestrator,
+        MagnaIssuer::at(issuer).register_rooted_passport(
+            active_owner,
+            ghost_owner,
+            ROOT_COMMITMENT_1,
+            initial_claims_hash,
+            EXPIRY_TS,
+        ),
+    );
+    let hinted_root_status = env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).get_root_status_hinted(active_owner, ROOT_COMMITMENT_1),
+    );
+    let hinted_root_authority = env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).get_root_authority_hinted(active_owner, ROOT_COMMITMENT_1, initial_claims_hash),
+    );
+    env.call_public(
+        orchestrator,
+        MagnaIssuer::at(issuer).authorize_root_authority_refresh(
+            active_owner,
+            ghost_owner,
+            ROOT_COMMITMENT_1,
+            approved_claims_hash,
+            EXPIRY_TS,
+        ),
+    );
+    env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).refresh_root_authority_authorized(
+            ghost_owner,
+            hinted_root_status,
+            hinted_root_authority,
+            unapproved_claims_hash,
+            EXPIRY_TS,
+        ),
+    );
+}
+
+#[test(should_fail)]
+unconstrained fn test_owner_refresh_rejects_substituted_ghost_owner() {
+    let (mut env, issuer, orchestrator, active_owner, ghost_owner, attacker) = setup();
+    let initial_claims_hash = claims_hash_for_min_age(21);
+    let refreshed_claims_hash = claims_hash_for_min_age(22);
+    env.call_private(
+        orchestrator,
+        MagnaIssuer::at(issuer).register_rooted_passport(
+            active_owner,
+            ghost_owner,
+            ROOT_COMMITMENT_1,
+            initial_claims_hash,
+            EXPIRY_TS,
+        ),
+    );
+    let hinted_root_status = env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).get_root_status_hinted(active_owner, ROOT_COMMITMENT_1),
+    );
+    let hinted_root_authority = env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).get_root_authority_hinted(active_owner, ROOT_COMMITMENT_1, initial_claims_hash),
+    );
+    env.call_public(
+        orchestrator,
+        MagnaIssuer::at(issuer).authorize_root_authority_refresh(
+            active_owner,
+            ghost_owner,
+            ROOT_COMMITMENT_1,
+            refreshed_claims_hash,
+            EXPIRY_TS,
+        ),
+    );
+    env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).refresh_root_authority_authorized(
+            attacker,
+            hinted_root_status,
+            hinted_root_authority,
+            refreshed_claims_hash,
+            EXPIRY_TS,
+        ),
+    );
+}
+
+#[test(should_fail)]
+unconstrained fn test_owner_refresh_rejects_authorization_for_other_owner() {
+    let (mut env, issuer, orchestrator, active_owner, ghost_owner, attacker) = setup();
+    let initial_claims_hash = claims_hash_for_min_age(21);
+    let refreshed_claims_hash = claims_hash_for_min_age(22);
+    env.call_private(
+        orchestrator,
+        MagnaIssuer::at(issuer).register_rooted_passport(
+            active_owner,
+            ghost_owner,
+            ROOT_COMMITMENT_1,
+            initial_claims_hash,
+            EXPIRY_TS,
+        ),
+    );
+    let hinted_root_status = env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).get_root_status_hinted(active_owner, ROOT_COMMITMENT_1),
+    );
+    let hinted_root_authority = env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).get_root_authority_hinted(active_owner, ROOT_COMMITMENT_1, initial_claims_hash),
+    );
+    env.call_public(
+        orchestrator,
+        MagnaIssuer::at(issuer).authorize_root_authority_refresh(
+            attacker,
+            ghost_owner,
+            ROOT_COMMITMENT_1,
+            refreshed_claims_hash,
+            EXPIRY_TS,
+        ),
+    );
+    env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).refresh_root_authority_authorized(
+            ghost_owner,
+            hinted_root_status,
+            hinted_root_authority,
+            refreshed_claims_hash,
+            EXPIRY_TS,
+        ),
+    );
+}
+
 #[test(should_fail)]
 unconstrained fn test_verify_linked_rejects_stale_root_authority_after_refresh() {
     let (mut env, issuer, orchestrator, active_owner, ghost_owner, _) = setup();

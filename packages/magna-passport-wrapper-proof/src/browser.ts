@@ -4,9 +4,13 @@ import {
   normalizePublicFieldString,
   parsePassportWrapperPublicInputs,
 } from "./public-inputs.js";
-import type { PassportWrapperLocalWitness, PassportWrapperProofArtifact } from "./types.js";
+import {
+  PASSPORT_A2_WRAPPER_ARTIFACT_SHA256,
+  type PassportWrapperLocalWitness,
+  type PassportWrapperProofArtifact,
+} from "./types.js";
 
-const circuitArtifactUrl = new URL("../circuit/target/magna_passport_wrapper_proof.json", import.meta.url);
+const circuitArtifactUrl = new URL("../circuit/bundle/magna_passport_wrapper_proof.json", import.meta.url);
 const BB_CRS_IDB_NAME = "keyval-store";
 const BB_CRS_IDB_STORE = "keyval";
 const BB_CRS_G1_KEY = "g1Data";
@@ -18,7 +22,14 @@ async function loadBrowserPassportWrapperCircuitArtifact(): Promise<CompiledCirc
   if (!response.ok) {
     throw new Error(`Could not load passport wrapper circuit artifact: ${response.status} ${response.statusText}`);
   }
-  return (await response.json()) as CompiledCircuit;
+  const bytes = await response.arrayBuffer();
+  const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), byte =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+  if (digest !== PASSPORT_A2_WRAPPER_ARTIFACT_SHA256) {
+    throw new Error("Passport A2 wrapper circuit artifact hash mismatch.");
+  }
+  return JSON.parse(new TextDecoder().decode(bytes)) as CompiledCircuit;
 }
 
 function isBrowserRuntime(): boolean {

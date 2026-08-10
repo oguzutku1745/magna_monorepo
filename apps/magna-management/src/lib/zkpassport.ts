@@ -6,8 +6,9 @@ import {
   ZKPassport,
 } from "@zkpassport/sdk";
 import type { GhostDerivationVersion } from "@magna/wallet";
+import type { PassportA2RegistryContext } from "@magna/passport-wrapper-proof";
 
-type ZkPassportProofMode = "fast" | "compressed" | "compressed-evm";
+type ZkPassportProofMode = "compressed";
 
 export type ZkPassportLifecycleEvent =
   | { type: "request_created"; requestId: string; url: string }
@@ -36,61 +37,28 @@ export type ActiveZkPassportRequest = {
   completion: Promise<ZkPassportCompletion>;
 };
 
-export type VerifyAndIssueResponse = {
-  issuanceTxHash?: string;
-  ghostOwner: string;
-  rootCommitment: string;
-  claimsHash: string;
-  mode: "passport" | "rooted";
-  ghostDerivationVersion: GhostDerivationVersion;
-  issuerAddress: string;
-  orchestratorAddress: string;
-  normalizedClaims: {
-    nationalityAlpha3: string;
-    minAgeProven: number;
-    passportExpiryDate: string;
-    expiryTs: string;
-  };
-};
-
-export type VerifyAndIssuePassportPilotPayload = {
-  pilotSchema: "passport-pii-blind-v0";
-  activeOwner: string;
-  claimsHash: string;
-  ghostOwner: string;
-  rootCommitment: string;
-  credentialValidUntil: string;
-  mode?: "passport" | "rooted";
-  ghostDerivationVersion?: GhostDerivationVersion;
-};
-
-export type VerifyAndIssuePassportA1Payload = {
-  schema: "passport-a1-v1";
+export type VerifyAndIssuePassportA2Payload = {
+  schema: "passport-a2-v1";
   activeOwner: string;
   ghostOwner: string;
-  rootCommitment: string;
   credentialValidUntil: string;
   wrapperProof: unknown;
   wrapperPublicInputs: string[];
-  zkPassportOuterProof: unknown;
-  zkPassportOuterPublicInputs: string[];
-  claimsHash: string;
+  registryContext: PassportA2RegistryContext;
   mode?: "passport" | "rooted";
   ghostDerivationVersion?: GhostDerivationVersion;
 };
 
-export type PassportA1ProofPayload = Pick<
-  VerifyAndIssuePassportA1Payload,
+export type PassportA2ProofPayload = Pick<
+  VerifyAndIssuePassportA2Payload,
   | "schema"
   | "credentialValidUntil"
   | "wrapperProof"
   | "wrapperPublicInputs"
-  | "zkPassportOuterProof"
-  | "zkPassportOuterPublicInputs"
-  | "claimsHash"
+  | "registryContext"
 >;
 
-export type VerifyAndIssuePassportA1Response = {
+export type VerifyAndIssuePassportA2Response = {
   issuanceTxHash?: string;
   ghostOwner: string;
   rootCommitment: string;
@@ -101,63 +69,25 @@ export type VerifyAndIssuePassportA1Response = {
   orchestratorAddress: string;
   verificationSummary: {
     verified: true;
-    passportA1: true;
+    passportA2: true;
     piiBlind: true;
   };
 };
 
-export type VerifyAndIssuePassportPilotResponse = {
-  issuanceTxHash?: string;
+export type VerifyAndRefreshRootAuthorityA2Payload = PassportA2ProofPayload & {
+  activeOwner: string;
   ghostOwner: string;
-  rootCommitment: string;
-  claimsHash: string;
-  mode: "passport" | "rooted";
-  ghostDerivationVersion: GhostDerivationVersion;
-  issuerAddress: string;
-  orchestratorAddress: string;
-  verificationSummary: {
-    verified: true;
-    pilot: true;
-    piiBlind: true;
-  };
 };
 
-export type VerifyAndRefreshRootAuthorityPayload = {
-  proofs: ProofResult[];
-  originalQuery: Query;
-  queryResult: QueryResult;
-  ghostOwner: string;
-  hintedRootStatusNote: unknown;
-  hintedRootAuthorityNote: unknown;
-  ageThreshold: number;
-};
-
-export type VerifyAndRefreshRootAuthorityA1Payload = PassportA1ProofPayload & {
-  ghostOwner: string;
-  hintedRootStatusNote: unknown;
-  hintedRootAuthorityNote: unknown;
-};
-
-export type VerifyRootRecoveryPreflightPayload = {
-  proofs: ProofResult[];
-  originalQuery: Query;
-  queryResult: QueryResult;
+export type VerifyRootRecoveryPreflightA2Payload = PassportA2ProofPayload & {
+  targetOwner: string;
   expectedGhostOwner: string;
   expectedRootCommitment: string;
-  ghostDerivationVersion?: GhostDerivationVersion;
-  ageThreshold: number;
-};
-
-export type VerifyRootRecoveryPreflightA1Payload = PassportA1ProofPayload & {
-  expectedGhostOwner: string;
-  expectedRootCommitment: string;
-  derivedGhostOwner: string;
-  derivedRootCommitment: string;
   ghostDerivationVersion?: GhostDerivationVersion;
 };
 
 export type VerifyAndRefreshRootAuthorityResponse = {
-  renewalTxHash?: string;
+  renewalAuthorizationTxHash: string;
   ghostOwner: string;
   rootCommitment: string;
   claimsHash: string;
@@ -165,15 +95,8 @@ export type VerifyAndRefreshRootAuthorityResponse = {
   orchestratorAddress: string;
   verificationSummary: {
     verified: true;
-    uniqueIdentifierPresent?: true;
-    passportA1?: true;
-    piiBlind?: true;
-  };
-  normalizedClaims?: {
-    nationalityAlpha3: string;
-    minAgeProven: number;
-    passportExpiryDate: string;
-    expiryTs: string;
+    passportA2: true;
+    piiBlind: true;
   };
 };
 
@@ -187,15 +110,8 @@ export type VerifyRootRecoveryPreflightResponse = {
   matchesExpectedRootCommitment: true;
   verificationSummary: {
     verified: true;
-    uniqueIdentifierPresent?: true;
-    passportA1?: true;
-    piiBlind?: true;
-  };
-  normalizedClaims?: {
-    nationalityAlpha3: string;
-    minAgeProven: number;
-    passportExpiryDate: string;
-    expiryTs: string;
+    passportA2: true;
+    piiBlind: true;
   };
 };
 
@@ -224,16 +140,6 @@ export type VerifyAndIssueInstagramResponse = {
     handlePacked: string;
     expiryTs: string;
   };
-};
-
-type VerifyAndIssuePayload = {
-  proofs: ProofResult[];
-  originalQuery: Query;
-  queryResult: QueryResult;
-  activeOwner: string;
-  ageThreshold: number;
-  mode?: "passport" | "rooted";
-  ghostDerivationVersion?: GhostDerivationVersion;
 };
 
 type ZkPassportInternalMessage = {
@@ -315,7 +221,7 @@ export async function startPassportZkRequest(options: {
   ageThreshold: number;
   metadata: { name: string; logo: string; purpose: string; scope?: string };
   proofMode?: ZkPassportProofMode;
-  a1BindCustomData?: string;
+  a2BindCustomData?: string;
   devMode?: boolean;
   onEvent?: (event: ZkPassportLifecycleEvent) => void;
 }): Promise<ActiveZkPassportRequest> {
@@ -332,12 +238,12 @@ export async function startPassportZkRequest(options: {
     .gte("age", options.ageThreshold)
     .disclose("nationality")
     .disclose("expiry_date");
-  if (options.a1BindCustomData) {
+  if (options.a2BindCustomData) {
     const bind = (query as { bind?: (key: "custom_data", value: string) => typeof query }).bind;
     if (typeof bind !== "function") {
-      throw new Error("zkPassport SDK does not support custom_data binding required for A1 issuance.");
+      throw new Error("zkPassport SDK does not support custom_data binding required for A2 issuance.");
     }
-    query = bind.call(query, "custom_data", options.a1BindCustomData);
+    query = bind.call(query, "custom_data", options.a2BindCustomData);
   }
   const built = query.done();
 
@@ -429,33 +335,11 @@ export async function startPassportZkRequest(options: {
   };
 }
 
-export async function verifyAndIssueThroughBackend(
+export async function verifyAndIssuePassportA2ThroughBackend(
   verificationApiUrl: string,
-  payload: VerifyAndIssuePayload,
-): Promise<VerifyAndIssueResponse> {
-  return await postVerificationApi<VerifyAndIssueResponse>(
-    verificationApiUrl,
-    "/zkpassport/verify-and-issue",
-    payload,
-  );
-}
-
-export async function verifyAndIssuePassportPilotThroughBackend(
-  verificationApiUrl: string,
-  payload: VerifyAndIssuePassportPilotPayload,
-): Promise<VerifyAndIssuePassportPilotResponse> {
-  return await postVerificationApi<VerifyAndIssuePassportPilotResponse>(
-    verificationApiUrl,
-    "/zkpassport/verify-and-issue",
-    payload,
-  );
-}
-
-export async function verifyAndIssuePassportA1ThroughBackend(
-  verificationApiUrl: string,
-  payload: VerifyAndIssuePassportA1Payload,
-): Promise<VerifyAndIssuePassportA1Response> {
-  return await postVerificationApi<VerifyAndIssuePassportA1Response>(
+  payload: VerifyAndIssuePassportA2Payload,
+): Promise<VerifyAndIssuePassportA2Response> {
+  return await postVerificationApi<VerifyAndIssuePassportA2Response>(
     verificationApiUrl,
     "/zkpassport/verify-and-issue",
     payload,
@@ -464,7 +348,7 @@ export async function verifyAndIssuePassportA1ThroughBackend(
 
 export async function verifyAndRefreshRootAuthorityThroughBackend(
   verificationApiUrl: string,
-  payload: VerifyAndRefreshRootAuthorityPayload | VerifyAndRefreshRootAuthorityA1Payload,
+  payload: VerifyAndRefreshRootAuthorityA2Payload,
 ): Promise<VerifyAndRefreshRootAuthorityResponse> {
   return await postVerificationApi<VerifyAndRefreshRootAuthorityResponse>(
     verificationApiUrl,
@@ -475,7 +359,7 @@ export async function verifyAndRefreshRootAuthorityThroughBackend(
 
 export async function verifyRootRecoveryPreflightThroughBackend(
   verificationApiUrl: string,
-  payload: VerifyRootRecoveryPreflightPayload | VerifyRootRecoveryPreflightA1Payload,
+  payload: VerifyRootRecoveryPreflightA2Payload,
 ): Promise<VerifyRootRecoveryPreflightResponse> {
   return await postVerificationApi<VerifyRootRecoveryPreflightResponse>(
     verificationApiUrl,

@@ -12,14 +12,8 @@ export function normalizePublicFieldString(value: string, label: string): string
 }
 
 function parsePublicU8(value: string, label: string): number {
-  if (!/^(0|[1-9][0-9]*)$/.test(value)) {
-    throw new Error(`${label} public input must be a non-negative integer string.`);
-  }
   const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed)) {
-    throw new Error(`${label} public input must be a safe integer.`);
-  }
-  if (parsed > 255) {
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 255) {
     throw new Error(`${label} public input must fit in u8.`);
   }
   return parsed;
@@ -30,23 +24,20 @@ export function parsePassportWrapperPublicInputs(
 ): PassportWrapperPublicOutputs {
   if (publicInputs.length !== PASSPORT_WRAPPER_PUBLIC_INPUT_COUNT) {
     throw new Error(
-      `Passport wrapper proof must expose exactly ${PASSPORT_WRAPPER_PUBLIC_INPUT_COUNT} public inputs.`,
+      `Passport A2 proof must expose exactly ${PASSPORT_WRAPPER_PUBLIC_INPUT_COUNT} public inputs.`,
     );
   }
-  const normalizedPublicInputs = publicInputs.map((entry, index) =>
+  const values = publicInputs.map((entry, index) =>
     normalizePublicFieldString(entry, `publicInputs[${index}]`),
   );
-  const minAgeProven = parsePublicU8(normalizedPublicInputs[3], "minAgeProven");
   return {
-    claimsHash: normalizedPublicInputs[0],
-    nationalityCommitment: normalizedPublicInputs[1],
-    expiryCommitment: normalizedPublicInputs[2],
-    minAgeProven,
-    credentialValidUntil: normalizedPublicInputs[4],
-    scopedNullifier: normalizedPublicInputs[5],
-    nationalityDisclosureCommitment: normalizedPublicInputs[6],
-    expiryDisclosureCommitment: normalizedPublicInputs[7],
-    agePredicateCommitment: normalizedPublicInputs[8],
-    bindCommitment: normalizedPublicInputs[9],
+    claimsHash: values[0],
+    nationalityCommitment: values[1],
+    expiryCommitment: values[2],
+    minAgeProven: parsePublicU8(values[3], "minAgeProven"),
+    credentialValidUntil: values[4],
+    rootCommitment: values[5],
+    requestContextHash: values[6],
+    proofCurrentDate: values[7],
   };
 }

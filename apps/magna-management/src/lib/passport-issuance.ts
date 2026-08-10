@@ -1,87 +1,53 @@
-import {
-  computePassportCommittedClaimsHash,
-  computePassportExpiryCommitment,
-  computePassportNationalityCommitment,
-  poseidon2FieldHasher,
-} from "../../../../packages/magna-wallet/src/engine/encoding";
-import {
-  assertNoPassportA1OrchestratorArtifacts,
-  assertNoZkPassportPrivateArtifacts,
-  buildPassportWrapperWitnessFromZkPassportResult,
-  extractZkPassportOuterProofArtifacts,
-  extractZkPassportOuterProofUtilityMetadata,
-  type WalletPassportWrapperLocalWitness,
-} from "../../../../packages/magna-wallet/src/engine/zkpassport-safe-witness";
-import { deriveGhostKeyMaterial } from "../../../../packages/magna-wallet/src/engine/ghost";
-import { deriveRootCommitment } from "../../../../packages/magna-wallet/src/engine/root";
-import type { GhostDerivationVersion, GhostKeyMaterial } from "../../../../packages/magna-wallet/src/engine/types";
 import { getSchnorrAccountContractAddress } from "@aztec/accounts/schnorr";
 import { Fr } from "@aztec/aztec.js/fields";
 import { CredentialType } from "@magna/core";
 import type {
-  VerifyAndIssuePassportA1Payload,
-  VerifyAndIssuePassportA1Response,
-  VerifyAndIssuePassportPilotPayload,
-  VerifyAndIssuePassportPilotResponse,
-  VerifyAndIssueResponse,
+  PassportA2Action,
+  PassportWrapperLocalWitness,
+  PassportWrapperProofArtifact,
+  ZkPassportCompressedProof,
+} from "@magna/passport-wrapper-proof";
+import { deriveGhostKeyMaterial } from "../../../../packages/magna-wallet/src/engine/ghost";
+import type { GhostDerivationVersion, GhostKeyMaterial } from "../../../../packages/magna-wallet/src/engine/types";
+import type {
+  PassportA2ProofPayload,
+  VerifyAndIssuePassportA2Payload,
+  VerifyAndIssuePassportA2Response,
   ZkPassportCompletion,
 } from "./zkpassport";
 
-export type PassportIssuanceKind = "legacy" | "pilot" | "a1";
+export type PassportIssuanceKind = "a2";
 export type VerifiedPassportCompletion = Extract<ZkPassportCompletion, { status: "verified" }>;
 
-export const A1_UNAVAILABLE_MESSAGE =
-  "A1 wrapper proof generation is not production-enabled in this frontend build. Recursive zkPassport verification is not available yet, so passport A1 issuance is fail-closed.";
-export const A1_LOCAL_WITNESS_MISSING_MESSAGE =
-  "Passport A1 credential is missing its local v2 witness. Re-issue this passport credential on this device to restore A1/v2 presentation.";
-export const PILOT_CREDENTIAL_UNUSABLE_MESSAGE =
-  "PII-blind pilot passport credentials cannot be used for relying-party verification, renewal, or recovery.";
+export const PASSPORT_A2_LOCAL_WITNESS_MISSING_MESSAGE =
+  "Passport A2 credential is missing its local committed-claims witness. Re-issue this passport credential on this device.";
 export const REDISCOVERED_PASSPORT_WITNESS_MISSING_MESSAGE =
-  "Passport note was found in PXE, but this browser is missing the local A1/v2 witness required to present it. Re-issue this passport credential on this device to restore A1/v2 presentation.";
+  "Passport note was found in PXE, but this browser is missing the local A2 committed-claims witness required to present it.";
 
-const PILOT_SCHEMA = "passport-pii-blind-v0";
-const A1_SCHEMA = "passport-a1-v1";
-const PILOT_VALIDITY_WINDOW_SECONDS = 30 * 24 * 60 * 60;
-const AZTEC_FIELD_MODULUS =
+const VALIDITY_WINDOW_SECONDS = 30 * 24 * 60 * 60;
+const FIELD_MODULUS =
   21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
 type PassportMode = "passport" | "rooted";
-type ProofMode = "fast" | "compressed" | "compressed-evm";
 
 type PassportIssuanceInput = {
   issuanceKind: PassportIssuanceKind;
   verificationApiUrl: string;
   completion: VerifiedPassportCompletion;
   activeOwner: string;
+  issuerAddress: string;
   ageThreshold: number;
   mode: PassportMode;
   ghostDerivationVersion: GhostDerivationVersion;
   preparedGhostOwner?: string;
   requestScope?: string;
-  a1BindCustomData?: string;
+  a2BindCustomData: string;
 };
-
-type PassportIssuanceDependencies = {
-  verifyAndIssueThroughBackend: VerifyAndIssueThroughBackendFn;
-  verifyAndIssuePassportPilotThroughBackend: VerifyAndIssuePassportPilotThroughBackendFn;
-  verifyAndIssuePassportA1ThroughBackend?: VerifyAndIssuePassportA1ThroughBackendFn;
-  provePassportWrapper?: ProvePassportWrapperFn;
-  deriveGhostAccountPreview?: DeriveGhostAccountPreview;
-  randomField?: () => bigint;
-  nowMs?: () => number;
-  onA1Progress?: (event: PassportA1ProgressEvent) => void;
-};
-
-type PassportA1ProofDependencies = Pick<
-  PassportIssuanceDependencies,
-  "provePassportWrapper" | "randomField" | "nowMs" | "onA1Progress"
->;
 
 type GhostPreview = {
   address: string;
   uniqueIdentifier: string;
   material: GhostKeyMaterial;
-  rootCommitment?: bigint;
 };
 
 type DeriveGhostAccountPreview = (input: {
@@ -90,274 +56,100 @@ type DeriveGhostAccountPreview = (input: {
   derivationVersion?: GhostDerivationVersion;
 }) => Promise<GhostPreview>;
 
-type PassportIssuanceResult =
-  | { issuanceKind: "legacy"; response: VerifyAndIssueResponse }
-  | { issuanceKind: "pilot"; response: VerifyAndIssuePassportPilotResponse }
-  | {
-      issuanceKind: "a1";
-      response: VerifyAndIssuePassportA1Response;
-      localWitness: PassportA1LocalWitness;
-    };
+type ProvePassportWrapperFn = (
+  witness: PassportWrapperLocalWitness,
+) => Promise<PassportWrapperProofArtifact>;
 
-export type PassportA1ProgressEvent =
+type VerifyAndIssuePassportA2ThroughBackendFn = (
+  verificationApiUrl: string,
+  payload: VerifyAndIssuePassportA2Payload,
+) => Promise<VerifyAndIssuePassportA2Response>;
+
+type PassportIssuanceDependencies = {
+  verifyAndIssuePassportA2ThroughBackend: VerifyAndIssuePassportA2ThroughBackendFn;
+  provePassportWrapper: ProvePassportWrapperFn;
+  deriveGhostAccountPreview?: DeriveGhostAccountPreview;
+  randomField?: () => bigint;
+  nowMs?: () => number;
+  onA2Progress?: (event: PassportA2ProgressEvent) => void;
+};
+
+export type PassportA2ProgressEvent =
   | { type: "building_witness" }
   | { type: "generating_wrapper_proof" }
   | { type: "submitting_to_backend" };
 
-export type PassportA1LocalWitness = {
-  witness: WalletPassportWrapperLocalWitness;
-  nationalityBlind: string;
-  expiryBlind: string;
-  scopedNullifier?: string;
+export type PassportA2LocalWitness = {
+  witness: PassportWrapperLocalWitness;
   wrapperPublicInputs: string[];
 };
 
-export type PassportA1ProofPayload = Pick<
-  VerifyAndIssuePassportA1Payload,
-  | "schema"
-  | "credentialValidUntil"
-  | "wrapperProof"
-  | "wrapperPublicInputs"
-  | "zkPassportOuterProof"
-  | "zkPassportOuterPublicInputs"
-  | "claimsHash"
->;
-
-export type PassportA1ProofMaterial = {
-  payload: PassportA1ProofPayload;
-  localWitness: PassportA1LocalWitness;
+export type PassportA2ProofMaterial = {
+  payload: PassportA2ProofPayload;
+  localWitness: PassportA2LocalWitness;
 };
 
-type PassportWrapperProofArtifact = {
-  proof: unknown;
-  publicInputs: string[];
-  outputs: {
-    claimsHash: string;
-    credentialValidUntil: string;
-  };
+export type PassportIssuanceResult = {
+  issuanceKind: "a2";
+  response: VerifyAndIssuePassportA2Response;
+  localWitness: PassportA2LocalWitness;
 };
-
-type VerifyAndIssueThroughBackendFn = (
-  verificationApiUrl: string,
-  payload: {
-    proofs: VerifiedPassportCompletion["proofs"];
-    originalQuery: VerifiedPassportCompletion["originalQuery"];
-    queryResult: VerifiedPassportCompletion["queryResult"];
-    activeOwner: string;
-    ageThreshold: number;
-    mode?: PassportMode;
-    ghostDerivationVersion?: GhostDerivationVersion;
-  },
-) => Promise<VerifyAndIssueResponse>;
-
-type VerifyAndIssuePassportPilotThroughBackendFn = (
-  verificationApiUrl: string,
-  payload: VerifyAndIssuePassportPilotPayload,
-) => Promise<VerifyAndIssuePassportPilotResponse>;
-
-type VerifyAndIssuePassportA1ThroughBackendFn = (
-  verificationApiUrl: string,
-  payload: VerifyAndIssuePassportA1Payload,
-) => Promise<VerifyAndIssuePassportA1Response>;
-
-type ProvePassportWrapperFn = (witness: WalletPassportWrapperLocalWitness) => Promise<PassportWrapperProofArtifact>;
-
-export function proofModeForPassportIssuanceKind(kind: PassportIssuanceKind): ProofMode | undefined {
-  if (kind === "legacy") return undefined;
-  if (kind === "pilot") return "compressed-evm";
-  if (kind === "a1") return "compressed-evm";
-  return undefined;
-}
-
-export function passportPilotCredentialUsageBlock(
-  credential:
-    | {
-        issuanceKind?: PassportIssuanceKind;
-        passportCommittedClaimsV2Witness?: unknown;
-        normalizedClaims?: unknown;
-      }
-    | null
-    | undefined,
-): string | undefined {
-  if (!credential) return undefined;
-  if (credential.passportCommittedClaimsV2Witness) return undefined;
-  if (credential.issuanceKind === "legacy") return undefined;
-  if (credential.issuanceKind === "a1") {
-    return A1_LOCAL_WITNESS_MISSING_MESSAGE;
-  }
-  if (credential.issuanceKind === "pilot") {
-    return PILOT_CREDENTIAL_UNUSABLE_MESSAGE;
-  }
-  if (credential.normalizedClaims) return undefined;
-  return REDISCOVERED_PASSPORT_WITNESS_MISSING_MESSAGE;
-}
-
-export function passportA1BindCustomData(input: { activeOwner: string; requestScope?: string }): string {
-  const activeOwner = input.activeOwner.trim().toLowerCase();
-  const requestScope = input.requestScope?.trim() || "magna-passport-onboarding";
-  const customData = `magna-passport-a1:${requestScope}:${activeOwner}`;
-  if ([...customData].some(char => char.charCodeAt(0) > 0x7f)) {
-    throw new Error("A1 zkPassport bind custom data must be ASCII.");
-  }
-  return customData;
-}
 
 function readPath(value: unknown, path: Array<string | number>): unknown {
   let cursor = value;
   for (const segment of path) {
-    if (cursor === null || cursor === undefined || typeof cursor !== "object") {
-      return undefined;
-    }
+    if (cursor === null || cursor === undefined || typeof cursor !== "object") return undefined;
     cursor = (cursor as Record<string | number, unknown>)[segment];
   }
   return cursor;
 }
 
 function requireString(value: unknown, fieldName: string): string {
-  if (typeof value !== "string") {
-    throw new Error(`${fieldName} must be a string.`);
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${fieldName} must be a non-empty string.`);
   }
-  const trimmed = value.trim();
-  if (!trimmed) {
-    throw new Error(`${fieldName} must not be empty.`);
-  }
-  return trimmed;
+  return value.trim();
 }
 
-function normalizeIsoDateString(value: string, fieldName: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    throw new Error(`${fieldName} must not be empty.`);
-  }
-  const date = new Date(trimmed);
-  if (Number.isNaN(date.getTime())) {
-    throw new Error(`${fieldName} must be a valid date string.`);
-  }
-  return date.toISOString().slice(0, 10);
-}
-
-function requireIsoDateLike(value: unknown, fieldName: string): string {
-  if (typeof value === "string") {
-    return normalizeIsoDateString(value, fieldName);
-  }
-  if (value instanceof Date) {
-    if (Number.isNaN(value.getTime())) {
-      throw new Error(`${fieldName} must be a valid date.`);
-    }
-    return value.toISOString().slice(0, 10);
-  }
-  if (!value || typeof value !== "object") {
-    throw new Error(`${fieldName} must be a string or date-like value.`);
-  }
-
-  const isoCandidate =
-    readPath(value, ["iso"]) ??
-    readPath(value, ["value"]) ??
-    readPath(value, ["date"]) ??
-    readPath(value, ["formatted"]);
-  if (typeof isoCandidate === "string") {
-    return normalizeIsoDateString(isoCandidate, fieldName);
-  }
-
-  const year = readPath(value, ["year"]);
-  const month = readPath(value, ["month"]);
-  const day = readPath(value, ["day"]);
-  if (
-    typeof year === "number" &&
-    Number.isInteger(year) &&
-    typeof month === "number" &&
-    Number.isInteger(month) &&
-    typeof day === "number" &&
-    Number.isInteger(day)
-  ) {
-    const date = new Date(Date.UTC(year, month - 1, day));
-    if (
-      Number.isNaN(date.getTime()) ||
-      date.getUTCFullYear() !== year ||
-      date.getUTCMonth() !== month - 1 ||
-      date.getUTCDate() !== day
-    ) {
-      throw new Error(`${fieldName} must be a valid calendar date.`);
-    }
-    return date.toISOString().slice(0, 10);
-  }
-
-  throw new Error(`${fieldName} must be a string or date-like value.`);
-}
-
-function parseIsoDateToExpiryTs(value: string): bigint {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    throw new Error("expiry_date must be a valid date string.");
-  }
-  const endOfDayUtcMs = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 23, 59, 59, 0);
-  return BigInt(Math.floor(endOfDayUtcMs / 1000));
-}
-
-function normalizeNationality(value: string): string {
-  const normalized = value.trim().toUpperCase();
-  if (!/^[A-Z]{3}$/.test(normalized)) {
-    throw new Error("Disclosed nationality must be an alpha-3 country code (e.g. TUR, USA, DEU).");
-  }
-  return normalized;
-}
-
-function parseAgeThreshold(queryResult: unknown, override: number): number {
-  if (Number.isFinite(override)) {
-    return Number(override);
-  }
-  const expected = readPath(queryResult, ["age", "gte", "expected"]);
-  if (typeof expected === "number" && Number.isFinite(expected)) {
-    return expected;
-  }
-  if (typeof expected === "string" && expected.trim()) {
-    const parsed = Number.parseInt(expected, 10);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-  throw new Error("Could not determine age threshold from zkPassport result.");
-}
-
-type LocalPassportDisclosures = {
+function localDisclosures(completion: VerifiedPassportCompletion, ageThreshold: number): {
   nationalityAlpha3: string;
   expiryTs: bigint;
   minAgeProven: number;
-};
-
-function localPassportDisclosures(queryResult: unknown, ageThreshold: number): LocalPassportDisclosures {
-  const ageResult = readPath(queryResult, ["age", "gte", "result"]);
-  if (ageResult !== true) {
+} {
+  if (readPath(completion.queryResult, ["age", "gte", "result"]) !== true) {
     throw new Error("zkPassport query result did not satisfy age.gte.");
   }
-
-  const nationalityAlpha3 = normalizeNationality(
-    requireString(readPath(queryResult, ["nationality", "disclose", "result"]), "queryResult.nationality.disclose.result"),
+  const nationalityAlpha3 = requireString(
+    readPath(completion.queryResult, ["nationality", "disclose", "result"]),
+    "queryResult.nationality.disclose.result",
+  ).toUpperCase();
+  if (!/^[A-Z]{3}$/.test(nationalityAlpha3)) {
+    throw new Error("zkPassport nationality must be an ISO alpha-3 code.");
+  }
+  const expiryValue = readPath(completion.queryResult, ["expiry_date", "disclose", "result"]);
+  const expiryDate = expiryValue instanceof Date ? expiryValue : new Date(requireString(expiryValue, "expiry_date"));
+  if (Number.isNaN(expiryDate.getTime())) {
+    throw new Error("zkPassport expiry_date must be a valid date.");
+  }
+  const expiryTs = BigInt(
+    Date.UTC(
+      expiryDate.getUTCFullYear(),
+      expiryDate.getUTCMonth(),
+      expiryDate.getUTCDate(),
+      23,
+      59,
+      59,
+    ) / 1000,
   );
-  const expiryDate = requireIsoDateLike(
-    readPath(queryResult, ["expiry_date", "disclose", "result"]),
-    "queryResult.expiry_date.disclose.result",
-  );
-  return {
-    nationalityAlpha3,
-    expiryTs: parseIsoDateToExpiryTs(expiryDate),
-    minAgeProven: parseAgeThreshold(queryResult, ageThreshold),
-  };
+  return { nationalityAlpha3, expiryTs, minAgeProven: ageThreshold };
 }
 
-function randomField(): bigint {
-  const cryptoApi = globalThis.crypto;
-  if (!cryptoApi?.getRandomValues) {
-    throw new Error("Secure random generation is unavailable for passport pilot issuance.");
-  }
-
+function secureRandomField(): bigint {
   const bytes = new Uint8Array(32);
   for (;;) {
-    cryptoApi.getRandomValues(bytes);
+    globalThis.crypto.getRandomValues(bytes);
     const candidate = BigInt(`0x${Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("")}`);
-    if (candidate > 0n && candidate < AZTEC_FIELD_MODULUS) {
-      return candidate;
-    }
+    if (candidate > 0n && candidate < FIELD_MODULUS) return candidate;
   }
 }
 
@@ -369,7 +161,7 @@ function fieldFromHexString(value: string, label: string): Fr {
   }
 }
 
-async function derivePilotGhostAccountPreview(input: {
+async function deriveGhostPreview(input: {
   uniqueIdentifier: string;
   credentialType: CredentialType;
   derivationVersion?: GhostDerivationVersion;
@@ -379,210 +171,177 @@ async function derivePilotGhostAccountPreview(input: {
     fieldFromHexString(material.secretHex, "Ghost secret"),
     fieldFromHexString(material.saltHex, "Ghost salt"),
   );
+  return { address: address.toString(), uniqueIdentifier: input.uniqueIdentifier, material };
+}
+
+function compressedOuterProof(completion: VerifiedPassportCompletion): ZkPassportCompressedProof {
+  const proof = completion.proofs.find(candidate => candidate.name === "outer_count_6");
+  if (
+    !proof ||
+    typeof proof.proof !== "string" ||
+    typeof proof.name !== "string" ||
+    typeof proof.version !== "string" ||
+    typeof proof.vkeyHash !== "string"
+  ) {
+    throw new Error("zkPassport did not return the required outer_count_6 compressed proof.");
+  }
   return {
-    address: address.toString(),
-    uniqueIdentifier: input.uniqueIdentifier,
-    material,
-    rootCommitment: deriveRootCommitment({ uniqueIdentifier: input.uniqueIdentifier }),
+    proof: proof.proof,
+    name: proof.name,
+    version: proof.version,
+    vkeyHash: proof.vkeyHash,
+    index: proof.index,
+    total: proof.total,
   };
 }
 
-function localPilotClaims(queryResult: unknown, ageThreshold: number, nextRandomField: () => bigint): bigint {
-  const disclosures = localPassportDisclosures(queryResult, ageThreshold);
-  const nationalityCommitment = computePassportNationalityCommitment(
-    disclosures.nationalityAlpha3,
-    nextRandomField(),
-    poseidon2FieldHasher,
-  );
-  const expiryCommitment = computePassportExpiryCommitment(disclosures.expiryTs, nextRandomField(), poseidon2FieldHasher);
-
-  return computePassportCommittedClaimsHash(
-    {
-      schemaVersion: 2,
-      credentialType: CredentialType.Passport,
-      nationalityCommitment,
-      minAgeProven: disclosures.minAgeProven,
-      expiryCommitment,
-    },
-    poseidon2FieldHasher,
-  );
-}
-
-async function derivePilotGhost(input: {
-  uniqueIdentifier: string | undefined;
-  credentialType: CredentialType;
-  ghostDerivationVersion: GhostDerivationVersion;
-  preparedGhostOwner?: string;
-  deriveGhostAccountPreview: DeriveGhostAccountPreview;
-}): Promise<{ ghostOwner: string; rootCommitment: bigint }> {
-  if (!input.uniqueIdentifier) {
-    throw new Error("zkPassport verification succeeded but uniqueIdentifier is missing for pilot issuance.");
-  }
-  const preview = await input.deriveGhostAccountPreview({
-    uniqueIdentifier: input.uniqueIdentifier,
-    credentialType: input.credentialType,
-    derivationVersion: input.ghostDerivationVersion,
-  });
+function proofForJson(artifact: PassportWrapperProofArtifact): unknown {
+  const bytes = artifact.proof.proof;
   return {
-    ghostOwner: input.preparedGhostOwner ?? preview.address,
-    rootCommitment: preview.rootCommitment ?? deriveRootCommitment({ uniqueIdentifier: input.uniqueIdentifier }),
+    proof: `0x${Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("")}`,
+    publicInputs: artifact.publicInputs,
   };
 }
 
-function assertNoPassportA1PrivateArtifacts(payload: VerifyAndIssuePassportA1Payload | PassportA1ProofPayload): void {
-  assertNoPassportA1OrchestratorArtifacts(payload);
+const FORBIDDEN_NETWORK_KEYS = new Set([
+  "proofs",
+  "outerProof",
+  "zkPassportOuterProof",
+  "outerPublicInputs",
+  "zkPassportOuterPublicInputs",
+  "queryResult",
+  "originalQuery",
+  "committedInputs",
+  "uniqueIdentifier",
+  "scopedNullifier",
+  "nationalityAlpha3",
+  "expiryTs",
+  "nationalityBlind",
+  "expiryBlind",
+  "localWitness",
+  "hintedRootStatusNote",
+  "hintedRootAuthorityNote",
+]);
+
+export function assertNoPassportA2PrivateArtifacts(value: unknown): void {
+  const stack = [value];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current || typeof current !== "object") continue;
+    if (Array.isArray(current)) {
+      stack.push(...current);
+      continue;
+    }
+    for (const [key, child] of Object.entries(current as Record<string, unknown>)) {
+      if (FORBIDDEN_NETWORK_KEYS.has(key)) {
+        throw new Error(`Private passport artifact is forbidden in the API payload: ${key}`);
+      }
+      stack.push(child);
+    }
+  }
 }
 
-function proofArtifactWithoutLocalMetadata(value: unknown): unknown {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return value;
-  }
-  const { metadata: _metadata, ...rest } = value as Record<string, unknown>;
-  return rest;
+export function proofModeForPassportIssuanceKind(_kind: PassportIssuanceKind): "compressed" {
+  return "compressed";
 }
 
-export async function buildPassportA1ProofMaterial(
-  input: PassportIssuanceInput,
-  dependencies: PassportA1ProofDependencies,
-): Promise<PassportA1ProofMaterial> {
-  if (!dependencies.provePassportWrapper) {
-    throw new Error(A1_UNAVAILABLE_MESSAGE);
+export function passportA2BindCustomData(input: {
+  action: PassportA2Action;
+  activeOwner: string;
+  requestScope?: string;
+}): string {
+  const scope = input.requestScope?.trim() || "magna-passport-onboarding";
+  const customData = `magna-passport-a2:${input.action}:${scope}:${input.activeOwner.trim().toLowerCase()}`;
+  if ([...customData].some(char => char.charCodeAt(0) > 0x7f)) {
+    throw new Error("Passport A2 bind data must be ASCII.");
   }
-  const provePassportWrapper = dependencies.provePassportWrapper;
+  return customData;
+}
 
-  dependencies.onA1Progress?.({ type: "building_witness" });
-  const disclosures = localPassportDisclosures(input.completion.queryResult, input.ageThreshold);
-  const nextRandomField = dependencies.randomField ?? randomField;
-  const nationalityBlind = nextRandomField();
-  const expiryBlind = nextRandomField();
-  const nowMs = dependencies.nowMs ?? Date.now;
-  const credentialValidUntil = BigInt(Math.floor(nowMs() / 1000) + PILOT_VALIDITY_WINDOW_SECONDS);
-  const outerArtifacts = extractZkPassportOuterProofArtifacts(input.completion);
-  const outerMetadata = extractZkPassportOuterProofUtilityMetadata(outerArtifacts.outerPublicInputs);
-  const witness = await buildPassportWrapperWitnessFromZkPassportResult(input.completion, {
+export function passportCredentialUsageBlock(
+  credential:
+    | { issuanceKind?: PassportIssuanceKind; passportCommittedClaimsV2Witness?: unknown }
+    | null
+    | undefined,
+): string | undefined {
+  if (!credential || credential.passportCommittedClaimsV2Witness) return undefined;
+  return credential.issuanceKind === "a2"
+    ? PASSPORT_A2_LOCAL_WITNESS_MISSING_MESSAGE
+    : REDISCOVERED_PASSPORT_WITNESS_MISSING_MESSAGE;
+}
+
+export async function buildPassportA2ProofMaterial(
+  input: PassportIssuanceInput & { action: PassportA2Action; ghostOwner: string },
+  dependencies: Pick<PassportIssuanceDependencies, "provePassportWrapper" | "randomField" | "nowMs" | "onA2Progress">,
+): Promise<PassportA2ProofMaterial> {
+  dependencies.onA2Progress?.({ type: "building_witness" });
+  const disclosures = localDisclosures(input.completion, input.ageThreshold);
+  const nowSeconds = BigInt(Math.floor((dependencies.nowMs ?? Date.now)() / 1000));
+  const credentialValidUntil =
+    nowSeconds + BigInt(VALIDITY_WINDOW_SECONDS) < disclosures.expiryTs
+      ? nowSeconds + BigInt(VALIDITY_WINDOW_SECONDS)
+      : disclosures.expiryTs;
+  const randomField = dependencies.randomField ?? secureRandomField;
+  const witness: PassportWrapperLocalWitness = {
+    zkPassportOuterProof: compressedOuterProof(input.completion),
     nationalityAlpha3: disclosures.nationalityAlpha3,
     expiryTs: disclosures.expiryTs,
     minAgeProven: disclosures.minAgeProven,
-    credentialValidUntil,
     agePredicate: { minAge: disclosures.minAgeProven, maxAge: 0 },
-    bind: {
-      customData:
-        input.a1BindCustomData ??
-        passportA1BindCustomData({ activeOwner: input.activeOwner, requestScope: input.requestScope }),
-    },
-    nationalityBlind,
-    expiryBlind,
-    scopedNullifier: outerMetadata.scopedNullifier,
-  });
-
-  dependencies.onA1Progress?.({ type: "generating_wrapper_proof" });
-  const wrapperProof = await provePassportWrapper(witness);
-  const payload: PassportA1ProofPayload = {
-    schema: A1_SCHEMA,
-    credentialValidUntil: wrapperProof.outputs.credentialValidUntil,
-    wrapperProof: wrapperProof.proof,
-    wrapperPublicInputs: wrapperProof.publicInputs.map(String),
-    zkPassportOuterProof: proofArtifactWithoutLocalMetadata(outerArtifacts.outerProof),
-    zkPassportOuterPublicInputs: outerArtifacts.outerPublicInputs.map(String),
-    claimsHash: wrapperProof.outputs.claimsHash,
-  };
-  assertNoPassportA1PrivateArtifacts(payload);
-
-  return {
-    payload,
-    localWitness: {
-      witness,
-      nationalityBlind: nationalityBlind.toString(),
-      expiryBlind: expiryBlind.toString(),
-      scopedNullifier: outerMetadata.scopedNullifier,
-      wrapperPublicInputs: payload.wrapperPublicInputs,
+    bind: { customData: input.a2BindCustomData },
+    credentialValidUntil,
+    nationalityBlind: randomField(),
+    expiryBlind: randomField(),
+    requestContext: {
+      action: input.action,
+      issuer: input.issuerAddress,
+      owner: input.activeOwner,
+      ghostOwner: input.ghostOwner,
+      credentialMode: input.mode,
     },
   };
-}
-
-async function buildPassportA1Issuance(
-  input: PassportIssuanceInput,
-  dependencies: PassportIssuanceDependencies,
-): Promise<Extract<PassportIssuanceResult, { issuanceKind: "a1" }>> {
-  const verifyAndIssuePassportA1ThroughBackend = dependencies.verifyAndIssuePassportA1ThroughBackend;
-  if (!verifyAndIssuePassportA1ThroughBackend) {
-    throw new Error("A1 backend client dependency is not configured.");
-  }
-
-  const [proofMaterial, ghost] = await Promise.all([
-    buildPassportA1ProofMaterial(input, dependencies),
-    derivePilotGhost({
-      uniqueIdentifier: input.completion.uniqueIdentifier,
-      credentialType: CredentialType.Passport,
-      ghostDerivationVersion: input.ghostDerivationVersion,
-      preparedGhostOwner: input.preparedGhostOwner,
-      deriveGhostAccountPreview: dependencies.deriveGhostAccountPreview ?? derivePilotGhostAccountPreview,
-    }),
-  ]);
-  const payload: VerifyAndIssuePassportA1Payload = {
-    ...proofMaterial.payload,
-    activeOwner: input.activeOwner,
-    ghostOwner: ghost.ghostOwner,
-    rootCommitment: ghost.rootCommitment.toString(),
-    mode: input.mode,
-    ghostDerivationVersion: input.ghostDerivationVersion,
+  dependencies.onA2Progress?.({ type: "generating_wrapper_proof" });
+  const wrapper = await dependencies.provePassportWrapper(witness);
+  const payload: PassportA2ProofPayload = {
+    schema: "passport-a2-v1",
+    credentialValidUntil: wrapper.outputs.credentialValidUntil,
+    wrapperProof: proofForJson(wrapper),
+    wrapperPublicInputs: wrapper.publicInputs,
+    registryContext: wrapper.metadata.registryContext,
   };
-  assertNoPassportA1PrivateArtifacts(payload);
-
-  dependencies.onA1Progress?.({ type: "submitting_to_backend" });
-  return {
-    issuanceKind: "a1",
-    response: await verifyAndIssuePassportA1ThroughBackend(input.verificationApiUrl, payload),
-    localWitness: proofMaterial.localWitness,
-  };
+  assertNoPassportA2PrivateArtifacts(payload);
+  return { payload, localWitness: { witness, wrapperPublicInputs: wrapper.publicInputs } };
 }
 
 export async function issuePassportThroughConfiguredBackend(
   input: PassportIssuanceInput,
   dependencies: PassportIssuanceDependencies,
 ): Promise<PassportIssuanceResult> {
-  if (input.issuanceKind === "a1") {
-    return await buildPassportA1Issuance(input, dependencies);
+  if (!input.completion.uniqueIdentifier) {
+    throw new Error("zkPassport verification succeeded without a unique identifier.");
   }
-
-  if (input.issuanceKind === "legacy") {
-    return {
-      issuanceKind: "legacy",
-      response: await dependencies.verifyAndIssueThroughBackend(input.verificationApiUrl, {
-        proofs: input.completion.proofs,
-        originalQuery: input.completion.originalQuery,
-        queryResult: input.completion.queryResult,
-        activeOwner: input.activeOwner,
-        ageThreshold: input.ageThreshold,
-        mode: input.mode,
-        ghostDerivationVersion: input.ghostDerivationVersion,
-      }),
-    };
-  }
-
-  const nextRandomField = dependencies.randomField ?? randomField;
-  const claimsHash = localPilotClaims(input.completion.queryResult, input.ageThreshold, nextRandomField);
-  const ghost = await derivePilotGhost({
+  const preview = await (dependencies.deriveGhostAccountPreview ?? deriveGhostPreview)({
     uniqueIdentifier: input.completion.uniqueIdentifier,
     credentialType: CredentialType.Passport,
-    ghostDerivationVersion: input.ghostDerivationVersion,
-    preparedGhostOwner: input.preparedGhostOwner,
-    deriveGhostAccountPreview: dependencies.deriveGhostAccountPreview ?? derivePilotGhostAccountPreview,
+    derivationVersion: input.ghostDerivationVersion,
   });
-  const nowMs = dependencies.nowMs ?? Date.now;
-  const credentialValidUntil = Math.floor(nowMs() / 1000) + PILOT_VALIDITY_WINDOW_SECONDS;
-
+  const ghostOwner = input.preparedGhostOwner ?? preview.address;
+  const proofMaterial = await buildPassportA2ProofMaterial(
+    { ...input, action: "issue", ghostOwner },
+    dependencies,
+  );
+  const payload: VerifyAndIssuePassportA2Payload = {
+    ...proofMaterial.payload,
+    activeOwner: input.activeOwner,
+    ghostOwner,
+    mode: input.mode,
+    ghostDerivationVersion: input.ghostDerivationVersion,
+  };
+  assertNoPassportA2PrivateArtifacts(payload);
+  dependencies.onA2Progress?.({ type: "submitting_to_backend" });
   return {
-    issuanceKind: "pilot",
-    response: await dependencies.verifyAndIssuePassportPilotThroughBackend(input.verificationApiUrl, {
-      pilotSchema: PILOT_SCHEMA,
-      activeOwner: input.activeOwner,
-      claimsHash: claimsHash.toString(),
-      ghostOwner: ghost.ghostOwner,
-      rootCommitment: ghost.rootCommitment.toString(),
-      credentialValidUntil: credentialValidUntil.toString(),
-      mode: input.mode,
-      ghostDerivationVersion: input.ghostDerivationVersion,
-    }),
+    issuanceKind: "a2",
+    response: await dependencies.verifyAndIssuePassportA2ThroughBackend(input.verificationApiUrl, payload),
+    localWitness: proofMaterial.localWitness,
   };
 }

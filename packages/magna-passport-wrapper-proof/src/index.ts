@@ -3,4 +3,4 @@ export * from "./public-inputs.js";
 export * from "./prove.js";
 export * from "./types.js";
 export * from "./verify.js";
-export * from "./zkpassport-evm.js";
+export * from "./zkpassport-recursive.js";

@@ -284,7 +284,7 @@ scripts/                         tooling: contract compile/codegen, bootstrap, l
 
 ## 11. v1 scope & stability notes
 
-- **Primary credential source:** `zkPassport` (canonical claims: `age`, `nationality`, `expiry`), issued via the **A1 / PII-blind** flow — only Poseidon2 commitments leave the device, never raw passport data.
+- **Primary credential source:** `zkPassport` (canonical claims: `age`, `nationality`, `expiry`), issued via the **A1 / PII-blind** flow. A1 issuance excludes raw passport claims, `queryResult`, committed-input material, claim blinds, and the unscoped `uniqueIdentifier` from the verification API payload. The API still receives proofs, public inputs, owner addresses, commitments, the scoped nullifier, and lifecycle-specific metadata; rooted renewal additionally sends private root note hints.
 - **Rooted identity is the canonical path:** `register_rooted_passport` + linked verify paths. Legacy rootless flows are compatibility-only and must be explicitly selected.
 - **Recovery** uses deterministic **Ghost account** derivation from a scoped zkPassport identifier. Ghost derivation is versioned (`v1_legacy_unscoped`, `v2_scoped`) to avoid silent recovery breakage.
 - **Issuance** is accepted only from the immutable `ORCHESTRATOR_ADDRESS` (a stable orchestrator account, required by Aztec sender-for-tags discovery).

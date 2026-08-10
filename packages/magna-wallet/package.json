@@ -21,7 +21,7 @@
     "@magna/contracts-bindings": "0.1.0",
     "@magna/core": "0.1.0",
     "@aztec/wallet-sdk": "5.0.0-rc.1",
-    "@zkpassport/utils": "0.36.1",
+    "@zkpassport/utils": "0.37.3",
     "viem": "npm:@aztec/viem@2.38.2"
   },
   "devDependencies": {

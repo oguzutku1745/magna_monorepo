@@ -2,25 +2,29 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   loadCredentialRefs,
   loadWalletProfile,
-  readPassportA1Witness,
+  readPassportA2Witness,
   reconcileStoredChainFingerprint,
   refsForOwner,
   saveCredentialRefs,
-  savePassportA1Witness,
+  savePassportA2Witness,
   saveWalletProfile,
   upsertCredentialRef,
+  type PassportCommittedClaimsV2LocalWitness,
   type StoredCredentialRef,
 } from "./storage";
 
 const ownerAddress = "0xowner";
+const witness: PassportCommittedClaimsV2LocalWitness = {
+  schema: "passport-committed-claims-v2",
+  credentialAuthenticity: "passport-a2",
+  minAgeProven: 21,
+  nationalityAlpha3Packed: "5526610",
+  nationalityBlind: "111",
+  expiryTs: "1942358399",
+  expiryBlind: "222",
+};
 
-function passportRef(overrides: Partial<StoredCredentialRef>): StoredCredentialRef {
-  const normalizedClaims = {
-    nationalityAlpha3: "ZKR",
-    minAgeProven: 18,
-    passportExpiryDate: "2030-01-01",
-    expiryTs: "1893456000",
-  };
+function passportRef(overrides: Partial<StoredCredentialRef> = {}): StoredCredentialRef {
   return {
     id: overrides.id ?? "ref",
     ownerAddress: overrides.ownerAddress ?? ownerAddress,
@@ -31,7 +35,6 @@ function passportRef(overrides: Partial<StoredCredentialRef>): StoredCredentialR
     issuerAddress: overrides.issuerAddress,
     mode: overrides.mode ?? "rooted",
     rootCommitment: overrides.rootCommitment ?? "99",
-    normalizedClaims: "normalizedClaims" in overrides ? overrides.normalizedClaims : normalizedClaims,
     issuanceKind: overrides.issuanceKind,
     passportCommittedClaimsV2Witness: overrides.passportCommittedClaimsV2Witness,
   };
@@ -43,153 +46,51 @@ describe("credential ref storage", () => {
     vi.stubGlobal("window", {
       localStorage: {
         getItem: vi.fn((key: string) => store.get(key) ?? null),
-        setItem: vi.fn((key: string, value: string) => {
-          store.set(key, value);
-        }),
-        removeItem: vi.fn((key: string) => {
-          store.delete(key);
-        }),
+        setItem: vi.fn((key: string, value: string) => store.set(key, value)),
+        removeItem: vi.fn((key: string) => store.delete(key)),
       },
     });
   });
 
-  it("filters owner refs to the current issuer deployment when configured", () => {
+  it("filters refs to the configured issuer", () => {
     saveCredentialRefs([
-      passportRef({ id: "old", issuerAddress: "0xoldissuer" }),
-      passportRef({ id: "current", issuerAddress: "0xcurrentissuer" }),
-      passportRef({ id: "other-owner", ownerAddress: "0xother", issuerAddress: "0xcurrentissuer" }),
+      passportRef({ id: "old", issuerAddress: "0xold" }),
+      passportRef({ id: "current", issuerAddress: "0xcurrent" }),
     ]);
-
-    expect(refsForOwner(ownerAddress, { issuerAddress: "0xcurrentissuer" }).map(ref => ref.id)).toEqual([
-      "current",
-    ]);
+    expect(refsForOwner(ownerAddress, { issuerAddress: "0xcurrent" }).map(ref => ref.id)).toEqual(["current"]);
   });
 
-  it("keys upserts by issuer so re-issuing after redeploy does not overwrite old local refs", () => {
-    upsertCredentialRef(passportRef({ id: "same-local-id", issuerAddress: "0xoldissuer" }));
-    const refs = upsertCredentialRef(passportRef({ id: "same-local-id", issuerAddress: "0xnewissuer" }));
-
-    expect(refs.map(ref => ref.issuerAddress).sort()).toEqual(["0xnewissuer", "0xoldissuer"]);
+  it("keeps refs from separate issuer deployments distinct", () => {
+    upsertCredentialRef(passportRef({ issuerAddress: "0xold" }));
+    const refs = upsertCredentialRef(passportRef({ issuerAddress: "0xnew" }));
+    expect(refs.map(ref => ref.issuerAddress).sort()).toEqual(["0xnew", "0xold"]);
   });
 
-  it("stores and reloads schema-tagged A1 witness metadata locally", () => {
-    const witness = {
-      schema: "passport-committed-claims-v2" as const,
-      credentialAuthenticity: "passport-a1" as const,
-      minAgeProven: 21,
-      nationalityAlpha3Packed: "5526610",
-      nationalityBlind: "111",
-      expiryTs: "1942358399",
-      expiryBlind: "222",
-    };
-
-    upsertCredentialRef(
-      passportRef({
-        id: "a1",
-        issuanceKind: "a1",
-        normalizedClaims: undefined,
-        passportCommittedClaimsV2Witness: witness,
-      }),
-    );
-
-    const stored = loadCredentialRefs()[0];
-    expect(stored).toMatchObject({
-      id: "a1",
-      issuanceKind: "a1",
-      passportCommittedClaimsV2Witness: witness,
-    });
-    expect(stored.normalizedClaims).toBeUndefined();
-  });
-
-  it("hydrates rediscovered passport refs from the separate A1 witness cache", () => {
-    const witness = {
-      schema: "passport-committed-claims-v2" as const,
-      credentialAuthenticity: "passport-a1" as const,
-      minAgeProven: 21,
-      nationalityAlpha3Packed: "5526610",
-      nationalityBlind: "111",
-      expiryTs: "1942358399",
-      expiryBlind: "222",
-    };
-    const ref = passportRef({
-      id: "a1",
+  it("stores and hydrates the A2 local witness from its separate cache", () => {
+    const issued = passportRef({
+      id: "a2",
       issuerAddress: "0xissuer",
-      issuanceKind: "a1",
-      normalizedClaims: undefined,
+      issuanceKind: "a2",
       passportCommittedClaimsV2Witness: witness,
     });
-
-    savePassportA1Witness(ref);
+    savePassportA2Witness(issued);
     saveCredentialRefs([
-      passportRef({
-        id: "rediscovered",
-        issuerAddress: "0xissuer",
-        normalizedClaims: undefined,
-        passportCommittedClaimsV2Witness: undefined,
-      }),
+      passportRef({ id: "rediscovered", issuerAddress: "0xissuer", passportCommittedClaimsV2Witness: undefined }),
     ]);
-
     expect(loadCredentialRefs()[0]).toMatchObject({
-      issuanceKind: "a1",
+      issuanceKind: "a2",
       passportCommittedClaimsV2Witness: witness,
     });
   });
 
-  it("preserves existing legacy refs with normalized claims", () => {
-    const legacy = passportRef({ id: "legacy", issuanceKind: "legacy" });
-
-    saveCredentialRefs([legacy]);
-
-    expect(loadCredentialRefs()).toEqual([legacy]);
-    expect(refsForOwner(ownerAddress)[0].normalizedClaims).toEqual({
-      nationalityAlpha3: "ZKR",
-      minAgeProven: 18,
-      passportExpiryDate: "2030-01-01",
-      expiryTs: "1893456000",
-    });
-  });
-
-  it("clears wallet-local credential state when the chain fingerprint changes", () => {
-    const witness = {
-      schema: "passport-committed-claims-v2" as const,
-      credentialAuthenticity: "passport-a1" as const,
-      minAgeProven: 21,
-      nationalityAlpha3Packed: "5526610",
-      nationalityBlind: "111",
-      expiryTs: "1942358399",
-      expiryBlind: "222",
-    };
-    saveCredentialRefs([passportRef({ id: "stale", issuerAddress: "0xoldissuer" })]);
-    savePassportA1Witness(
-      passportRef({
-        id: "a1",
-        issuerAddress: "0xoldissuer",
-        normalizedClaims: undefined,
-        passportCommittedClaimsV2Witness: witness,
-      }),
-    );
-    saveWalletProfile({
-      address: ownerAddress,
-      walletKind: "webauthn",
-      createdAt: "2026-06-19T00:00:00.000Z",
-    });
-
+  it("clears chain-specific refs but retains the separate A2 witness cache", () => {
+    const ref = passportRef({ issuerAddress: "0xissuer", issuanceKind: "a2", passportCommittedClaimsV2Witness: witness });
+    saveCredentialRefs([ref]);
+    saveWalletProfile({ address: ownerAddress, walletKind: "webauthn", createdAt: "2026-06-19T00:00:00.000Z" });
     expect(reconcileStoredChainFingerprint("chain-a")).toBe(false);
-    expect(loadCredentialRefs()).toHaveLength(1);
-    expect(loadWalletProfile()).not.toBeNull();
-
     expect(reconcileStoredChainFingerprint("chain-b")).toBe(true);
     expect(loadCredentialRefs()).toEqual([]);
     expect(loadWalletProfile()).toBeNull();
-    expect(
-      readPassportA1Witness({
-        ownerAddress,
-        issuerAddress: "0xoldissuer",
-        mode: "rooted",
-        rootCommitment: "99",
-        claimsHash: "123",
-      }),
-    ).toEqual(witness);
-    expect(reconcileStoredChainFingerprint("chain-b")).toBe(false);
+    expect(readPassportA2Witness(ref)).toEqual(witness);
   });
 });

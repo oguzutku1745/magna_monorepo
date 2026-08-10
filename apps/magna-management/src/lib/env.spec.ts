@@ -20,11 +20,11 @@ describe("getManagementEnv", () => {
     expect(env.zkPassportDevMode).toBe(false);
   });
 
-  it("defaults passport issuance to A1 outside local dev", () => {
+  it("defaults passport issuance to A2", () => {
     const env = getManagementEnv({});
 
     expect(env.zkPassportDevMode).toBe(false);
-    expect(env.zkPassportIssuanceKind).toBe("a1");
+    expect(env.zkPassportIssuanceKind).toBe("a2");
   });
 
   it("allows explicit zkPassport dev mode configuration to override the local-dev default", () => {
@@ -32,33 +32,23 @@ describe("getManagementEnv", () => {
     expect(getManagementEnv({ DEV: false, VITE_MAGNA_ZKPASSPORT_DEV_MODE: "true" }).zkPassportDevMode).toBe(true);
   });
 
-  it("parses explicit passport issuance kind configuration", () => {
-    expect(getManagementEnv({ VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "legacy" }).zkPassportIssuanceKind).toBe(
-      "legacy",
-    );
-    expect(getManagementEnv({ VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "pilot" }).zkPassportIssuanceKind).toBe("pilot");
-    expect(getManagementEnv({ VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "a1" }).zkPassportIssuanceKind).toBe("a1");
+  it("accepts only explicit A2 passport issuance configuration", () => {
+    expect(getManagementEnv({ VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "a2" }).zkPassportIssuanceKind).toBe("a2");
+    expect(() => getManagementEnv({ VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "a1" })).toThrow("must be a2");
   });
 
-  it("defaults production passport issuance to A1 with dev-only paths disabled", () => {
+  it("defaults production passport issuance to A2 with dev-only paths disabled", () => {
     const env = getManagementEnv({ PROD: true });
 
-    expect(env.zkPassportIssuanceKind).toBe("a1");
+    expect(env.zkPassportIssuanceKind).toBe("a2");
     expect(env.zkPassportDevMode).toBe(false);
     expect(env.enableDevOrchestrator).toBe(false);
     expect(env.enableLocalTestBootstrap).toBe(false);
   });
 
-  it("rejects legacy, pilot, and dev flags in production builds", () => {
-    expect(() => getManagementEnv({ PROD: true, VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "legacy" })).toThrow(
-      "Production passport issuance supports only A1",
-    );
-    expect(() => getManagementEnv({ PROD: true, VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "pilot" })).toThrow(
-      "Production passport issuance supports only A1",
-    );
-    expect(getManagementEnv({ PROD: true, VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "a1" }).zkPassportIssuanceKind).toBe(
-      "a1",
-    );
+  it("rejects non-A2 selection and dev flags in production builds", () => {
+    expect(() => getManagementEnv({ PROD: true, VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "legacy" })).toThrow("must be a2");
+    expect(getManagementEnv({ PROD: true, VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "a2" }).zkPassportIssuanceKind).toBe("a2");
     expect(() => getManagementEnv({ PROD: true, VITE_MAGNA_ZKPASSPORT_DEV_MODE: "true" })).toThrow(
       "VITE_MAGNA_ZKPASSPORT_DEV_MODE must be disabled in production",
     );
@@ -66,7 +56,7 @@ describe("getManagementEnv", () => {
 
   it("rejects unknown passport issuance modes", () => {
     expect(() => getManagementEnv({ VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "unsafe" })).toThrow(
-      "must be one of legacy, pilot, or a1",
+      "must be a2",
     );
   });
 

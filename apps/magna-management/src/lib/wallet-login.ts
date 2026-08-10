@@ -16,12 +16,10 @@ import {
   type MagnaConsumerLoginOutcome,
 } from "@magna/wallet";
 import { getManagementEnv } from "./env";
-import { hydratePassportA1Witness, refsForOwner, upsertCredentialRef, type StoredCredentialRef } from "./storage";
+import { hydratePassportA2Witness, refsForOwner, upsertCredentialRef, type StoredCredentialRef } from "./storage";
 
-const A1_LOCAL_WITNESS_MISSING_MESSAGE =
-  "Passport A1 credential is missing its local v2 witness. Re-issue this passport credential on this device to restore A1/v2 presentation.";
-const PILOT_CREDENTIAL_UNUSABLE_MESSAGE =
-  "PII-blind pilot credentials are non-production and cannot be used for Login with Magna. Re-issue with A1/v2 support before using this credential.";
+const A2_LOCAL_WITNESS_MISSING_MESSAGE =
+  "Passport A2 credential is missing its local committed-claims witness. Re-issue this passport credential on this device.";
 const ACCOUNT_AUTH_NOTE_MISSING_MESSAGE =
   "Login with Magna could not authorize the verification transaction: the passkey wallet's own signing-key " +
   "note is not present in this session's private state (PXE), so the account cannot sign. This is an " +
@@ -32,13 +30,10 @@ function loadPassportCredential(ownerAddress: string, issuerAddress?: string) {
   const passports = refsForOwner(ownerAddress, { issuerAddress }).filter(
     ref => ref.kind === "passport" && ref.status === "active",
   );
-  const credential = passports.find(ref => ref.normalizedClaims || ref.passportCommittedClaimsV2Witness);
+  const credential = passports.find(ref => ref.issuanceKind === "a2" && ref.passportCommittedClaimsV2Witness);
   if (!credential) {
-    if (passports.some(ref => ref.issuanceKind === "a1")) {
-      throw new Error(A1_LOCAL_WITNESS_MISSING_MESSAGE);
-    }
-    if (passports.some(ref => ref.issuanceKind === "pilot")) {
-      throw new Error(PILOT_CREDENTIAL_UNUSABLE_MESSAGE);
+    if (passports.length > 0) {
+      throw new Error(A2_LOCAL_WITNESS_MISSING_MESSAGE);
     }
     throw new Error("No active Magna passport credential is available in this wallet session.");
   }
@@ -219,7 +214,7 @@ function storedRefFromDiscovered(
   existing?: StoredCredentialRef,
 ): StoredCredentialRef {
   const now = new Date().toISOString();
-  return hydratePassportA1Witness({
+  return hydratePassportA2Witness({
     ...existing,
     id: credentialId({
       ownerAddress: discovered.ownerAddress,

@@ -1,344 +1,269 @@
 import { CredentialType } from "@magna/core";
 import {
+  MAGNA_ROOT_DS,
   computePassportCommittedClaimsHash,
   computePassportExpiryCommitment,
   computePassportNationalityCommitment,
-  computeZkPassportParameterCommitmentManifest,
-  computeZkPassportParameterCommitmentManifestCandidates,
+  deriveRootCommitment,
   packAlpha3,
   poseidon2FieldHasher,
 } from "@magna/wallet";
+import {
+  formatBoundData,
+  getAgeParameterCommitment,
+  getBindParameterCommitment,
+  getDiscloseParameterCommitment,
+  getParamCommitmentsFromOuterProof,
+} from "@zkpassport/utils";
+import { PASSPORT_A2_INNER_VKEY_HASH } from "./types.js";
 import type {
   BigintLike,
   BuildPassportWrapperInputsOptions,
   BuildPassportWrapperInputsResult,
+  PassportA2Action,
+  PassportA2CredentialMode,
+  PassportA2NullifierType,
   PassportWrapperDeclaredPublicOutputs,
   PassportWrapperLocalWitness,
   PassportWrapperPublicOutputs,
+  ZkPassportMrzLayout,
 } from "./types.js";
+import { resolveZkPassportRecursiveArtifacts } from "./zkpassport-recursive.js";
 
-const MAX_U8 = 255;
+export const MAGNA_PASSPORT_A2_CONTEXT_DS = 0x4d413243n; // "MA2C"
+const FIELD_MODULUS =
+  21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 const MAX_U64 = (1n << 64n) - 1n;
-const textDecoder = new TextDecoder("ascii", { fatal: true });
+const MRZ_LENGTH = 90;
+const BIND_LENGTH = 509;
+const LAYOUTS: Record<ZkPassportMrzLayout, { nationality: number; expiry: number }> = {
+  passport: { nationality: 54, expiry: 65 },
+  id_card: { nationality: 45, expiry: 38 },
+};
+const ACTION_FIELDS: Record<PassportA2Action, bigint> = { issue: 1n, renew: 2n, recover: 3n };
+const MODE_FIELDS: Record<PassportA2CredentialMode, bigint> = { rooted: 1n, passport: 2n };
+const encoder = new TextEncoder();
 
 function bigintFrom(value: BigintLike, label: string): bigint {
-  if (typeof value === "bigint") {
-    return value;
-  }
-  if (typeof value === "number") {
-    if (!Number.isSafeInteger(value)) {
-      throw new Error(`${label} must be a safe integer.`);
+  try {
+    const parsed = typeof value === "bigint" ? value : BigInt(value);
+    if (parsed < 0n || parsed >= FIELD_MODULUS) {
+      throw new Error("range");
     }
-    return BigInt(value);
+    return parsed;
+  } catch {
+    throw new Error(`${label} must be a non-negative field value.`);
   }
-  if (!/^(0|[1-9][0-9]*|0x[0-9a-fA-F]+)$/.test(value)) {
-    throw new Error(`${label} must be an unsigned bigint string.`);
-  }
-  return BigInt(value);
-}
-
-function assertUnsigned(value: bigint, label: string): void {
-  if (value < 0n) {
-    throw new Error(`${label} must be non-negative.`);
-  }
-}
-
-function u8From(value: number, label: string): number {
-  if (!Number.isInteger(value) || value < 0 || value > MAX_U8) {
-    throw new Error(`${label} must be an integer in [0, 255].`);
-  }
-  return value;
-}
-
-function localAgeMaxBound(ageMaxPredicate: number): number {
-  return ageMaxPredicate === 0 ? MAX_U8 : ageMaxPredicate;
 }
 
 function u64From(value: BigintLike, label: string): bigint {
-  const parsed = bigintFrom(value, label);
-  assertUnsigned(parsed, label);
-  if (parsed > MAX_U64) {
+  const parsed = typeof value === "bigint" ? value : BigInt(value);
+  if (parsed < 0n || parsed > MAX_U64) {
     throw new Error(`${label} must fit in u64.`);
   }
   return parsed;
 }
 
-function fieldString(value: bigint): string {
-  assertUnsigned(value, "field input");
-  return value.toString();
-}
-
-function assertMatchingField(actual: bigint, expected: BigintLike, label: string): void {
-  const parsedExpected = bigintFrom(expected, label);
-  assertUnsigned(parsedExpected, label);
-  if (actual !== parsedExpected) {
-    throw new Error(`${label} does not match the wrapper witness.`);
+function u8From(value: number, label: string): number {
+  if (!Number.isInteger(value) || value < 0 || value > 255) {
+    throw new Error(`${label} must fit in u8.`);
   }
+  return value;
 }
 
-function disclosureAscii(bytes: number[], label: string): string {
-  try {
-    return textDecoder.decode(Uint8Array.from(bytes));
-  } catch {
-    throw new Error(`${label} must be ASCII disclosure bytes.`);
+function nullifierTypeFrom(value: string): PassportA2NullifierType {
+  const parsed = Number(BigInt(value));
+  if (parsed !== 0 && parsed !== 1 && parsed !== 2 && parsed !== 3) {
+    throw new Error("zkPassport outer proof has an invalid nullifier type.");
   }
+  return parsed;
 }
 
-function assertDisclosureMaskCovers(bytes: number[], mask: number[], label: string): void {
-  if (mask.length !== bytes.length || mask.some((value) => value !== 1)) {
-    throw new Error(`${label} must disclose exactly the local committed value.`);
+function expiryMrz(expiryTs: bigint): number[] {
+  const milliseconds = expiryTs * 1000n;
+  if (milliseconds > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error("expiryTs is too large to convert to an MRZ date.");
   }
-}
-
-function assertNationalityDisclosureMatches(witness: PassportWrapperLocalWitness): void {
-  const disclosure = witness.minimalZkPassportWitness.nationalityDisclosure;
-  assertDisclosureMaskCovers(
-    disclosure.disclosedBytes,
-    disclosure.discloseMask,
-    "nationality disclosure",
+  const date = new Date(Number(milliseconds));
+  const canonical = Date.UTC(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate(),
+    23,
+    59,
+    59,
   );
-  const disclosedNationality = disclosureAscii(
-    disclosure.disclosedBytes,
-    "nationality disclosure",
+  if (canonical !== Number(milliseconds)) {
+    throw new Error("expiryTs must be the canonical end-of-day UTC passport expiry.");
+  }
+  return Array.from(
+    encoder.encode(
+      `${String(date.getUTCFullYear() % 100).padStart(2, "0")}${String(
+        date.getUTCMonth() + 1,
+      ).padStart(2, "0")}${String(date.getUTCDate()).padStart(2, "0")}`,
+    ),
   );
-  if (disclosedNationality !== witness.nationalityAlpha3) {
-    throw new Error("nationalityAlpha3 does not match the minimal zkPassport nationality disclosure.");
-  }
 }
 
-function mrzExpiryFromTimestamp(expiryTs: bigint): string {
-  const expiryMs = expiryTs * 1000n;
-  if (expiryMs > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new Error("expiryTs is too large to convert to a UTC disclosure date.");
-  }
-  const date = new Date(Number(expiryMs));
-  if (Number.isNaN(date.getTime())) {
-    throw new Error("expiryTs must be a valid UTC timestamp.");
-  }
-  const yy = String(date.getUTCFullYear() % 100).padStart(2, "0");
-  const mm = String(date.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(date.getUTCDate()).padStart(2, "0");
-  return `${yy}${mm}${dd}`;
+function buildDisclosure(
+  layout: ZkPassportMrzLayout,
+  nationality: number[],
+  expiry: number[],
+): { mask: number[]; bytes: number[] } {
+  const mask = Array<number>(MRZ_LENGTH).fill(0);
+  const bytes = Array<number>(MRZ_LENGTH).fill(0);
+  const offsets = LAYOUTS[layout];
+  nationality.forEach((value, index) => {
+    mask[offsets.nationality + index] = 1;
+    bytes[offsets.nationality + index] = value;
+  });
+  expiry.forEach((value, index) => {
+    mask[offsets.expiry + index] = 1;
+    bytes[offsets.expiry + index] = value;
+  });
+  return { mask, bytes };
 }
 
-function canonicalExpiryTimestampFromMrz(mrzExpiry: string): bigint {
-  if (!/^[0-9]{6}$/.test(mrzExpiry)) {
-    throw new Error("expiry disclosure must be an MRZ YYMMDD date.");
+function paddedBindData(customData: string): number[] {
+  const data = formatBoundData({ custom_data: customData });
+  if (data.length > BIND_LENGTH) {
+    throw new Error("zkPassport bind data exceeds 509 bytes.");
   }
-  const year = 2000 + Number(mrzExpiry.slice(0, 2));
-  const month = Number(mrzExpiry.slice(2, 4));
-  const day = Number(mrzExpiry.slice(4, 6));
-  const ms = Date.UTC(year, month - 1, day, 23, 59, 59, 0);
-  const date = new Date(ms);
-  if (
-    date.getUTCFullYear() !== year ||
-    date.getUTCMonth() + 1 !== month ||
-    date.getUTCDate() !== day
-  ) {
-    throw new Error("expiry disclosure must be a valid MRZ YYMMDD date.");
-  }
-  return BigInt(Math.floor(ms / 1000));
+  return [...data, ...Array<number>(BIND_LENGTH - data.length).fill(0)];
 }
 
-function assertExpiryDisclosureMatches(
-  witness: PassportWrapperLocalWitness,
-  expiryTs: bigint,
-): void {
-  const disclosure = witness.minimalZkPassportWitness.expiryDisclosure;
-  assertDisclosureMaskCovers(
-    disclosure.disclosedBytes,
-    disclosure.discloseMask,
-    "expiry disclosure",
-  );
-  const disclosedExpiry = disclosureAscii(disclosure.disclosedBytes, "expiry disclosure");
-  const expectedExpiryTs = canonicalExpiryTimestampFromMrz(disclosedExpiry);
-  if (expiryTs !== expectedExpiryTs || mrzExpiryFromTimestamp(expiryTs) !== disclosedExpiry) {
-    throw new Error("expiryTs does not match the minimal zkPassport expiry disclosure.");
-  }
-}
-
-function normalizeDeclaredOutputs(
+function assertDeclared(
   declared: PassportWrapperDeclaredPublicOutputs | undefined,
-  computed: {
-    claimsHash: bigint;
-    nationalityCommitment: bigint;
-    expiryCommitment: bigint;
-    minAgeProven: number;
-    credentialValidUntil: bigint;
-    scopedNullifier: bigint;
-    nationalityDisclosureCommitment: bigint;
-    expiryDisclosureCommitment: bigint;
-    agePredicateCommitment: bigint;
-    bindCommitment: bigint;
-  },
-): PassportWrapperPublicOutputs {
-  if (declared) {
-    assertMatchingField(computed.claimsHash, declared.claimsHash, "claimsHash");
-    assertMatchingField(
-      computed.nationalityCommitment,
-      declared.nationalityCommitment,
-      "nationalityCommitment",
-    );
-    assertMatchingField(computed.expiryCommitment, declared.expiryCommitment, "expiryCommitment");
-    assertMatchingField(
-      BigInt(computed.minAgeProven),
-      declared.minAgeProven,
-      "minAgeProven",
-    );
-    assertMatchingField(
-      computed.credentialValidUntil,
-      declared.credentialValidUntil,
-      "credentialValidUntil",
-    );
-    assertMatchingField(
-      computed.scopedNullifier,
-      declared.scopedNullifier ?? 0n,
-      "scopedNullifier",
-    );
-    assertMatchingField(
-      computed.nationalityDisclosureCommitment,
-      declared.nationalityDisclosureCommitment,
-      "nationalityDisclosureCommitment",
-    );
-    assertMatchingField(
-      computed.expiryDisclosureCommitment,
-      declared.expiryDisclosureCommitment,
-      "expiryDisclosureCommitment",
-    );
-    assertMatchingField(
-      computed.agePredicateCommitment,
-      declared.agePredicateCommitment,
-      "agePredicateCommitment",
-    );
-    assertMatchingField(computed.bindCommitment, declared.bindCommitment, "bindCommitment");
-  }
-
-  return {
-    claimsHash: computed.claimsHash.toString(),
-    nationalityCommitment: computed.nationalityCommitment.toString(),
-    expiryCommitment: computed.expiryCommitment.toString(),
-    minAgeProven: computed.minAgeProven,
-    credentialValidUntil: computed.credentialValidUntil.toString(),
-    scopedNullifier: computed.scopedNullifier.toString(),
-    nationalityDisclosureCommitment: computed.nationalityDisclosureCommitment.toString(),
-    expiryDisclosureCommitment: computed.expiryDisclosureCommitment.toString(),
-    agePredicateCommitment: computed.agePredicateCommitment.toString(),
-    bindCommitment: computed.bindCommitment.toString(),
-  };
-}
-
-type ZkPassportParameterCommitmentManifest = Awaited<
-  ReturnType<typeof computeZkPassportParameterCommitmentManifest>
->;
-
-const zkPassportParameterCommitmentManifestKeys = [
-  "nationalityDisclosureCommitment",
-  "expiryDisclosureCommitment",
-  "agePredicateCommitment",
-  "bindCommitment",
-] as const satisfies ReadonlyArray<keyof ZkPassportParameterCommitmentManifest>;
-
-function manifestsMatch(
-  left: ZkPassportParameterCommitmentManifest,
-  right: ZkPassportParameterCommitmentManifest,
-): boolean {
-  return zkPassportParameterCommitmentManifestKeys.every(key => left[key] === right[key]);
-}
-
-async function resolveZkPassportParameterCommitmentManifest(
-  witness: PassportWrapperLocalWitness,
-): Promise<ZkPassportParameterCommitmentManifest> {
-  if (!witness.expectedParameterCommitmentManifest) {
-    return computeZkPassportParameterCommitmentManifest(witness.minimalZkPassportWitness);
-  }
-
-  const candidates = await computeZkPassportParameterCommitmentManifestCandidates(
-    witness.minimalZkPassportWitness,
-  );
-  const expected = witness.expectedParameterCommitmentManifest;
-  const match = candidates.find(candidate => manifestsMatch(candidate.manifest, expected));
-  if (match) {
-    return match.manifest;
-  }
-
-  for (const key of zkPassportParameterCommitmentManifestKeys) {
-    const keyMatchesAnyCandidate = candidates.some(candidate => candidate.manifest[key] === expected[key]);
-    if (!keyMatchesAnyCandidate) {
-      throw new Error(`${key} does not match the local zkPassport witness.`);
+  outputs: PassportWrapperPublicOutputs,
+): void {
+  if (!declared) return;
+  const expected = [
+    declared.claimsHash,
+    declared.nationalityCommitment,
+    declared.expiryCommitment,
+    declared.minAgeProven,
+    declared.credentialValidUntil,
+    declared.rootCommitment,
+    declared.requestContextHash,
+    declared.proofCurrentDate,
+  ];
+  const actual = [
+    outputs.claimsHash,
+    outputs.nationalityCommitment,
+    outputs.expiryCommitment,
+    outputs.minAgeProven,
+    outputs.credentialValidUntil,
+    outputs.rootCommitment,
+    outputs.requestContextHash,
+    outputs.proofCurrentDate,
+  ];
+  expected.forEach((value, index) => {
+    if (BigInt(value) !== BigInt(actual[index])) {
+      throw new Error(`Declared Passport A2 public output ${index} does not match the witness.`);
     }
-  }
-
-  const layouts = candidates.map(candidate => candidate.layout).join(", ");
-  throw new Error(
-    `zkPassport parameter commitment manifest does not match the local witness for any supported MRZ disclosure layout (${layouts}).`,
-  );
+  });
 }
 
-function assertWitnessConsistency(witness: PassportWrapperLocalWitness): void {
-  if (!witness.zkPassportOuterProof || typeof witness.zkPassportOuterProof !== "object") {
-    throw new Error("zkPassport outer proof artifact is required for the local witness.");
-  }
-  if (!Array.isArray(witness.zkPassportOuterPublicInputs)) {
-    throw new Error("zkPassport outer public inputs are required for the local witness.");
-  }
-  const agePredicate = witness.agePredicate;
-  u8From(agePredicate.minAge, "agePredicate.minAge");
-  u8From(agePredicate.maxAge, "agePredicate.maxAge");
-  if (agePredicate.maxAge !== 0 && agePredicate.maxAge < agePredicate.minAge) {
-    throw new Error("agePredicate.maxAge must be greater than or equal to agePredicate.minAge.");
-  }
-  const ageMaxBound = localAgeMaxBound(agePredicate.maxAge);
-  if (witness.minAgeProven < agePredicate.minAge || witness.minAgeProven > ageMaxBound) {
-    throw new Error("minAgeProven must satisfy the local age predicate bounds.");
-  }
-  if (
-    witness.minimalZkPassportWitness.agePredicate.minAge !== agePredicate.minAge ||
-    witness.minimalZkPassportWitness.agePredicate.maxAge !== agePredicate.maxAge
-  ) {
-    throw new Error("minimal zkPassport age predicate does not match local age predicate.");
-  }
-  if (witness.minimalZkPassportWitness.bind.customData !== witness.bind.customData) {
-    throw new Error("minimal zkPassport bind data does not match local bind data.");
-  }
+export function computePassportA2RequestContextHash(input: {
+  action: PassportA2Action;
+  issuer: BigintLike;
+  owner: BigintLike;
+  ghostOwner: BigintLike;
+  credentialMode: PassportA2CredentialMode;
+  rootCommitment: BigintLike;
+  credentialValidUntil: BigintLike;
+  serviceScope: BigintLike;
+  serviceSubscope: BigintLike;
+  bindCommitment: BigintLike;
+  certificateRegistryRoot: BigintLike;
+  circuitRegistryRoot: BigintLike;
+  nullifierType: BigintLike;
+}): bigint {
+  return poseidon2FieldHasher(MAGNA_PASSPORT_A2_CONTEXT_DS, [
+    ACTION_FIELDS[input.action],
+    bigintFrom(input.issuer, "issuer"),
+    bigintFrom(input.owner, "owner"),
+    bigintFrom(input.ghostOwner, "ghostOwner"),
+    MODE_FIELDS[input.credentialMode],
+    bigintFrom(input.rootCommitment, "rootCommitment"),
+    u64From(input.credentialValidUntil, "credentialValidUntil"),
+    bigintFrom(input.certificateRegistryRoot, "certificateRegistryRoot"),
+    bigintFrom(input.circuitRegistryRoot, "circuitRegistryRoot"),
+    bigintFrom(input.nullifierType, "nullifierType"),
+    bigintFrom(input.serviceScope, "serviceScope"),
+    bigintFrom(input.serviceSubscope, "serviceSubscope"),
+    bigintFrom(input.bindCommitment, "bindCommitment"),
+  ]);
 }
 
 export async function buildPassportWrapperInputs(
   witness: PassportWrapperLocalWitness,
   options: BuildPassportWrapperInputsOptions = {},
 ): Promise<BuildPassportWrapperInputsResult> {
-  assertWitnessConsistency(witness);
-
+  if (!/^[A-Z]{3}$/.test(witness.nationalityAlpha3)) {
+    throw new Error("nationalityAlpha3 must be an uppercase ISO alpha-3 code.");
+  }
+  const nationalityBytes = Array.from(encoder.encode(witness.nationalityAlpha3));
   const minAgeProven = u8From(witness.minAgeProven, "minAgeProven");
-  const nationalityAlpha3Packed = packAlpha3(witness.nationalityAlpha3);
+  const minAge = u8From(witness.agePredicate.minAge, "agePredicate.minAge");
+  const maxAge = u8From(witness.agePredicate.maxAge, "agePredicate.maxAge");
+  if (minAgeProven !== minAge || (maxAge !== 0 && maxAge < minAge)) {
+    throw new Error("minAgeProven must equal a valid zkPassport age lower bound.");
+  }
   const expiryTs = u64From(witness.expiryTs, "expiryTs");
-  assertNationalityDisclosureMatches(witness);
-  assertExpiryDisclosureMatches(witness, expiryTs);
-  const credentialValidUntil = u64From(
-    witness.credentialValidUntil,
-    "credentialValidUntil",
-  );
+  const credentialValidUntil = u64From(witness.credentialValidUntil, "credentialValidUntil");
+  if (credentialValidUntil > expiryTs) {
+    throw new Error("credentialValidUntil must not exceed passport expiry.");
+  }
   const nationalityBlind = bigintFrom(witness.nationalityBlind, "nationalityBlind");
   const expiryBlind = bigintFrom(witness.expiryBlind, "expiryBlind");
-  const scopedNullifier =
-    witness.scopedNullifier === undefined || witness.scopedNullifier === null
-      ? 0n
-      : bigintFrom(witness.scopedNullifier, "scopedNullifier");
-  assertUnsigned(nationalityBlind, "nationalityBlind");
-  assertUnsigned(expiryBlind, "expiryBlind");
-  assertUnsigned(scopedNullifier, "scopedNullifier");
+  const recursive = await resolveZkPassportRecursiveArtifacts(
+    witness.zkPassportOuterProof,
+    options.registryClient,
+  );
+  const outerProofData = { publicInputs: recursive.publicInputs } as Parameters<
+    typeof getParamCommitmentsFromOuterProof
+  >[0];
+  const outerCommitments = new Set(
+    getParamCommitmentsFromOuterProof(outerProofData).map(value => value.toString()),
+  );
+  const expiryBytes = expiryMrz(expiryTs);
+  const disclosureCandidates = await Promise.all(
+    (Object.keys(LAYOUTS) as ZkPassportMrzLayout[]).map(async layout => {
+      const disclosure = buildDisclosure(layout, nationalityBytes, expiryBytes);
+      const commitment = await getDiscloseParameterCommitment(disclosure.mask, disclosure.bytes);
+      return { layout, disclosure, commitment };
+    }),
+  );
+  const disclosureMatch = disclosureCandidates.find(candidate =>
+    outerCommitments.has(candidate.commitment.toString()),
+  );
+  if (!disclosureMatch) {
+    throw new Error("Nationality and expiry do not match the authenticated zkPassport disclosure.");
+  }
+  const bindData = paddedBindData(witness.bind.customData);
+  const [ageCommitment, bindCommitment] = await Promise.all([
+    getAgeParameterCommitment(minAge, maxAge),
+    getBindParameterCommitment(formatBoundData({ custom_data: witness.bind.customData })),
+  ]);
+  if (!outerCommitments.has(ageCommitment.toString())) {
+    throw new Error("Age predicate does not match the authenticated zkPassport proof.");
+  }
+  if (!outerCommitments.has(bindCommitment.toString())) {
+    throw new Error("Bind data does not match the authenticated zkPassport proof.");
+  }
 
-  const parameterCommitmentManifest = await resolveZkPassportParameterCommitmentManifest(witness);
-
+  const scopedNullifier = BigInt(recursive.publicInputs[9]);
+  const rootCommitment = deriveRootCommitment({
+    uniqueIdentifier: scopedNullifier,
+    domainSeparator: MAGNA_ROOT_DS,
+  });
   const nationalityCommitment = computePassportNationalityCommitment(
     witness.nationalityAlpha3,
     nationalityBlind,
     poseidon2FieldHasher,
   );
-  const expiryCommitment = computePassportExpiryCommitment(
-    expiryTs,
-    expiryBlind,
-    poseidon2FieldHasher,
-  );
+  const expiryCommitment = computePassportExpiryCommitment(expiryTs, expiryBlind, poseidon2FieldHasher);
   const claimsHash = computePassportCommittedClaimsHash(
     {
       schemaVersion: 2,
@@ -349,68 +274,85 @@ export async function buildPassportWrapperInputs(
     },
     poseidon2FieldHasher,
   );
-
-  const outputs = normalizeDeclaredOutputs(options.declaredPublicOutputs, {
-    claimsHash,
-    nationalityCommitment,
-    expiryCommitment,
-    minAgeProven,
+  const requestContextHash = computePassportA2RequestContextHash({
+    ...witness.requestContext,
+    rootCommitment,
     credentialValidUntil,
-    scopedNullifier,
-    nationalityDisclosureCommitment: BigInt(parameterCommitmentManifest.nationalityDisclosureCommitment),
-    expiryDisclosureCommitment: BigInt(parameterCommitmentManifest.expiryDisclosureCommitment),
-    agePredicateCommitment: BigInt(parameterCommitmentManifest.agePredicateCommitment),
-    bindCommitment: BigInt(parameterCommitmentManifest.bindCommitment),
+    serviceScope: recursive.publicInputs[3],
+    serviceSubscope: recursive.publicInputs[4],
+    bindCommitment,
+    certificateRegistryRoot: recursive.publicInputs[0],
+    circuitRegistryRoot: recursive.publicInputs[1],
+    nullifierType: recursive.publicInputs[8],
   });
-  const publicInputs = [
-    outputs.claimsHash,
-    outputs.nationalityCommitment,
-    outputs.expiryCommitment,
-    String(outputs.minAgeProven),
-    outputs.credentialValidUntil,
-    outputs.scopedNullifier,
-    outputs.nationalityDisclosureCommitment,
-    outputs.expiryDisclosureCommitment,
-    outputs.agePredicateCommitment,
-    outputs.bindCommitment,
-  ];
+  const proofCurrentDate = BigInt(recursive.publicInputs[2]);
+  const nullifierType = nullifierTypeFrom(recursive.publicInputs[8]);
+  const outputs: PassportWrapperPublicOutputs = {
+    claimsHash: claimsHash.toString(),
+    nationalityCommitment: nationalityCommitment.toString(),
+    expiryCommitment: expiryCommitment.toString(),
+    minAgeProven,
+    credentialValidUntil: credentialValidUntil.toString(),
+    rootCommitment: rootCommitment.toString(),
+    requestContextHash: requestContextHash.toString(),
+    proofCurrentDate: proofCurrentDate.toString(),
+  };
+  assertDeclared(options.declaredPublicOutputs, outputs);
 
   return {
     inputs: {
-      nationality_alpha3_packed: fieldString(nationalityAlpha3Packed),
-      nationality_blind: fieldString(nationalityBlind),
-      expiry_ts: fieldString(expiryTs),
-      expiry_blind: fieldString(expiryBlind),
+      zkpassport_outer_vkey: recursive.vkeyFields,
+      zkpassport_outer_proof: recursive.proofFields,
+      zkpassport_outer_public_inputs: recursive.publicInputs,
+      disclose_mask: disclosureMatch.disclosure.mask.map(Boolean),
+      disclosed_bytes: disclosureMatch.disclosure.bytes.map(String),
+      is_id_card: disclosureMatch.layout === "id_card",
+      nationality: nationalityBytes.map(String),
+      expiry_mrz: expiryBytes.map(String),
+      nationality_blind: nationalityBlind.toString(),
+      expiry_ts: expiryTs.toString(),
+      expiry_blind: expiryBlind.toString(),
       min_age_proven: String(minAgeProven),
-      age_min_bound: String(witness.agePredicate.minAge),
-      age_max_bound: String(localAgeMaxBound(witness.agePredicate.maxAge)),
-      credential_valid_until: fieldString(credentialValidUntil),
-      scoped_nullifier: fieldString(scopedNullifier),
-      expected_claims_hash: outputs.claimsHash,
-      expected_nationality_commitment: outputs.nationalityCommitment,
-      expected_expiry_commitment: outputs.expiryCommitment,
-      expected_min_age_proven: String(outputs.minAgeProven),
-      expected_credential_valid_until: outputs.credentialValidUntil,
-      expected_scoped_nullifier: outputs.scopedNullifier,
-      expected_nationality_disclosure_commitment: outputs.nationalityDisclosureCommitment,
-      expected_expiry_disclosure_commitment: outputs.expiryDisclosureCommitment,
-      expected_age_predicate_commitment: outputs.agePredicateCommitment,
-      expected_bind_commitment: outputs.bindCommitment,
+      age_min_bound: String(minAge),
+      age_max_bound: String(maxAge),
+      bind_data: bindData.map(String),
+      credential_valid_until: credentialValidUntil.toString(),
+      action: ACTION_FIELDS[witness.requestContext.action].toString(),
+      issuer: bigintFrom(witness.requestContext.issuer, "issuer").toString(),
+      owner: bigintFrom(witness.requestContext.owner, "owner").toString(),
+      ghost_owner: bigintFrom(witness.requestContext.ghostOwner, "ghostOwner").toString(),
+      credential_mode: MODE_FIELDS[witness.requestContext.credentialMode].toString(),
     },
-    publicInputs,
+    publicInputs: [
+      outputs.claimsHash,
+      outputs.nationalityCommitment,
+      outputs.expiryCommitment,
+      String(outputs.minAgeProven),
+      outputs.credentialValidUntil,
+      outputs.rootCommitment,
+      outputs.requestContextHash,
+      outputs.proofCurrentDate,
+    ],
     outputs,
     metadata: {
-      nationalityAlpha3Packed,
+      innerProofName: "outer_count_6",
+      innerProofVersion: "0.20.0",
+      innerVkeyHash: PASSPORT_A2_INNER_VKEY_HASH,
+      mrzLayout: disclosureMatch.layout,
+      nationalityAlpha3Packed: packAlpha3(witness.nationalityAlpha3),
       nationalityCommitment,
       expiryCommitment,
       claimsHash,
+      rootCommitment,
+      requestContextHash,
       minAgeProven,
       credentialValidUntil,
-      scopedNullifier,
-      agePredicate: { ...witness.agePredicate },
-      parameterCommitmentManifest,
-      zkPassportOuterPublicInputsCount: witness.zkPassportOuterPublicInputs.length,
-      outerProofVerification: "not_implemented_task_3",
+      proofCurrentDate,
+      registryContext: {
+        certificateRegistryRoot: recursive.publicInputs[0],
+        circuitRegistryRoot: recursive.publicInputs[1],
+        nullifierType,
+      },
     },
   };
 }

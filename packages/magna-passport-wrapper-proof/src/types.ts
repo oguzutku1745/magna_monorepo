@@ -1,43 +1,63 @@
 import type { ProofData } from "@aztec/bb.js";
 import type { InputMap } from "@noir-lang/types";
-import type {
-  MinimalZkPassportWitness,
-  ZkPassportParameterCommitmentManifest,
-} from "@magna/wallet";
 
-export const PASSPORT_WRAPPER_PUBLIC_INPUT_COUNT = 10;
+export const PASSPORT_A2_SCHEMA = "passport-a2-v1" as const;
+export const PASSPORT_A2_INNER_NAME = "outer_count_6" as const;
+export const PASSPORT_A2_INNER_VERSION = "0.20.0" as const;
+export const PASSPORT_A2_INNER_VKEY_HASH =
+  "0x1235fce6de6e5d5f86af3509d1c043bf531b5b01ca97a97eec45ac48ab0cec2c" as const;
+export const PASSPORT_A2_WRAPPER_ARTIFACT_SHA256 =
+  "a3b6b963911d5ec9021a302a38be59b4016f7def2d182e15dbb280a8a19f844a" as const;
+export const PASSPORT_A2_INNER_PUBLIC_INPUT_COUNT = 11;
+export const PASSPORT_A2_INNER_PROOF_FIELD_COUNT = 458;
+export const PASSPORT_A2_INNER_VKEY_FIELD_COUNT = 115;
+export const PASSPORT_WRAPPER_PUBLIC_INPUT_COUNT = 8;
 
 export type BigintLike = bigint | number | string;
+export type PassportA2Action = "issue" | "renew" | "recover";
+export type PassportA2CredentialMode = "passport" | "rooted";
+export type ZkPassportMrzLayout = "passport" | "id_card";
+export type PassportA2NullifierType = 0 | 1 | 2 | 3;
 
-export type ZkPassportOuterProofArtifact = {
-  proof: unknown;
-  verificationKey?: unknown;
-  metadata?: Record<string, unknown>;
+export type PassportA2RegistryContext = {
+  certificateRegistryRoot: string;
+  circuitRegistryRoot: string;
+  nullifierType: PassportA2NullifierType;
 };
 
-export type PassportWrapperAgePredicate = {
-  minAge: number;
-  maxAge: number;
+export type ZkPassportCompressedProof = {
+  proof: string;
+  name: string;
+  version: string;
+  vkeyHash: string;
+  index?: number;
+  total?: number;
 };
 
-export type PassportWrapperBindData = {
-  customData: string;
+export type PassportA2RequestContext = {
+  action: PassportA2Action;
+  issuer: BigintLike;
+  owner: BigintLike;
+  ghostOwner: BigintLike;
+  credentialMode: PassportA2CredentialMode;
 };
 
 export type PassportWrapperLocalWitness = {
-  zkPassportOuterProof: ZkPassportOuterProofArtifact;
-  zkPassportOuterPublicInputs: readonly BigintLike[];
-  minimalZkPassportWitness: MinimalZkPassportWitness;
+  zkPassportOuterProof: ZkPassportCompressedProof;
   nationalityAlpha3: string;
   expiryTs: BigintLike;
   minAgeProven: number;
+  agePredicate: {
+    minAge: number;
+    maxAge: number;
+  };
+  bind: {
+    customData: string;
+  };
   credentialValidUntil: BigintLike;
-  agePredicate: PassportWrapperAgePredicate;
-  bind: PassportWrapperBindData;
   nationalityBlind: BigintLike;
   expiryBlind: BigintLike;
-  scopedNullifier?: BigintLike | null;
-  expectedParameterCommitmentManifest?: ZkPassportParameterCommitmentManifest;
+  requestContext: PassportA2RequestContext;
 };
 
 export type PassportWrapperDeclaredPublicOutputs = {
@@ -46,11 +66,9 @@ export type PassportWrapperDeclaredPublicOutputs = {
   expiryCommitment: BigintLike;
   minAgeProven: BigintLike;
   credentialValidUntil: BigintLike;
-  scopedNullifier?: BigintLike | null;
-  nationalityDisclosureCommitment: BigintLike;
-  expiryDisclosureCommitment: BigintLike;
-  agePredicateCommitment: BigintLike;
-  bindCommitment: BigintLike;
+  rootCommitment: BigintLike;
+  requestContextHash: BigintLike;
+  proofCurrentDate: BigintLike;
 };
 
 export type PassportWrapperPublicOutputs = {
@@ -59,31 +77,45 @@ export type PassportWrapperPublicOutputs = {
   expiryCommitment: string;
   minAgeProven: number;
   credentialValidUntil: string;
-  scopedNullifier: string;
-  nationalityDisclosureCommitment: string;
-  expiryDisclosureCommitment: string;
-  agePredicateCommitment: string;
-  bindCommitment: string;
+  rootCommitment: string;
+  requestContextHash: string;
+  proofCurrentDate: string;
 };
 
 export type PassportWrapperInputMetadata = {
+  innerProofName: typeof PASSPORT_A2_INNER_NAME;
+  innerProofVersion: typeof PASSPORT_A2_INNER_VERSION;
+  innerVkeyHash: typeof PASSPORT_A2_INNER_VKEY_HASH;
+  mrzLayout: ZkPassportMrzLayout;
   nationalityAlpha3Packed: bigint;
   nationalityCommitment: bigint;
   expiryCommitment: bigint;
   claimsHash: bigint;
+  rootCommitment: bigint;
+  requestContextHash: bigint;
   minAgeProven: number;
   credentialValidUntil: bigint;
-  scopedNullifier: bigint;
-  agePredicate: PassportWrapperAgePredicate;
-  parameterCommitmentManifest: ZkPassportParameterCommitmentManifest;
-  zkPassportOuterPublicInputsCount: number;
-  outerProofVerification: "not_implemented_task_3";
+  proofCurrentDate: bigint;
+  registryContext: PassportA2RegistryContext;
 };
 
 export type PassportWrapperCircuitInputs = InputMap;
 
+export type RegistryClientLike = {
+  getCircuitManifest(
+    root?: string,
+    options?: { validate?: boolean; ipfs?: boolean; version?: string },
+  ): Promise<Record<string, unknown>>;
+  getPackagedCircuit(
+    circuit: string,
+    manifest: Record<string, unknown>,
+    options?: { validate?: boolean; ipfs?: boolean },
+  ): Promise<{ vkey: string; vkey_hash?: string; vkeyHash?: string }>;
+};
+
 export type BuildPassportWrapperInputsOptions = {
   declaredPublicOutputs?: PassportWrapperDeclaredPublicOutputs;
+  registryClient?: RegistryClientLike;
 };
 
 export type BuildPassportWrapperInputsResult = {

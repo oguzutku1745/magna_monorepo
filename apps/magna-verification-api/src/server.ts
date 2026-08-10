@@ -8,8 +8,8 @@ import {
   verifyAndIssueInstagram,
   verifyRootRecoveryPreflight,
   verifyAndRefreshRootAuthority,
-  type VerifyRootRecoveryPreflightRequest,
-  type VerifyAndRefreshRootAuthorityRequest,
+  type VerifyRootRecoveryPreflightA2Request,
+  type VerifyAndRefreshRootAuthorityA2Request,
   type VerifyAndIssueInstagramRequest,
 } from "./service.js";
 import { createSessionCode, exchangeSessionCode } from "./session-code-store.js";
@@ -109,7 +109,7 @@ app.post("/instagram/verify", async (req, res) => {
 
 app.post("/zkpassport/verify-and-refresh-root-authority", async (req, res) => {
   try {
-    const payload = req.body as VerifyAndRefreshRootAuthorityRequest;
+    const payload = req.body as VerifyAndRefreshRootAuthorityA2Request;
     const result = await verifyAndRefreshRootAuthority(config, payload, loadIssuanceContext);
     res.status(200).json(result);
   } catch (error) {
@@ -122,7 +122,7 @@ app.post("/zkpassport/verify-and-refresh-root-authority", async (req, res) => {
 
 app.post("/zkpassport/verify-for-root-recovery", async (req, res) => {
   try {
-    const payload = req.body as VerifyRootRecoveryPreflightRequest;
+    const payload = req.body as VerifyRootRecoveryPreflightA2Request;
     const result = await verifyRootRecoveryPreflight(config, payload);
     res.status(200).json(result);
   } catch (error) {

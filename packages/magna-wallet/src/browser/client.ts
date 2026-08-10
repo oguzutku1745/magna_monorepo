@@ -27,6 +27,10 @@ import type {
   PassportCommittedClaimsWitness,
 } from "../engine/types.js";
 import { deriveRootCommitment } from "../engine/root.js";
+import {
+  computePassportCommittedClaimsHashFromWitness,
+  poseidon2FieldHasher,
+} from "../engine/encoding.js";
 import type { Policy } from "@magna/core";
 import {
   ClaimId,
@@ -1459,6 +1463,31 @@ export class MagnaBrowserClient {
         claims.expiryTs,
       )
       .send({ from: toAddress(authoritySender) });
+    return {
+      txHash: readTxHash(receipt),
+      receipt,
+    };
+  }
+
+  async refreshRootAuthorityAuthorized(
+    ghostOwner: string,
+    claimsWitness: PassportCommittedClaimsWitness,
+    credentialValidUntil: bigint,
+    hints: RootedPassportHints,
+  ): Promise<TxOutcome> {
+    this.assertRealTransactionMode("refreshRootAuthorityAuthorized");
+    await this.ensureContractsRegistered();
+    await this.ensureUserAccountIsDeployed();
+    const claimsHash = computePassportCommittedClaimsHashFromWitness(claimsWitness, poseidon2FieldHasher);
+    const receipt = await this.issuer.methods
+      .refresh_root_authority_authorized(
+        toAddress(ghostOwner),
+        hints.hintedRootStatusNote as never,
+        hints.hintedRootAuthorityNote as never,
+        toField(claimsHash),
+        credentialValidUntil,
+      )
+      .send({ from: toAddress(this.userAddress) });
     return {
       txHash: readTxHash(receipt),
       receipt,

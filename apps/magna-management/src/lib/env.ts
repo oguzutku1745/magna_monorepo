@@ -18,9 +18,9 @@ export type ManagementEnv = {
   zkPassportRequestPurpose: string;
   zkPassportRequestScope: string;
   zkPassportDevMode: boolean;
-  zkPassportIssuanceKind: "legacy" | "pilot" | "a1";
+  zkPassportIssuanceKind: "a2";
   zkPassportPrimaryIssuanceMode: "rooted" | "passport";
-  zkPassportGhostDerivationVersion: "v1_legacy_unscoped" | "v2_scoped";
+  zkPassportGhostDerivationVersion: "v2_scoped";
   issuerAddress?: string;
   orchestratorAddress?: string;
   companySponsorAddresses: string[];
@@ -36,9 +36,6 @@ export type ManagementEnv = {
 };
 
 type EnvSource = Record<string, string | boolean | number | undefined>;
-
-const PRODUCTION_PASSPORT_ISSUANCE_MESSAGE =
-  "Production passport issuance supports only A1. legacy sends passport PII to the orchestrator and pilot is non-authentic.";
 
 type LocalDeployment = {
   l1?: {
@@ -94,21 +91,17 @@ function parseIssuanceMode(value: string | boolean | number | undefined): "roote
 
 function parsePassportIssuanceKind(
   value: string | boolean | number | undefined,
-  isProduction: boolean,
-): "legacy" | "pilot" | "a1" {
+): "a2" {
   if (typeof value === "string") {
     const normalized = value.trim().toLowerCase();
-    if (normalized === "legacy" || normalized === "pilot" || normalized === "a1") {
-      if (isProduction && normalized !== "a1") {
-        throw new Error(PRODUCTION_PASSPORT_ISSUANCE_MESSAGE);
-      }
-      return normalized;
+    if (normalized === "a2") {
+      return "a2";
     }
     if (normalized) {
-      throw new Error("VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND must be one of legacy, pilot, or a1.");
+      throw new Error("VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND must be a2.");
     }
   }
-  return "a1";
+  return "a2";
 }
 
 function rejectProductionDevFlag(value: boolean, label: string): boolean {
@@ -118,8 +111,10 @@ function rejectProductionDevFlag(value: boolean, label: string): boolean {
   return false;
 }
 
-function parseGhostVersion(value: string | boolean | number | undefined): "v1_legacy_unscoped" | "v2_scoped" {
-  if (value === "v1_legacy_unscoped" || value === "v2_scoped") return value;
+function parseGhostVersion(value: string | boolean | number | undefined): "v2_scoped" {
+  if (value && value !== "v2_scoped") {
+    throw new Error("VITE_MAGNA_ZKPASSPORT_GHOST_DERIVATION_VERSION must be v2_scoped.");
+  }
   return "v2_scoped";
 }
 
@@ -167,7 +162,7 @@ export function getManagementEnv(source: EnvSource = import.meta.env): Managemen
     zkPassportDevMode: isProduction
       ? rejectProductionDevFlag(zkPassportDevMode, "VITE_MAGNA_ZKPASSPORT_DEV_MODE")
       : zkPassportDevMode,
-    zkPassportIssuanceKind: parsePassportIssuanceKind(source.VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND, isProduction),
+    zkPassportIssuanceKind: parsePassportIssuanceKind(source.VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND),
     zkPassportPrimaryIssuanceMode: parseIssuanceMode(source.VITE_MAGNA_ZKPASSPORT_PRIMARY_ISSUANCE_MODE),
     zkPassportGhostDerivationVersion: parseGhostVersion(source.VITE_MAGNA_ZKPASSPORT_GHOST_DERIVATION_VERSION),
     issuerAddress: parseOptionalString(source.VITE_MAGNA_ISSUER_ADDRESS) ?? deployment.l2?.issuerAddress,

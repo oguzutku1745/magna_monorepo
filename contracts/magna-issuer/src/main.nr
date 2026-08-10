@@ -21,7 +21,8 @@ pub contract MagnaIssuer {
         oracle::random::random,
         protocol::{
             address::AztecAddress,
-            hash::compute_siloed_nullifier,
+            hash::{compute_siloed_nullifier, poseidon2_hash_with_separator},
+            traits::ToField,
         },
         state_vars::{DelayedPublicMutable, Map, Owned, PrivateSet, PublicImmutable, PublicMutable},
         utils::comparison::Comparator,
@@ -40,6 +41,7 @@ pub contract MagnaIssuer {
             MAGNA_PASSPORT_NATIONALITY_COMMITMENT_DS,
             MAGNA_REVOCATION_DS,
             MAGNA_ROOT_AUTHORITY_REVOCATION_DS,
+            MAGNA_ROOT_AUTHORITY_REFRESH_AUTH_DS,
             MAGNA_ROOT_REVOCATION_DS,
             MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS,
             MAGNA_SPONSOR_POLICY_DELAY_SECONDS,
@@ -110,6 +112,7 @@ pub contract MagnaIssuer {
         // - sponsored_credential_type_mask: bitmask of supported credential types
         sponsored_credential_type_mask: DelayedPublicMutable<u64, MAGNA_SPONSOR_POLICY_DELAY_SECONDS, Context>,
         verify_meter_count: PublicMutable<u64, Context>,
+        root_authority_refresh_authorizations: Map<Field, PublicImmutable<bool, Context>, Context>,
         credential_notes: Owned<PrivateSet<CredentialNote, Context>, Context>,
         status_notes: Owned<PrivateSet<StatusNote, Context>, Context>,
         recovery_notes: Owned<PrivateSet<RecoveryNote, Context>, Context>,
@@ -164,6 +167,30 @@ pub contract MagnaIssuer {
         assert(gateway != AztecAddress::zero(), "gateway must be non-zero");
         self.storage.consumer_gateways.at(gateway).schedule_value_change(false);
         self.storage.disabled_consumer_gateways.at(gateway).schedule_value_change(true);
+    }
+
+    #[external("public")]
+    fn authorize_root_authority_refresh(
+        active_owner: AztecAddress,
+        ghost_owner: AztecAddress,
+        root_commitment: Field,
+        claims_hash: Field,
+        authority_expiry_ts: u64,
+    ) {
+        assert_orchestrator_sender(self.msg_sender(), self.storage.orchestrator.read());
+        assert(active_owner != AztecAddress::zero(), "refresh owner required");
+        assert(ghost_owner != AztecAddress::zero(), "refresh ghost required");
+        let authorization = poseidon2_hash_with_separator(
+            [
+                active_owner.to_field(),
+                ghost_owner.to_field(),
+                root_commitment,
+                claims_hash,
+                authority_expiry_ts as Field,
+            ],
+            MAGNA_ROOT_AUTHORITY_REFRESH_AUTH_DS,
+        );
+        self.storage.root_authority_refresh_authorizations.at(authorization).initialize(true);
     }
 
     #[external("public")]
@@ -1063,6 +1090,26 @@ pub contract MagnaIssuer {
     ) {
         self.internal.refresh_root_authority_for_caller(
             self.msg_sender(),
+            false,
+            ghost_owner,
+            hinted_root_status,
+            hinted_root_authority,
+            claims_hash,
+            authority_expiry_ts,
+        );
+    }
+
+    #[external("private")]
+    fn refresh_root_authority_authorized(
+        ghost_owner: AztecAddress,
+        hinted_root_status: HintedNote<RootStatusNote>,
+        hinted_root_authority: HintedNote<RootAuthorityNote>,
+        claims_hash: Field,
+        authority_expiry_ts: u64,
+    ) {
+        self.internal.refresh_root_authority_for_caller(
+            self.msg_sender(),
+            true,
             ghost_owner,
             hinted_root_status,
             hinted_root_authority,
@@ -1852,13 +1899,33 @@ pub contract MagnaIssuer {
     #[internal("private")]
     fn refresh_root_authority_for_caller(
         caller: AztecAddress,
+        use_owner_authorization: bool,
         ghost_owner: AztecAddress,
         hinted_root_status: HintedNote<RootStatusNote>,
         hinted_root_authority: HintedNote<RootAuthorityNote>,
         claims_hash: Field,
         authority_expiry_ts: u64,
     ) {
-        assert_orchestrator_sender(caller, self.storage.orchestrator.read());
+        if use_owner_authorization {
+            assert(hinted_root_status.owner == caller, "root owner required");
+            let authorization = poseidon2_hash_with_separator(
+                [
+                    caller.to_field(),
+                    ghost_owner.to_field(),
+                    hinted_root_status.note.root_commitment,
+                    claims_hash,
+                    authority_expiry_ts as Field,
+                ],
+                MAGNA_ROOT_AUTHORITY_REFRESH_AUTH_DS,
+            );
+            assert(
+                self.storage.root_authority_refresh_authorizations.at(authorization).read(),
+                "root authority refresh is not authorized",
+            );
+            self.context.push_nullifier_unsafe(authorization);
+        } else {
+            assert_orchestrator_sender(caller, self.storage.orchestrator.read());
+        }
         assert(claims_hash != 0, "authority claims hash required");
         assert(
             hinted_root_status.note.root_commitment == hinted_root_authority.note.root_commitment,

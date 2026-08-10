@@ -95,7 +95,7 @@ export class MagnaIssuerContract extends ContractBase {
   }
   
 
-  public static get storage(): ContractStorageLayout<'orchestrator' | 'verify_meter_hook' | 'company_sponsor_gateways' | 'disabled_company_sponsor_gateways' | 'consumer_gateways' | 'disabled_consumer_gateways' | 'sponsored_credential_type_mask' | 'verify_meter_count' | 'credential_notes' | 'status_notes' | 'recovery_notes' | 'root_status_notes' | 'root_recovery_notes' | 'root_authority_notes' | 'linked_credential_notes' | 'linked_status_notes' | 'linked_recovery_notes'> {
+  public static get storage(): ContractStorageLayout<'orchestrator' | 'verify_meter_hook' | 'company_sponsor_gateways' | 'disabled_company_sponsor_gateways' | 'consumer_gateways' | 'disabled_consumer_gateways' | 'sponsored_credential_type_mask' | 'verify_meter_count' | 'root_authority_refresh_authorizations' | 'credential_notes' | 'status_notes' | 'recovery_notes' | 'root_status_notes' | 'root_recovery_notes' | 'root_authority_notes' | 'linked_credential_notes' | 'linked_status_notes' | 'linked_recovery_notes'> {
       return {
         orchestrator: {
       slot: new Fr(1n),
@@ -121,34 +121,37 @@ sponsored_credential_type_mask: {
 verify_meter_count: {
       slot: new Fr(13n),
     },
-credential_notes: {
+root_authority_refresh_authorizations: {
       slot: new Fr(14n),
     },
-status_notes: {
+credential_notes: {
       slot: new Fr(15n),
     },
-recovery_notes: {
+status_notes: {
       slot: new Fr(16n),
     },
-root_status_notes: {
+recovery_notes: {
       slot: new Fr(17n),
     },
-root_recovery_notes: {
+root_status_notes: {
       slot: new Fr(18n),
     },
-root_authority_notes: {
+root_recovery_notes: {
       slot: new Fr(19n),
     },
-linked_credential_notes: {
+root_authority_notes: {
       slot: new Fr(20n),
     },
-linked_status_notes: {
+linked_credential_notes: {
       slot: new Fr(21n),
     },
-linked_recovery_notes: {
+linked_status_notes: {
       slot: new Fr(22n),
+    },
+linked_recovery_notes: {
+      slot: new Fr(23n),
     }
-      } as ContractStorageLayout<'orchestrator' | 'verify_meter_hook' | 'company_sponsor_gateways' | 'disabled_company_sponsor_gateways' | 'consumer_gateways' | 'disabled_consumer_gateways' | 'sponsored_credential_type_mask' | 'verify_meter_count' | 'credential_notes' | 'status_notes' | 'recovery_notes' | 'root_status_notes' | 'root_recovery_notes' | 'root_authority_notes' | 'linked_credential_notes' | 'linked_status_notes' | 'linked_recovery_notes'>;
+      } as ContractStorageLayout<'orchestrator' | 'verify_meter_hook' | 'company_sponsor_gateways' | 'disabled_company_sponsor_gateways' | 'consumer_gateways' | 'disabled_consumer_gateways' | 'sponsored_credential_type_mask' | 'verify_meter_count' | 'root_authority_refresh_authorizations' | 'credential_notes' | 'status_notes' | 'recovery_notes' | 'root_status_notes' | 'root_recovery_notes' | 'root_authority_notes' | 'linked_credential_notes' | 'linked_status_notes' | 'linked_recovery_notes'>;
     }
     
 
@@ -160,6 +163,9 @@ linked_recovery_notes: {
 
     /** add_consumer_gateway(gateway: struct) */
     add_consumer_gateway: ((gateway: AztecAddressLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
+
+    /** authorize_root_authority_refresh(active_owner: struct, ghost_owner: struct, root_commitment: field, claims_hash: field, authority_expiry_ts: integer) */
+    authorize_root_authority_refresh: ((active_owner: AztecAddressLike, ghost_owner: AztecAddressLike, root_commitment: FieldLike, claims_hash: FieldLike, authority_expiry_ts: (bigint | number)) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
     /** constructor(orchestrator_address: struct, verify_meter_hook_address: struct) */
     constructor: ((orchestrator_address: AztecAddressLike, verify_meter_hook_address: AztecAddressLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
@@ -217,6 +223,9 @@ linked_recovery_notes: {
 
     /** refresh_root_authority(ghost_owner: struct, hinted_root_status: struct, hinted_root_authority: struct, claims_hash: field, authority_expiry_ts: integer) */
     refresh_root_authority: ((ghost_owner: AztecAddressLike, hinted_root_status: { note: { root_commitment: FieldLike, revocation_secret: FieldLike }, contract_address: AztecAddressLike, owner: AztecAddressLike, randomness: FieldLike, storage_slot: FieldLike, metadata: { stage: (bigint | number), maybe_note_nonce: FieldLike } }, hinted_root_authority: { note: { root_commitment: FieldLike, claims_hash: FieldLike, authority_expiry_ts: (bigint | number), revocation_secret: FieldLike }, contract_address: AztecAddressLike, owner: AztecAddressLike, randomness: FieldLike, storage_slot: FieldLike, metadata: { stage: (bigint | number), maybe_note_nonce: FieldLike } }, claims_hash: FieldLike, authority_expiry_ts: (bigint | number)) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
+
+    /** refresh_root_authority_authorized(ghost_owner: struct, hinted_root_status: struct, hinted_root_authority: struct, claims_hash: field, authority_expiry_ts: integer) */
+    refresh_root_authority_authorized: ((ghost_owner: AztecAddressLike, hinted_root_status: { note: { root_commitment: FieldLike, revocation_secret: FieldLike }, contract_address: AztecAddressLike, owner: AztecAddressLike, randomness: FieldLike, storage_slot: FieldLike, metadata: { stage: (bigint | number), maybe_note_nonce: FieldLike } }, hinted_root_authority: { note: { root_commitment: FieldLike, claims_hash: FieldLike, authority_expiry_ts: (bigint | number), revocation_secret: FieldLike }, contract_address: AztecAddressLike, owner: AztecAddressLike, randomness: FieldLike, storage_slot: FieldLike, metadata: { stage: (bigint | number), maybe_note_nonce: FieldLike } }, claims_hash: FieldLike, authority_expiry_ts: (bigint | number)) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
     /** register_credential(active_owner: struct, ghost_owner: struct, claims_hash: field, credential_type: integer, expiry_ts: integer) */
     register_credential: ((active_owner: AztecAddressLike, ghost_owner: AztecAddressLike, claims_hash: FieldLike, credential_type: (bigint | number), expiry_ts: (bigint | number)) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;

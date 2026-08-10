@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 import { Noir, type CompiledCircuit } from "@noir-lang/noir_js";
 import { createUltraHonkBackend } from "./bb.js";
 import { buildPassportWrapperInputs } from "./inputs.js";
@@ -11,6 +12,7 @@ import {
 import {
   type PassportWrapperLocalWitness,
   type PassportWrapperProofArtifact,
+  PASSPORT_A2_WRAPPER_ARTIFACT_SHA256,
 } from "./types.js";
 
 export { parsePassportWrapperPublicInputs } from "./public-inputs.js";
@@ -20,7 +22,7 @@ function packageRoot(): string {
 }
 
 export function defaultPassportWrapperCircuitArtifactPath(): string {
-  return resolve(packageRoot(), "circuit/target/magna_passport_wrapper_proof.json");
+  return resolve(packageRoot(), "circuit/bundle/magna_passport_wrapper_proof.json");
 }
 
 export function loadPassportWrapperCircuitArtifact(
@@ -32,7 +34,12 @@ export function loadPassportWrapperCircuitArtifact(
         "Run npm run -w @magna/passport-wrapper-proof compile:circuit first.",
     );
   }
-  return JSON.parse(readFileSync(path, "utf8")) as CompiledCircuit;
+  const bytes = readFileSync(path);
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  if (digest !== PASSPORT_A2_WRAPPER_ARTIFACT_SHA256) {
+    throw new Error(`Passport A2 wrapper circuit artifact hash mismatch at ${path}.`);
+  }
+  return JSON.parse(bytes.toString("utf8")) as CompiledCircuit;
 }
 
 export async function provePassportWrapper(

@@ -1,6 +1,38 @@
 import { strict as assert } from "node:assert";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
+import {
+  defaultPassportWrapperCircuitArtifactPath,
+  loadPassportWrapperCircuitArtifact,
+} from "./prove.js";
 import { normalizePassportWrapperProofData } from "./verify.js";
+
+describe("Passport A2 circuit artifact", () => {
+  it("loads only the pinned eight-output bundle", () => {
+    const artifact = loadPassportWrapperCircuitArtifact();
+    assert.equal(artifact.abi.return_type?.visibility, "public");
+    assert.equal(artifact.abi.return_type?.abi_type.kind, "array");
+    if (artifact.abi.return_type?.abi_type.kind === "array") {
+      assert.equal(artifact.abi.return_type.abi_type.length, 8);
+    }
+  });
+
+  it("rejects a modified bundle before verification", () => {
+    const directory = mkdtempSync(join(tmpdir(), "magna-a2-artifact-"));
+    const path = join(directory, "wrapper.json");
+    try {
+      const bytes = readFileSync(defaultPassportWrapperCircuitArtifactPath());
+      const modified = Buffer.from(bytes);
+      modified[modified.length - 1] ^= 1;
+      writeFileSync(path, modified);
+      assert.throws(() => loadPassportWrapperCircuitArtifact(path), /hash mismatch/);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("normalizePassportWrapperProofData", () => {
   it("accepts hex proof bytes from JSON requests", () => {

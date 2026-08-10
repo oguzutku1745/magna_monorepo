@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ClaimId, ConstraintOp, CredentialType, type Policy } from "@magna/core";
-import { loadCredentialRefs, saveCredentialRefs, savePassportA1Witness, type StoredCredentialRef } from "./storage";
+import { loadCredentialRefs, saveCredentialRefs, savePassportA2Witness, type StoredCredentialRef } from "./storage";
 
 const testState = vi.hoisted(() => {
   const activeAddress = "0x2222222222222222222222222222222222222222";
@@ -81,11 +81,15 @@ function passportRef(overrides: Partial<StoredCredentialRef> = {}): StoredCreden
     issuerAddress: overrides.issuerAddress ?? "0xissuer",
     mode: "rooted",
     rootCommitment: "99",
-    normalizedClaims: {
-      nationalityAlpha3: "ZKR",
+    issuanceKind: "a2",
+    passportCommittedClaimsV2Witness: {
+      schema: "passport-committed-claims-v2",
+      credentialAuthenticity: "passport-a2",
       minAgeProven: 18,
-      passportExpiryDate: "2030-01-01",
+      nationalityAlpha3Packed: "5921618",
+      nationalityBlind: "111",
       expiryTs: "1893456000",
+      expiryBlind: "222",
     },
     ...overrides,
   };
@@ -152,10 +156,10 @@ describe("runWalletLoginForRequest", () => {
     expect(testState.disconnect).toHaveBeenCalledOnce();
   });
 
-  it("uses locally stored A1 committed-claims witnesses for passport login", async () => {
-    const a1Witness = {
+  it("uses locally stored A2 committed-claims witnesses for passport login", async () => {
+    const a2Witness = {
       schema: "passport-committed-claims-v2" as const,
-      credentialAuthenticity: "passport-a1" as const,
+      credentialAuthenticity: "passport-a2" as const,
       minAgeProven: 18,
       nationalityAlpha3Packed: "5929810",
       nationalityBlind: "111",
@@ -164,9 +168,9 @@ describe("runWalletLoginForRequest", () => {
     };
     saveCredentialRefs([
       passportRef({
-        issuanceKind: "a1",
+        issuanceKind: "a2",
         normalizedClaims: undefined,
-        passportCommittedClaimsV2Witness: a1Witness,
+        passportCommittedClaimsV2Witness: a2Witness,
       }),
     ]);
 
@@ -182,15 +186,15 @@ describe("runWalletLoginForRequest", () => {
       [{ credential: { committedClaimsWitness?: unknown; passportCommittedClaimsV2Witness?: unknown } }],
     ];
     const call = calls[0][0];
-    expect(call.credential.committedClaimsWitness).toEqual(a1Witness);
-    expect(call.credential.passportCommittedClaimsV2Witness).toEqual(a1Witness);
+    expect(call.credential.committedClaimsWitness).toEqual(a2Witness);
+    expect(call.credential.passportCommittedClaimsV2Witness).toEqual(a2Witness);
     expect(testState.disconnect).toHaveBeenCalledOnce();
   });
 
-  it("fails clearly when an A1 passport credential is missing its local witness", async () => {
+  it("fails clearly when an A2 passport credential is missing its local witness", async () => {
     saveCredentialRefs([
       passportRef({
-        issuanceKind: "a1",
+        issuanceKind: "a2",
         normalizedClaims: undefined,
         passportCommittedClaimsV2Witness: undefined,
       }),
@@ -201,7 +205,7 @@ describe("runWalletLoginForRequest", () => {
         policy,
         consumerGatewayAddress: "0xconsumer",
       }),
-    ).rejects.toThrow("Passport A1 credential is missing its local v2 witness");
+    ).rejects.toThrow("Passport A2 credential is missing its local committed-claims witness");
     expect(testState.runMagnaConsumerLogin).not.toHaveBeenCalled();
     expect(testState.disconnect).toHaveBeenCalledOnce();
   });
@@ -281,20 +285,20 @@ describe("runWalletLoginForRequest", () => {
   });
 
   it("hydrates a rediscovered passport ref from the witness cache before login", async () => {
-    const a1Witness = {
+    const a2Witness = {
       schema: "passport-committed-claims-v2" as const,
-      credentialAuthenticity: "passport-a1" as const,
+      credentialAuthenticity: "passport-a2" as const,
       minAgeProven: 18,
       nationalityAlpha3Packed: "5929810",
       nationalityBlind: "111",
       expiryTs: "1893456000",
       expiryBlind: "222",
     };
-    savePassportA1Witness(
+    savePassportA2Witness(
       passportRef({
-        issuanceKind: "a1",
+        issuanceKind: "a2",
         normalizedClaims: undefined,
-        passportCommittedClaimsV2Witness: a1Witness,
+        passportCommittedClaimsV2Witness: a2Witness,
       }),
     );
     testState.discoverCredentialRefs.mockResolvedValueOnce([
@@ -319,8 +323,8 @@ describe("runWalletLoginForRequest", () => {
     const calls = testState.runMagnaConsumerLogin.mock.calls as unknown as [
       [{ credential: { committedClaimsWitness?: unknown; passportCommittedClaimsV2Witness?: unknown } }],
     ];
-    expect(calls[0][0].credential.committedClaimsWitness).toEqual(a1Witness);
-    expect(calls[0][0].credential.passportCommittedClaimsV2Witness).toEqual(a1Witness);
+    expect(calls[0][0].credential.committedClaimsWitness).toEqual(a2Witness);
+    expect(calls[0][0].credential.passportCommittedClaimsV2Witness).toEqual(a2Witness);
     expect(testState.disconnect).toHaveBeenCalledOnce();
   });
 

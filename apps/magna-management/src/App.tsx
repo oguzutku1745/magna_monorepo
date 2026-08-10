@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import QRCode from "react-qr-code";
+import type { PassportWrapperLocalWitness } from "@magna/passport-wrapper-proof";
 import {
   CredentialType,
   createTransientGhostWalletSession,
@@ -8,10 +9,9 @@ import {
   MagnaBrowserClient,
   isRootedPassportHints,
   packAlpha3,
-  type WalletPassportWrapperLocalWitness,
   type DiscoveredMagnaCredentialRef,
-  type PassportClaimsForm,
   type PassportHints,
+  type PassportCommittedClaimsWitness,
   type RootedPassportHints,
   type SponsorRightsSnapshot,
   type SponsorRuntimeStatus,
@@ -25,7 +25,7 @@ import { navigate, useRoute } from "./lib/router";
 import {
   loadCredentialRefs,
   loadWalletProfile,
-  hydratePassportA1Witness,
+  hydratePassportA2Witness,
   reconcileStoredChainFingerprint,
   refsForOwner,
   saveWalletProfile,
@@ -39,20 +39,19 @@ import {
   startPassportZkRequest,
   verifyAndRefreshRootAuthorityThroughBackend,
   verifyAndIssueInstagramThroughBackend,
-  verifyAndIssuePassportA1ThroughBackend,
-  verifyAndIssuePassportPilotThroughBackend,
-  verifyAndIssueThroughBackend,
+  verifyAndIssuePassportA2ThroughBackend,
   verifyRootRecoveryPreflightThroughBackend,
   type ActiveZkPassportRequest,
   type ZkPassportLifecycleEvent,
 } from "./lib/zkpassport";
 import {
-  buildPassportA1ProofMaterial,
+  buildPassportA2ProofMaterial,
   issuePassportThroughConfiguredBackend,
-  passportA1BindCustomData,
-  passportPilotCredentialUsageBlock,
+  PASSPORT_A2_LOCAL_WITNESS_MISSING_MESSAGE,
+  passportA2BindCustomData,
+  passportCredentialUsageBlock,
   proofModeForPassportIssuanceKind,
-  type PassportA1LocalWitness,
+  type PassportA2LocalWitness,
 } from "./lib/passport-issuance";
 
 type Role = "user" | "company";
@@ -152,7 +151,7 @@ function errorMessage(value: unknown): string {
   return value instanceof Error ? value.message : String(value);
 }
 
-async function provePassportWrapperInBrowser(witness: WalletPassportWrapperLocalWitness) {
+async function provePassportWrapperInBrowser(witness: PassportWrapperLocalWitness) {
   const { provePassportWrapper } = await import("../../../packages/magna-passport-wrapper-proof/src/browser");
   return provePassportWrapper(witness);
 }
@@ -212,18 +211,14 @@ function hasSameCredentialClaims(existing: StoredCredentialRef, discovered: Disc
   );
 }
 
-function credentialRefHasLocalA1Witness(ref?: Pick<StoredCredentialRef, "passportCommittedClaimsV2Witness">): boolean {
+function credentialRefHasLocalA2Witness(ref?: Pick<StoredCredentialRef, "passportCommittedClaimsV2Witness">): boolean {
   return Boolean(ref?.passportCommittedClaimsV2Witness);
 }
 
-function isPassportA1Credential(
+function isPassportA2Credential(
   ref?: Pick<StoredCredentialRef, "kind" | "issuanceKind" | "passportCommittedClaimsV2Witness">,
 ): boolean {
-  return Boolean(ref?.kind === "passport" && (ref.issuanceKind === "a1" || ref.passportCommittedClaimsV2Witness));
-}
-
-function credentialRefHasLegacyClaims(ref?: Pick<StoredCredentialRef, "normalizedClaims">): boolean {
-  return Boolean(ref?.normalizedClaims);
+  return Boolean(ref?.kind === "passport" && ref.issuanceKind === "a2" && ref.passportCommittedClaimsV2Witness);
 }
 
 function deploymentStatusFor(session: WalletSession | null, profile: WalletProfile | null): string {
@@ -324,46 +319,41 @@ function isReadyWallet(
   return isDeployedSession(session) && Boolean(walletIdentityAddress(session, profile, env));
 }
 
-function claimsFormFromRef(ref: StoredCredentialRef): PassportClaimsForm {
-  if (!ref.normalizedClaims) {
-    throw new Error("Credential reference is missing normalized passport claims.");
-  }
-  return {
-    nationalityAlpha3: ref.normalizedClaims.nationalityAlpha3,
-    ageThreshold: String(ref.normalizedClaims.minAgeProven),
-    passportExpiryDate: ref.normalizedClaims.passportExpiryDate,
-  };
-}
-
 export function passportCredentialAuthenticityLabel(
   ref: Pick<StoredCredentialRef, "kind" | "issuanceKind" | "normalizedClaims" | "passportCommittedClaimsV2Witness">,
 ): string | undefined {
   if (ref.kind !== "passport") {
     return undefined;
   }
-  if (ref.issuanceKind === "a1" || ref.passportCommittedClaimsV2Witness) {
-    return "passport A1 wrapper proof (PII-blind)";
+  if (ref.issuanceKind === "a2" && ref.passportCommittedClaimsV2Witness) {
+    return "passport A2 recursive proof (PII-blind)";
   }
-  if (ref.issuanceKind === "pilot") {
-    return "PII-blind pilot (non-production; not passport-authentic)";
-  }
-  if (ref.issuanceKind === "legacy" || ref.normalizedClaims) {
-    return "legacy zkPassport backend verification";
-  }
-  return "passport note found (local A1/v2 witness missing)";
+  return "passport note found (local A2 committed-claims witness missing)";
 }
 
-function committedClaimsV2WitnessFromA1LocalWitness(
-  localWitness: PassportA1LocalWitness,
+function committedClaimsV2WitnessFromA2LocalWitness(
+  localWitness: PassportA2LocalWitness,
 ): PassportCommittedClaimsV2LocalWitness {
   return {
     schema: "passport-committed-claims-v2",
-    credentialAuthenticity: "passport-a1",
+    credentialAuthenticity: "passport-a2",
     minAgeProven: localWitness.witness.minAgeProven,
     nationalityAlpha3Packed: packAlpha3(localWitness.witness.nationalityAlpha3).toString(),
     nationalityBlind: BigInt(localWitness.witness.nationalityBlind).toString(),
     expiryTs: BigInt(localWitness.witness.expiryTs).toString(),
     expiryBlind: BigInt(localWitness.witness.expiryBlind).toString(),
+  };
+}
+
+function walletClaimsWitnessFromA2LocalWitness(
+  localWitness: PassportA2LocalWitness,
+): PassportCommittedClaimsWitness {
+  return {
+    minAgeProven: localWitness.witness.minAgeProven,
+    nationalityAlpha3Packed: packAlpha3(localWitness.witness.nationalityAlpha3),
+    nationalityBlind: BigInt(localWitness.witness.nationalityBlind),
+    expiryTs: BigInt(localWitness.witness.expiryTs),
+    expiryBlind: BigInt(localWitness.witness.expiryBlind),
   };
 }
 
@@ -396,7 +386,7 @@ export function App() {
   const [zkRequest, setZkRequest] = useState<ActiveZkPassportRequest | null>(null);
   const [zkStage, setZkStage] = useState("idle");
   const [zkProofCount, setZkProofCount] = useState(0);
-  const [passportA1LocalWitness, setPassportA1LocalWitness] = useState<PassportA1LocalWitness | null>(null);
+  const [passportA2LocalWitness, setPassportA2LocalWitness] = useState<PassportA2LocalWitness | null>(null);
   const [ageThreshold, setAgeThreshold] = useState("18");
   const [instagramHandle, setInstagramHandle] = useState("");
   const [instagramEmailFile, setInstagramEmailFile] = useState<File | null>(null);
@@ -553,11 +543,11 @@ export function App() {
     const client = new MagnaBrowserClient(nextSession.wallet, env, ownerAddress);
     await client.syncOrchestratorSender();
     for (const ref of activeRefs) {
-      const pilotBlock = ref.kind === "passport" ? passportPilotCredentialUsageBlock(ref) : null;
-      if (pilotBlock) {
+      const passportBlock = ref.kind === "passport" ? passportCredentialUsageBlock(ref) : null;
+      if (passportBlock) {
         setCredentialHints(current => ({
           ...current,
-          [ref.id]: { status: "error", message: pilotBlock },
+          [ref.id]: { status: "error", message: passportBlock },
         }));
         continue;
       }
@@ -588,7 +578,7 @@ export function App() {
     existing?: StoredCredentialRef,
   ): StoredCredentialRef {
     const now = new Date().toISOString();
-    return hydratePassportA1Witness({
+    return hydratePassportA2Witness({
       ...existing,
       id: credentialId({
         ownerAddress: discovered.ownerAddress,
@@ -607,13 +597,7 @@ export function App() {
       issuanceTxHash: discovered.issuanceTxHash ?? existing?.issuanceTxHash,
       issuerAddress: env.issuerAddress,
       mode: discovered.mode,
-      issuanceKind:
-        existing?.issuanceKind ??
-        (credentialRefHasLocalA1Witness(existing)
-          ? "a1"
-          : credentialRefHasLegacyClaims(existing)
-            ? "legacy"
-            : undefined),
+      issuanceKind: existing?.issuanceKind ?? (credentialRefHasLocalA2Witness(existing) ? "a2" : undefined),
       rootCommitment: discovered.rootCommitment ?? existing?.rootCommitment,
     });
   }
@@ -854,36 +838,25 @@ export function App() {
       setNotice({ tone: "danger", text: "VITE_MAGNA_VERIFICATION_API_URL is required for zkPassport issuance." });
       return;
     }
-    let proofMode: ReturnType<typeof proofModeForPassportIssuanceKind>;
-    try {
-      proofMode = proofModeForPassportIssuanceKind(env.zkPassportIssuanceKind);
-    } catch (error) {
-      const message = errorMessage(error);
-      setNotice({ tone: "danger", text: message });
-      appendLog(`zkPassport issuance unavailable: ${message}`);
+    if (!env.issuerAddress) {
+      setNotice({ tone: "danger", text: "VITE_MAGNA_ISSUER_ADDRESS is required for zkPassport issuance." });
       return;
     }
-    const a1BindCustomData =
-      env.zkPassportIssuanceKind === "a1"
-        ? passportA1BindCustomData({
-            activeOwner,
-            requestScope: env.zkPassportRequestScope,
-          })
-        : undefined;
+    const proofMode = proofModeForPassportIssuanceKind("a2");
+    const a2BindCustomData = passportA2BindCustomData({
+      action: "issue",
+      activeOwner,
+      requestScope: env.zkPassportRequestScope,
+    });
 
     setZkStage("creating_request");
     setZkProofCount(0);
-    setPassportA1LocalWitness(null);
+    setPassportA2LocalWitness(null);
     appendLog("zkPassport issuance flow started.");
     if (env.zkPassportDevMode) {
       appendLog("zkPassport dev mode enabled (mock proofs allowed).");
     }
-    if (env.zkPassportIssuanceKind === "pilot") {
-      appendLog("PII-blind pilot issuance enabled (non-production; not passport-authentic).");
-    }
-    if (env.zkPassportIssuanceKind === "a1") {
-      appendLog("Passport A1 issuance will use local wrapper proving and backend two-proof verification.");
-    }
+    appendLog("Passport A2 issuance will recursively verify the compressed proof in the local wrapper.");
     let finalResultTimeout: number | undefined;
     let timedOutWaitingForResult = false;
     let activeZkPassportRequest: ActiveZkPassportRequest | null = null;
@@ -891,7 +864,7 @@ export function App() {
       startPassportZkRequest({
         ageThreshold: parsedAge,
         proofMode,
-        a1BindCustomData,
+        a2BindCustomData,
         metadata: {
           name: env.zkPassportRequestName,
           logo: env.zkPassportRequestLogo,
@@ -942,52 +915,40 @@ export function App() {
           return;
         }
         setZkStage("submitting_to_backend");
-        appendLog(
-          env.zkPassportIssuanceKind === "pilot"
-            ? "zkPassport final result received. Submitting local pilot commitments to verification API."
-            : "zkPassport final result received. Submitting proofs to verification API.",
-        );
+        appendLog("zkPassport result received. Building the local A2 proof before API submission.");
         const issueResult = await issuePassportThroughConfiguredBackend(
           {
-            issuanceKind: env.zkPassportIssuanceKind,
+            issuanceKind: "a2",
             verificationApiUrl: env.verificationApiUrl!,
             completion,
             activeOwner,
+            issuerAddress: env.issuerAddress!,
             ageThreshold: parsedAge,
             mode: env.zkPassportPrimaryIssuanceMode,
             ghostDerivationVersion: env.zkPassportGhostDerivationVersion,
             requestScope: env.zkPassportRequestScope,
-            a1BindCustomData,
+            a2BindCustomData,
           },
           {
-            verifyAndIssueThroughBackend,
-            verifyAndIssuePassportPilotThroughBackend,
-            verifyAndIssuePassportA1ThroughBackend,
+            verifyAndIssuePassportA2ThroughBackend,
             provePassportWrapper: provePassportWrapperInBrowser,
-            onA1Progress: event => {
+            onA2Progress: event => {
               if (event.type === "building_witness") {
-                setZkStage("building_a1_witness");
-                appendLog("Building local A1 wrapper witness.");
+                setZkStage("building_a2_witness");
+                appendLog("Building local A2 wrapper witness.");
               } else if (event.type === "generating_wrapper_proof") {
-                setZkStage("generating_a1_wrapper_proof");
-                appendLog("Generating local A1 wrapper proof.");
+                setZkStage("generating_a2_wrapper_proof");
+                appendLog("Generating local A2 recursive wrapper proof.");
               } else {
                 setZkStage("submitting_to_backend");
-                appendLog("Submitting A1-safe public payload to verification API.");
+                appendLog("Submitting A2 public proof payload to verification API.");
               }
             },
           },
         );
-        if (issueResult.issuanceKind === "a1") {
-          setPassportA1LocalWitness(issueResult.localWitness);
-        }
+        setPassportA2LocalWitness(issueResult.localWitness);
         const issued = issueResult.response;
-        const passportCommittedClaimsV2Witness =
-          issueResult.issuanceKind === "a1"
-            ? committedClaimsV2WitnessFromA1LocalWitness(issueResult.localWitness)
-            : undefined;
-        const normalizedClaims =
-          issueResult.issuanceKind === "legacy" ? issueResult.response.normalizedClaims : undefined;
+        const passportCommittedClaimsV2Witness = committedClaimsV2WitnessFromA2LocalWitness(issueResult.localWitness);
         const ref: StoredCredentialRef = {
           id: credentialId({
             ownerAddress: activeOwner,
@@ -1011,27 +972,15 @@ export function App() {
           ghostOwner: issued.ghostOwner,
           ghostDerivationVersion: issued.ghostDerivationVersion,
           passportCommittedClaimsV2Witness,
-          normalizedClaims,
         };
         setCredentials(upsertCredentialRef(ref));
         await loadHintsForCredentialRefs(activeSession, [ref]);
         setNotice({
           tone: "success",
-          text:
-            issueResult.issuanceKind === "a1"
-              ? "Passport A1 credential issued and stored for this wallet. A1 witness is available locally on this device."
-              : issueResult.issuanceKind === "pilot"
-              ? "PII-blind pilot credential issued and stored for this wallet (non-production; not passport-authentic)."
-              : "zkPassport credential issued and stored for this wallet.",
+          text: "Passport A2 credential issued and stored for this wallet. Its committed-claims witness remains on this device.",
         });
         setZkStage("issued");
-        appendLog(
-          issueResult.issuanceKind === "a1"
-            ? `Passport A1 credential issued. A1 witness available locally. Claims hash: ${issued.claimsHash}`
-            : issueResult.issuanceKind === "pilot"
-            ? `PII-blind pilot credential issued (non-production; not passport-authentic). Claims hash: ${issued.claimsHash}`
-            : `zkPassport credential issued. Claims hash: ${issued.claimsHash}`,
-        );
+        appendLog(`Passport A2 credential issued. Local witness retained. Claims hash: ${issued.claimsHash}`);
       })
       .catch(error => {
         if (finalResultTimeout) {
@@ -1119,9 +1068,9 @@ export function App() {
     const activeSession = requireDeployedWallet("renewal");
     if (!activeSession) return;
     const activeOwner = requireSessionIdentityAddress(activeSession, env);
-    const pilotBlock = passportPilotCredentialUsageBlock(ref);
-    if (pilotBlock) {
-      setNotice({ tone: "danger", text: pilotBlock });
+    const passportBlock = passportCredentialUsageBlock(ref);
+    if (passportBlock) {
+      setNotice({ tone: "danger", text: passportBlock });
       return;
     }
     if (!env.verificationApiUrl) {
@@ -1138,19 +1087,26 @@ export function App() {
       setNotice({ tone: "danger", text: "Rooted renewal requires the credential ghost owner." });
       return;
     }
-    const age = ref.normalizedClaims?.minAgeProven ?? 18;
-    const useA1Flow = isPassportA1Credential(ref);
-    const a1BindCustomData = useA1Flow
-      ? passportA1BindCustomData({
-          activeOwner,
-          requestScope: env.zkPassportRequestScope,
-        })
-      : undefined;
+    if (!isPassportA2Credential(ref) || !ref.issuerAddress) {
+      setNotice({ tone: "danger", text: PASSPORT_A2_LOCAL_WITNESS_MISSING_MESSAGE });
+      return;
+    }
+    const localClaimsWitness = ref.passportCommittedClaimsV2Witness;
+    if (!localClaimsWitness) {
+      setNotice({ tone: "danger", text: PASSPORT_A2_LOCAL_WITNESS_MISSING_MESSAGE });
+      return;
+    }
+    const age = localClaimsWitness.minAgeProven;
+    const a2BindCustomData = passportA2BindCustomData({
+      action: "renew",
+      activeOwner,
+      requestScope: env.zkPassportRequestScope,
+    });
     const request = await runAction("Create zkPassport renewal request", async () =>
       startPassportZkRequest({
         ageThreshold: age,
-        proofMode: useA1Flow ? proofModeForPassportIssuanceKind("a1") : undefined,
-        a1BindCustomData,
+        proofMode: proofModeForPassportIssuanceKind("a2"),
+        a2BindCustomData,
         metadata: {
           name: env.zkPassportRequestName,
           logo: env.zkPassportRequestLogo,
@@ -1173,56 +1129,49 @@ export function App() {
           return;
         }
         setZkStage("submitting_renewal");
-        const a1ProofMaterial = useA1Flow
-          ? await buildPassportA1ProofMaterial(
-              {
-                issuanceKind: "a1",
-                verificationApiUrl: env.verificationApiUrl!,
-                completion,
-                activeOwner,
-                ageThreshold: age,
-                mode: "rooted",
-                ghostDerivationVersion: ref.ghostDerivationVersion ?? env.zkPassportGhostDerivationVersion,
-                preparedGhostOwner: ref.ghostOwner,
-                requestScope: env.zkPassportRequestScope,
-                a1BindCustomData,
-              },
-              {
-                provePassportWrapper: provePassportWrapperInBrowser,
-                onA1Progress: event => {
-                  if (event.type === "building_witness") {
-                    setZkStage("building_a1_witness");
-                    appendLog("Building local A1 renewal wrapper witness.");
-                  } else if (event.type === "generating_wrapper_proof") {
-                    setZkStage("generating_a1_wrapper_proof");
-                    appendLog("Generating local A1 renewal wrapper proof.");
-                  }
-                },
-              },
-            )
-          : undefined;
+        const a2ProofMaterial = await buildPassportA2ProofMaterial(
+          {
+            action: "renew",
+            ghostOwner: ref.ghostOwner!,
+            issuanceKind: "a2",
+            verificationApiUrl: env.verificationApiUrl!,
+            completion,
+            activeOwner,
+            issuerAddress: ref.issuerAddress!,
+            ageThreshold: age,
+            mode: "rooted",
+            ghostDerivationVersion: ref.ghostDerivationVersion ?? env.zkPassportGhostDerivationVersion,
+            preparedGhostOwner: ref.ghostOwner,
+            requestScope: env.zkPassportRequestScope,
+            a2BindCustomData,
+          },
+          {
+            provePassportWrapper: provePassportWrapperInBrowser,
+            onA2Progress: event => {
+              if (event.type === "building_witness") {
+                setZkStage("building_a2_witness");
+                appendLog("Building local A2 renewal wrapper witness.");
+              } else if (event.type === "generating_wrapper_proof") {
+                setZkStage("generating_a2_wrapper_proof");
+                appendLog("Generating local A2 renewal wrapper proof.");
+              }
+            },
+          },
+        );
         setZkStage("submitting_renewal");
-        if (a1ProofMaterial) {
-          appendLog("Submitting A1-safe renewal payload to verification API.");
-        }
+        appendLog("Submitting A2 renewal proof without rooted notes.");
         const renewed = await verifyAndRefreshRootAuthorityThroughBackend(
           env.verificationApiUrl!,
-          a1ProofMaterial
-            ? {
-                ...a1ProofMaterial.payload,
-                ghostOwner: ref.ghostOwner!,
-                hintedRootStatusNote: rootedHints.hintedRootStatusNote,
-                hintedRootAuthorityNote: rootedHints.hintedRootAuthorityNote,
-              }
-            : {
-                proofs: completion.proofs,
-                originalQuery: completion.originalQuery,
-                queryResult: completion.queryResult,
-                ghostOwner: ref.ghostOwner!,
-                hintedRootStatusNote: rootedHints.hintedRootStatusNote,
-                hintedRootAuthorityNote: rootedHints.hintedRootAuthorityNote,
-                ageThreshold: age,
-              },
+          { ...a2ProofMaterial.payload, activeOwner, ghostOwner: ref.ghostOwner! },
+        );
+        appendLog(`Renewal authorization confirmed on Aztec: ${renewed.renewalAuthorizationTxHash}`);
+        setZkStage("refreshing_root_authority_locally");
+        const renewalClient = new MagnaBrowserClient(activeSession.wallet, env, activeOwner);
+        const localRenewal = await renewalClient.refreshRootAuthorityAuthorized(
+          ref.ghostOwner!,
+          walletClaimsWitnessFromA2LocalWitness(a2ProofMaterial.localWitness),
+          BigInt(a2ProofMaterial.payload.credentialValidUntil),
+          rootedHints,
         );
         const renewedRef: StoredCredentialRef = {
           ...ref,
@@ -1237,26 +1186,19 @@ export function App() {
           claimsHash: renewed.claimsHash,
           rootCommitment: renewed.rootCommitment,
           ghostOwner: renewed.ghostOwner,
-          normalizedClaims: renewed.normalizedClaims,
-          renewalTxHash: renewed.renewalTxHash,
+          renewalTxHash: localRenewal.txHash,
           issuerAddress: renewed.issuerAddress,
           orchestratorAddress: renewed.orchestratorAddress,
-          issuanceKind: a1ProofMaterial ? "a1" : ref.issuanceKind,
-          passportCommittedClaimsV2Witness: a1ProofMaterial
-            ? committedClaimsV2WitnessFromA1LocalWitness(a1ProofMaterial.localWitness)
-            : ref.passportCommittedClaimsV2Witness,
+          issuanceKind: "a2",
+          passportCommittedClaimsV2Witness: committedClaimsV2WitnessFromA2LocalWitness(a2ProofMaterial.localWitness),
           updatedAt: new Date().toISOString(),
         };
-        if (a1ProofMaterial) {
-          setPassportA1LocalWitness(a1ProofMaterial.localWitness);
-        }
+        setPassportA2LocalWitness(a2ProofMaterial.localWitness);
         setCredentials(upsertCredentialRef(renewedRef));
         await loadHintsForCredentialRefs(activeSession, [renewedRef]);
         setNotice({
           tone: "success",
-          text: a1ProofMaterial
-            ? "Rooted passport authority renewed with A1 wrapper proof. Fresh A1 witness is available locally on this device."
-            : "Rooted passport authority renewed.",
+          text: "Rooted passport authority renewed with A2. The refreshed claims witness remains on this device.",
         });
         setZkStage("renewed");
       })
@@ -1271,9 +1213,9 @@ export function App() {
     const activeSession = requireDeployedWallet("recovery");
     if (!activeSession) return;
     const activeOwner = requireSessionIdentityAddress(activeSession, env);
-    const pilotBlock = passportPilotCredentialUsageBlock(ref);
-    if (pilotBlock) {
-      setNotice({ tone: "danger", text: pilotBlock });
+    const passportBlock = passportCredentialUsageBlock(ref);
+    if (passportBlock) {
+      setNotice({ tone: "danger", text: passportBlock });
       return;
     }
     if (!recoveryTarget) {
@@ -1305,20 +1247,27 @@ export function App() {
       setNotice({ tone: "danger", text: "Root recovery requires ghost owner and root commitment." });
       return;
     }
-    const age = ref.normalizedClaims?.minAgeProven ?? 18;
+    if (!isPassportA2Credential(ref) || !ref.issuerAddress) {
+      setNotice({ tone: "danger", text: PASSPORT_A2_LOCAL_WITNESS_MISSING_MESSAGE });
+      return;
+    }
+    const localClaimsWitness = ref.passportCommittedClaimsV2Witness;
+    if (!localClaimsWitness) {
+      setNotice({ tone: "danger", text: PASSPORT_A2_LOCAL_WITNESS_MISSING_MESSAGE });
+      return;
+    }
+    const age = localClaimsWitness.minAgeProven;
     const derivationVersion = ref.ghostDerivationVersion ?? env.zkPassportGhostDerivationVersion;
-    const useA1Flow = isPassportA1Credential(ref);
-    const a1BindCustomData = useA1Flow
-      ? passportA1BindCustomData({
-          activeOwner,
-          requestScope: env.zkPassportRequestScope,
-        })
-      : undefined;
+    const a2BindCustomData = passportA2BindCustomData({
+      action: "recover",
+      activeOwner: recoveryTargetAddress,
+      requestScope: env.zkPassportRequestScope,
+    });
     const request = await runAction("Create zkPassport root recovery request", async () =>
       startPassportZkRequest({
         ageThreshold: age,
-        proofMode: useA1Flow ? proofModeForPassportIssuanceKind("a1") : undefined,
-        a1BindCustomData,
+        proofMode: proofModeForPassportIssuanceKind("a2"),
+        a2BindCustomData,
         metadata: {
           name: env.zkPassportRequestName,
           logo: env.zkPassportRequestLogo,
@@ -1344,58 +1293,46 @@ export function App() {
           throw new Error("zkPassport verification succeeded but uniqueIdentifier is missing.");
         }
         setZkStage("submitting_recovery_preflight");
-        const a1ProofMaterial = useA1Flow
-          ? await buildPassportA1ProofMaterial(
-              {
-                issuanceKind: "a1",
-                verificationApiUrl: env.verificationApiUrl!,
-                completion,
-                activeOwner,
-                ageThreshold: age,
-                mode: "rooted",
-                ghostDerivationVersion: derivationVersion,
-                preparedGhostOwner: ref.ghostOwner,
-                requestScope: env.zkPassportRequestScope,
-                a1BindCustomData,
-              },
-              {
-                provePassportWrapper: provePassportWrapperInBrowser,
-                onA1Progress: event => {
-                  if (event.type === "building_witness") {
-                    setZkStage("building_a1_witness");
-                    appendLog("Building local A1 recovery preflight wrapper witness.");
-                  } else if (event.type === "generating_wrapper_proof") {
-                    setZkStage("generating_a1_wrapper_proof");
-                    appendLog("Generating local A1 recovery preflight wrapper proof.");
-                  }
-                },
-              },
-            )
-          : undefined;
+        const a2ProofMaterial = await buildPassportA2ProofMaterial(
+          {
+            action: "recover",
+            ghostOwner: ref.ghostOwner!,
+            issuanceKind: "a2",
+            verificationApiUrl: env.verificationApiUrl!,
+            completion,
+            activeOwner: recoveryTargetAddress,
+            issuerAddress: ref.issuerAddress!,
+            ageThreshold: age,
+            mode: "rooted",
+            ghostDerivationVersion: derivationVersion,
+            preparedGhostOwner: ref.ghostOwner,
+            requestScope: env.zkPassportRequestScope,
+            a2BindCustomData,
+          },
+          {
+            provePassportWrapper: provePassportWrapperInBrowser,
+            onA2Progress: event => {
+              if (event.type === "building_witness") {
+                setZkStage("building_a2_witness");
+                appendLog("Building local A2 recovery preflight wrapper witness.");
+              } else if (event.type === "generating_wrapper_proof") {
+                setZkStage("generating_a2_wrapper_proof");
+                appendLog("Generating local A2 recovery preflight wrapper proof.");
+              }
+            },
+          },
+        );
         setZkStage("submitting_recovery_preflight");
-        if (a1ProofMaterial) {
-          appendLog("Submitting A1-safe recovery preflight payload to verification API.");
-        }
+        appendLog("Submitting A2 recovery preflight without recovery notes.");
         const preflight = await verifyRootRecoveryPreflightThroughBackend(
           env.verificationApiUrl!,
-          a1ProofMaterial
-            ? {
-                ...a1ProofMaterial.payload,
-                expectedGhostOwner: ref.ghostOwner!,
-                expectedRootCommitment: ref.rootCommitment!,
-                derivedGhostOwner: ref.ghostOwner!,
-                derivedRootCommitment: ref.rootCommitment!,
-                ghostDerivationVersion: derivationVersion,
-              }
-            : {
-                proofs: completion.proofs,
-                originalQuery: completion.originalQuery,
-                queryResult: completion.queryResult,
-                expectedGhostOwner: ref.ghostOwner!,
-                expectedRootCommitment: ref.rootCommitment!,
-                ghostDerivationVersion: derivationVersion,
-                ageThreshold: age,
-              },
+          {
+            ...a2ProofMaterial.payload,
+            targetOwner: recoveryTargetAddress,
+            expectedGhostOwner: ref.ghostOwner!,
+            expectedRootCommitment: ref.rootCommitment!,
+            ghostDerivationVersion: derivationVersion,
+          },
         );
 
         setZkStage("recovering_root");
@@ -1571,7 +1508,7 @@ export function App() {
             zkStage={zkStage}
             zkProofCount={zkProofCount}
             zkPassportIssuanceKind={env.zkPassportIssuanceKind}
-            passportA1LocalWitnessAvailable={Boolean(passportA1LocalWitness)}
+            passportA2LocalWitnessAvailable={Boolean(passportA2LocalWitness)}
             ageThreshold={ageThreshold}
             setAgeThreshold={setAgeThreshold}
             instagramHandle={instagramHandle}
@@ -1996,7 +1933,7 @@ function CredentialCard(props: { refData: StoredCredentialRef; hintState?: Crede
       {ref.mode ? <KeyValue label="Mode" value={ref.mode} /> : null}
       {ref.rootCommitment ? <KeyValue label="Root commitment" value={ref.rootCommitment} /> : null}
       {ref.ghostOwner ? <KeyValue label="Ghost owner" value={ref.ghostOwner} /> : null}
-      {ref.passportCommittedClaimsV2Witness ? <KeyValue label="A1 witness" value="available locally" /> : null}
+      {ref.passportCommittedClaimsV2Witness ? <KeyValue label="A2 witness" value="available locally" /> : null}
       {ref.normalizedClaims ? (
         <>
           <KeyValue label="Nationality" value={ref.normalizedClaims.nationalityAlpha3} />
@@ -2027,8 +1964,8 @@ function Issuance(props: {
   zkRequest: ActiveZkPassportRequest | null;
   zkStage: string;
   zkProofCount: number;
-  zkPassportIssuanceKind: "legacy" | "pilot" | "a1";
-  passportA1LocalWitnessAvailable: boolean;
+  zkPassportIssuanceKind: "a2";
+  passportA2LocalWitnessAvailable: boolean;
   ageThreshold: string;
   setAgeThreshold: (value: string) => void;
   instagramHandle: string;
@@ -2058,19 +1995,13 @@ function Issuance(props: {
             <KeyValue label="zkPassport stage" value={props.zkStage} />
             <KeyValue label="Proofs generated" value={String(props.zkProofCount)} />
             <KeyValue
-              label="A1 wrapper status"
-              value={
-                props.zkPassportIssuanceKind === "a1"
-                  ? "local wrapper proving enabled"
-                  : "not selected"
-              }
+              label="A2 wrapper status"
+              value="local recursive proving enabled"
             />
-            {props.zkPassportIssuanceKind === "a1" ? (
-              <KeyValue
-                label="A1 local witness"
-                value={props.passportA1LocalWitnessAvailable ? "available locally" : "not retained"}
-              />
-            ) : null}
+            <KeyValue
+              label="A2 local witness"
+              value={props.passportA2LocalWitnessAvailable ? "available locally" : "not retained"}
+            />
             <p>{zkStatusMessage(status)}</p>
           </div>
           {props.zkRequest ? (

@@ -2,11 +2,11 @@ import type { GhostDerivationVersion } from "@magna/wallet";
 
 export type CredentialKind = "passport" | "instagram";
 export type CredentialStatus = "active" | "pending_attestation" | "recovery_pending" | "unknown";
-export type CredentialIssuanceKind = "legacy" | "pilot" | "a1";
+export type CredentialIssuanceKind = "a2";
 
 export type PassportCommittedClaimsV2LocalWitness = {
   schema: "passport-committed-claims-v2";
-  credentialAuthenticity: "passport-a1";
+  credentialAuthenticity: "passport-a2";
   minAgeProven: number;
   nationalityAlpha3Packed: string;
   nationalityBlind: string;
@@ -59,9 +59,9 @@ export type WalletProfile = {
 const CREDENTIALS_KEY = "magna-management:credential-refs:v1";
 const WALLET_PROFILE_KEY = "magna-management:wallet-profile:v1";
 const CHAIN_FINGERPRINT_KEY = "magna-management:chain-fingerprint:v1";
-const PASSPORT_A1_WITNESSES_KEY = "magna-management:passport-a1-witnesses:v1";
+const PASSPORT_A2_WITNESSES_KEY = "magna-management:passport-a2-witnesses:v1";
 
-type StoredPassportA1WitnessRecord = {
+type StoredPassportA2WitnessRecord = {
   issuerAddress?: string;
   ownerAddress: string;
   mode?: "passport" | "rooted";
@@ -88,7 +88,7 @@ function isPassportCommittedClaimsV2LocalWitness(value: unknown): value is Passp
   return Boolean(
     witness &&
       witness.schema === "passport-committed-claims-v2" &&
-      witness.credentialAuthenticity === "passport-a1" &&
+      witness.credentialAuthenticity === "passport-a2" &&
       typeof witness.minAgeProven === "number" &&
       typeof witness.nationalityAlpha3Packed === "string" &&
       typeof witness.nationalityBlind === "string" &&
@@ -97,9 +97,9 @@ function isPassportCommittedClaimsV2LocalWitness(value: unknown): value is Passp
   );
 }
 
-function loadPassportA1WitnessRecords(): Record<string, StoredPassportA1WitnessRecord> {
-  const parsed = safeParse<Record<string, StoredPassportA1WitnessRecord>>(
-    window.localStorage.getItem(PASSPORT_A1_WITNESSES_KEY),
+function loadPassportA2WitnessRecords(): Record<string, StoredPassportA2WitnessRecord> {
+  const parsed = safeParse<Record<string, StoredPassportA2WitnessRecord>>(
+    window.localStorage.getItem(PASSPORT_A2_WITNESSES_KEY),
     {},
   );
   return Object.fromEntries(
@@ -114,11 +114,11 @@ function loadPassportA1WitnessRecords(): Record<string, StoredPassportA1WitnessR
   );
 }
 
-function savePassportA1WitnessRecords(records: Record<string, StoredPassportA1WitnessRecord>): void {
-  window.localStorage.setItem(PASSPORT_A1_WITNESSES_KEY, JSON.stringify(records));
+function savePassportA2WitnessRecords(records: Record<string, StoredPassportA2WitnessRecord>): void {
+  window.localStorage.setItem(PASSPORT_A2_WITNESSES_KEY, JSON.stringify(records));
 }
 
-export function passportA1WitnessStorageKey(
+export function passportA2WitnessStorageKey(
   ref: Pick<StoredCredentialRef, "ownerAddress" | "claimsHash"> &
     Partial<Pick<StoredCredentialRef, "issuerAddress" | "mode" | "rootCommitment">>,
 ): string {
@@ -131,12 +131,12 @@ export function passportA1WitnessStorageKey(
   ].join(":");
 }
 
-export function savePassportA1Witness(ref: StoredCredentialRef): void {
+export function savePassportA2Witness(ref: StoredCredentialRef): void {
   if (ref.kind !== "passport" || !isPassportCommittedClaimsV2LocalWitness(ref.passportCommittedClaimsV2Witness)) {
     return;
   }
-  const records = loadPassportA1WitnessRecords();
-  records[passportA1WitnessStorageKey(ref)] = {
+  const records = loadPassportA2WitnessRecords();
+  records[passportA2WitnessStorageKey(ref)] = {
     issuerAddress: ref.issuerAddress,
     ownerAddress: ref.ownerAddress,
     mode: ref.mode,
@@ -144,42 +144,42 @@ export function savePassportA1Witness(ref: StoredCredentialRef): void {
     claimsHash: ref.claimsHash,
     witness: ref.passportCommittedClaimsV2Witness,
   };
-  savePassportA1WitnessRecords(records);
+  savePassportA2WitnessRecords(records);
 }
 
-export function readPassportA1Witness(
+export function readPassportA2Witness(
   ref: Pick<StoredCredentialRef, "ownerAddress" | "claimsHash"> &
     Partial<Pick<StoredCredentialRef, "issuerAddress" | "mode" | "rootCommitment">>,
 ): PassportCommittedClaimsV2LocalWitness | undefined {
-  return loadPassportA1WitnessRecords()[passportA1WitnessStorageKey(ref)]?.witness;
+  return loadPassportA2WitnessRecords()[passportA2WitnessStorageKey(ref)]?.witness;
 }
 
-export function hydratePassportA1Witness(ref: StoredCredentialRef): StoredCredentialRef {
+export function hydratePassportA2Witness(ref: StoredCredentialRef): StoredCredentialRef {
   if (ref.kind !== "passport" || ref.passportCommittedClaimsV2Witness) {
     return ref;
   }
-  const witness = readPassportA1Witness(ref);
+  const witness = readPassportA2Witness(ref);
   if (!witness) {
     return ref;
   }
   return {
     ...ref,
-    issuanceKind: ref.issuanceKind ?? "a1",
+    issuanceKind: ref.issuanceKind ?? "a2",
     passportCommittedClaimsV2Witness: witness,
   };
 }
 
-export function hydratePassportA1Witnesses(refs: StoredCredentialRef[]): StoredCredentialRef[] {
-  return refs.map(hydratePassportA1Witness);
+export function hydratePassportA2Witnesses(refs: StoredCredentialRef[]): StoredCredentialRef[] {
+  return refs.map(hydratePassportA2Witness);
 }
 
 export function loadCredentialRefs(): StoredCredentialRef[] {
-  return hydratePassportA1Witnesses(safeParse<StoredCredentialRef[]>(window.localStorage.getItem(CREDENTIALS_KEY), []));
+  return hydratePassportA2Witnesses(safeParse<StoredCredentialRef[]>(window.localStorage.getItem(CREDENTIALS_KEY), []));
 }
 
 export function saveCredentialRefs(refs: StoredCredentialRef[]): void {
   for (const ref of refs) {
-    savePassportA1Witness(ref);
+    savePassportA2Witness(ref);
   }
   window.localStorage.setItem(CREDENTIALS_KEY, JSON.stringify(refs));
 }

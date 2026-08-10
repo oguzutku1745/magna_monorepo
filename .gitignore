@@ -92,8 +92,12 @@ cache/
 broadcast/
 **/broadcast/
 
-# Local agent, scratch, and generated working files
-docs/
+# Local agent, scratch, and generated working files.
+# docs/ is scratch by default; the three canonical documents are tracked.
+docs/*
+!docs/protocol-spec.md
+!docs/threat-model.md
+!docs/integration-guide.md
 .codex/
 .claude/
 .cursor/
