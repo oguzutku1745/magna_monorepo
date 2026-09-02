@@ -44,7 +44,7 @@ vi.mock("./env", () => ({
   }),
 }));
 
-import { runWalletLoginForRequest } from "./wallet-login";
+import { runWalletLoginForRequest, runWalletLoginForRequestWithSession } from "./wallet-login";
 
 const policy: Policy = {
   credentialType: CredentialType.Passport,
@@ -106,6 +106,7 @@ function instagramRef(overrides: Partial<StoredCredentialRef> = {}): StoredCrede
     issuerAddress: overrides.issuerAddress ?? "0xissuer",
     instagramHandle: "akinspur",
     handleHash: "999",
+    handleBlind: "777",
     ...overrides,
   };
 }
@@ -139,6 +140,48 @@ describe("runWalletLoginForRequest", () => {
       }),
     ).rejects.toThrow("No active Magna passport credential is available in this wallet session.");
 
+    expect(testState.disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("reuses an already-open wallet session without opening or disconnecting PXE", async () => {
+    saveCredentialRefs([passportRef()]);
+    const existingWallet = { id: "existing-wallet" };
+    const existingSession = {
+      wallet: existingWallet,
+      activeAccount: { address: testState.activeAddress },
+      metadata: { deploymentStatus: "deployed" },
+      disconnect: testState.disconnect,
+    } as never;
+
+    await expect(
+      runWalletLoginForRequestWithSession(
+        {
+          policy,
+          consumerGatewayAddress: "0xconsumer",
+        },
+        existingSession,
+      ),
+    ).resolves.toMatchObject({ verified: true, receipt: "0xlogin" });
+
+    expect(testState.createWebAuthnWalletSession).not.toHaveBeenCalled();
+    expect(testState.runMagnaConsumerLogin).toHaveBeenCalledWith(
+      expect.objectContaining({ wallet: existingWallet }),
+    );
+    expect(testState.disconnect).not.toHaveBeenCalled();
+  });
+
+  it("opens the explicitly selected stored passkey for standalone authorization", async () => {
+    saveCredentialRefs([passportRef()]);
+
+    await runWalletLoginForRequest({
+      policy,
+      consumerGatewayAddress: "0xconsumer",
+      storedCredentialId: "selected-passkey-id",
+    });
+
+    expect(testState.createWebAuthnWalletSession).toHaveBeenCalledWith(
+      expect.objectContaining({ storedCredentialId: "selected-passkey-id" }),
+    );
     expect(testState.disconnect).toHaveBeenCalledOnce();
   });
 

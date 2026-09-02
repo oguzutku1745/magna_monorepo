@@ -1,8 +1,10 @@
 import { createRequire } from "node:module";
 import type { ProofData } from "@aztec/bb.js";
+import { PASSPORT_A2_WRAPPER_SRS_SIZE } from "./types.js";
 
 type BackendOptions = {
   threads?: number;
+  srsSize?: number;
   memory?: {
     initial?: number;
     maximum?: number;
@@ -37,7 +39,10 @@ export async function createUltraHonkBackend(acirBytecode: string): Promise<Ultr
     };
     UltraHonkBackend: UltraHonkBackendConstructor;
   };
-  const api = await Barretenberg.new({ threads: 1 });
+  const api = await Barretenberg.new({
+    threads: 1,
+    srsSize: PASSPORT_A2_WRAPPER_SRS_SIZE,
+  });
   const backend = new UltraHonkBackend(acirBytecode, api);
   return {
     generateProof: backend.generateProof.bind(backend),

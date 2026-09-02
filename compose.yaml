@@ -1,0 +1,129 @@
+name: magna-local
+
+x-magna-app: &magna-app
+  build:
+    context: .
+    dockerfile: Dockerfile.local
+  image: magna-local-app:aztec-5.1.0
+  init: true
+  volumes:
+    - magna-deployments:/workspace/deployments
+    - magna-runtime:/runtime
+
+services:
+  anvil:
+    image: aztecprotocol/aztec:5.1.0@sha256:dd26a01042caf0f34760c4221bd1c855862181842e0cbe3c8c6b4e3f6a5b4128
+    init: true
+    entrypoint: ["/opt/foundry/bin/anvil"]
+    command: ["--silent", "--host", "0.0.0.0", "--port", "8545", "--chain-id", "31337"]
+    environment:
+      LD_PRELOAD: ""
+    ports:
+      - "127.0.0.1:18545:8545"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8545"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+
+  aztec-localnet:
+    image: aztecprotocol/aztec:5.1.0@sha256:dd26a01042caf0f34760c4221bd1c855862181842e0cbe3c8c6b4e3f6a5b4128
+    init: true
+    entrypoint: ["node", "--no-warnings", "/usr/src/yarn-project/aztec/dest/bin/index.js"]
+    command: ["start", "--local-network", "--l1-rpc-urls", "http://anvil:8545"]
+    environment:
+      LD_PRELOAD: ""
+      ETHEREUM_SLOT_DURATION: "4"
+      AZTEC_SLOT_DURATION: "8"
+      SEQ_BLOCK_DURATION_MS: "1000"
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8080"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 30s
+    depends_on:
+      anvil:
+        condition: service_healthy
+
+  bootstrap:
+    <<: *magna-app
+    command: ["node", "./scripts/bootstrap-docker-local.mjs"]
+    environment:
+      MAGNA_DEPLOYMENT_MANIFEST: /workspace/deployments/local.json
+      MAGNA_DOCKER_RUNTIME_DIR: /runtime
+      MAGNA_AZTEC_NODE_URL: http://aztec-localnet:8080
+      MAGNA_L1_RPC_URL: http://anvil:8545
+      MAGNA_PUBLIC_AZTEC_NODE_URL: http://localhost:8080
+      MAGNA_PUBLIC_L1_RPC_URL: http://127.0.0.1:18545
+      MAGNA_PUBLIC_VERIFICATION_API_URL: http://localhost:4310
+      MAGNA_PUBLIC_WALLET_ORIGIN: http://localhost:5174
+      MAGNA_ZKPASSPORT_EVM_RPC_URL: ${MAGNA_ZKPASSPORT_EVM_RPC_URL:-https://ethereum-sepolia-rpc.publicnode.com}
+      MAGNA_INSTAGRAM_DKIM_PUBKEY_HASHES: ${MAGNA_INSTAGRAM_DKIM_PUBKEY_HASHES:-0x2f98bb0fd5d8e691af9dd90027c769678ac017a689173593d6edc98faa01c952}
+    depends_on:
+      aztec-localnet:
+        condition: service_healthy
+
+  verification-api:
+    <<: *magna-app
+    command: ["node", "./scripts/start-docker-service.mjs", "verification-api"]
+    ports:
+      - "4310:4310"
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4310/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  management:
+    <<: *magna-app
+    command: ["node", "./scripts/start-docker-service.mjs", "management"]
+    volumes:
+      - magna-deployments:/workspace/deployments
+      - magna-runtime:/runtime
+      - ./apps/magna-management/src:/workspace/apps/magna-management/src:ro
+      - ./apps/magna-management/index.html:/workspace/apps/magna-management/index.html:ro
+      - ./apps/magna-management/vite.config.mjs:/workspace/apps/magna-management/vite.config.mjs:ro
+    ports:
+      - "5174:5174"
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+      verification-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5174').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 10s
+
+  reference-dapp:
+    <<: *magna-app
+    command: ["node", "./scripts/start-docker-service.mjs", "reference-dapp"]
+    volumes:
+      - magna-deployments:/workspace/deployments
+      - magna-runtime:/runtime
+      - ./apps/reference-dapp/src:/workspace/apps/reference-dapp/src:ro
+      - ./apps/reference-dapp/index.html:/workspace/apps/reference-dapp/index.html:ro
+      - ./apps/reference-dapp/vite.config.mjs:/workspace/apps/reference-dapp/vite.config.mjs:ro
+    ports:
+      - "5175:5175"
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+      verification-api:
+        condition: service_healthy
+      management:
+        condition: service_healthy
+
+volumes:
+  magna-deployments:
+  magna-runtime:

@@ -12,7 +12,7 @@ export async function registerKnownIssuerSender(
   wallet: Wallet,
   orchestratorAddress: string,
 ): Promise<void> {
-  await wallet.registerSender(AztecAddress.fromString(orchestratorAddress), "magna-orchestrator");
+  await wallet.registerSender(AztecAddress.fromStringUnsafe(orchestratorAddress), "magna-orchestrator");
 }
 
 /**

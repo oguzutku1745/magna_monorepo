@@ -1,9 +1,13 @@
-import { generateEmailVerifierInputs } from "@zk-email/zkemail-nr";
+import {
+  generateEmailVerifierInputsFromDKIMResult,
+  verifyDKIMSignature,
+} from "@zk-email/zkemail-nr";
 import type { InputValue } from "@noir-lang/types";
 import {
   INSTAGRAM_TEMPLATE,
   MAX_INSTAGRAM_HANDLE_LENGTH,
   type GenerateInstagramInputsResult,
+  type InstagramIssuanceContext,
   type InstagramTemplateName,
 } from "./types.js";
 
@@ -11,17 +15,40 @@ const textEncoder = new TextEncoder();
 
 const CIRCUIT_PARAMS = {
   maxHeadersLength: 1024,
-  maxBodyLength: 7168,
+  maxBodyLength: 1024,
   extractFrom: true,
 } as const;
 
 const TEMPLATE_PREFIX: Record<InstagramTemplateName, string> = {
-  english: "Hi ",
-  turkish: "Merhaba ",
+  english: "and intended for ",
 };
 
 const ZKEMAIL_DKIM_RESOLVER_MISMATCH =
   "DKIM record mismatch between Google and Cloudflare! Using Google result.";
+
+const SUPPORTED_DKIM_SIGNING_DOMAIN = "mail.instagram.com";
+const SUPPORTED_DKIM_ALGORITHM = "rsa-sha256";
+const SUPPORTED_DKIM_CANONICALIZATION = "relaxed/simple";
+const SUPPORTED_DKIM_MODULUS_BITS = 1024;
+
+export type InstagramVerifiedDkim = Parameters<
+  typeof generateEmailVerifierInputsFromDKIMResult
+>[0];
+
+function assertSupportedInstagramDkimProfile(verifiedDkim: InstagramVerifiedDkim): void {
+  if (verifiedDkim.signingDomain !== SUPPORTED_DKIM_SIGNING_DOMAIN) {
+    throw new Error(`Unsupported Instagram DKIM signing domain: ${verifiedDkim.signingDomain}.`);
+  }
+  if (verifiedDkim.algo !== SUPPORTED_DKIM_ALGORITHM) {
+    throw new Error(`Unsupported Instagram DKIM algorithm: ${verifiedDkim.algo}.`);
+  }
+  if (verifiedDkim.format !== SUPPORTED_DKIM_CANONICALIZATION) {
+    throw new Error(`Unsupported Instagram DKIM canonicalization: ${verifiedDkim.format}.`);
+  }
+  if (verifiedDkim.modulusLength !== SUPPORTED_DKIM_MODULUS_BITS) {
+    throw new Error(`Unsupported Instagram DKIM modulus length: ${verifiedDkim.modulusLength}.`);
+  }
+}
 
 export function normalizeInstagramHandle(value: string): string {
   const normalized = value.trim().replace(/^@/, "").toLowerCase();
@@ -96,25 +123,19 @@ function chooseTemplate(rawEmail: Buffer | string, handle: string): {
 } {
   const raw = Buffer.isBuffer(rawEmail) ? rawEmail.toString("utf8") : rawEmail;
   for (const template of Object.keys(TEMPLATE_PREFIX) as InstagramTemplateName[]) {
-    const greeting = `${TEMPLATE_PREFIX[template]}${handle},`;
-    if (raw.includes(greeting)) {
-      return { template, selector: greeting };
+    const ownershipFooter = `${TEMPLATE_PREFIX[template]}${handle}.`;
+    if (raw.includes(ownershipFooter)) {
+      return { template, selector: TEMPLATE_PREFIX[template] };
     }
   }
-  for (const template of Object.keys(TEMPLATE_PREFIX) as InstagramTemplateName[]) {
-    const selector = TEMPLATE_PREFIX[template];
-    if (raw.includes(selector)) {
-      return { template, selector };
-    }
-  }
-  throw new Error("Could not find a supported Instagram greeting in the email body.");
+  throw new Error("Could not find a supported Instagram ownership footer in the signed email body.");
 }
 
 function findPrefixIndex(signedBody: string, template: InstagramTemplateName, handle: string): number {
-  const expectedGreeting = `${TEMPLATE_PREFIX[template]}${handle},`;
-  const index = signedBody.indexOf(expectedGreeting);
+  const expectedFooter = `${TEMPLATE_PREFIX[template]}${handle}.`;
+  const index = signedBody.indexOf(expectedFooter);
   if (index < 0) {
-    throw new Error(`Signed email body does not contain expected Instagram greeting: ${expectedGreeting}`);
+    throw new Error(`Signed email body does not contain expected Instagram ownership footer: ${expectedFooter}`);
   }
   return index;
 }
@@ -137,15 +158,30 @@ async function withoutKnownZkEmailResolverNoise<T>(callback: () => Promise<T>): 
 export async function generateInstagramCircuitInputs(
   rawEmail: Buffer | string,
   claimedHandle: string,
+  issuance: InstagramIssuanceContext,
 ): Promise<GenerateInstagramInputsResult> {
-  const normalizedHandle = normalizeInstagramHandle(claimedHandle);
-  const { template, selector } = chooseTemplate(rawEmail, normalizedHandle);
-  const inputs = await withoutKnownZkEmailResolverNoise(() =>
-    generateEmailVerifierInputs(rawEmail, {
-      ...CIRCUIT_PARAMS,
-      shaPrecomputeSelector: selector,
-    }),
+  const verifiedDkim = await withoutKnownZkEmailResolverNoise(() =>
+    verifyDKIMSignature(rawEmail, undefined, undefined, true),
   );
+  return generateInstagramCircuitInputsFromVerifiedDkim(verifiedDkim, claimedHandle, issuance);
+}
+
+export function generateInstagramCircuitInputsFromVerifiedDkim(
+  verifiedDkim: InstagramVerifiedDkim,
+  claimedHandle: string,
+  issuance: InstagramIssuanceContext,
+): GenerateInstagramInputsResult {
+  // This protects the supported client lane from silently changing how the
+  // signed message is canonicalized. The circuit/API security boundary is the
+  // proof-bound, governed modulus+REDC hash; this profile check is an additional
+  // fail-closed integration invariant, not a substitute for that allowlist.
+  assertSupportedInstagramDkimProfile(verifiedDkim);
+  const normalizedHandle = normalizeInstagramHandle(claimedHandle);
+  const { template, selector } = chooseTemplate(verifiedDkim.body, normalizedHandle);
+  const inputs = generateEmailVerifierInputsFromDKIMResult(verifiedDkim, {
+    ...CIRCUIT_PARAMS,
+    shaPrecomputeSelector: selector,
+  });
 
   const signedBody = boundedVecToUtf8(inputs.body, "body");
   const prefixIndex = findPrefixIndex(signedBody, template, normalizedHandle);
@@ -159,6 +195,11 @@ export async function generateInstagramCircuitInputs(
       template_kind: String(INSTAGRAM_TEMPLATE[template]),
       claimed_handle: handleBytesForCircuit(normalizedHandle).map(String),
       claimed_handle_len: String(textEncoder.encode(normalizedHandle).length),
+      handle_blind: issuance.handleBlind.toString(),
+      expiry_ts: issuance.expiryTs.toString(),
+      active_owner: issuance.activeOwner.toString(),
+      issuer_address: issuance.issuerAddress.toString(),
+      chain_id: issuance.chainId.toString(),
     },
     metadata: {
       normalizedHandle,
@@ -166,6 +207,7 @@ export async function generateInstagramCircuitInputs(
       prefixIndex,
       handleLen: textEncoder.encode(normalizedHandle).length,
       handlePacked,
+      ...issuance,
     },
   };
 }

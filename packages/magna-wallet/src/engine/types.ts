@@ -37,8 +37,13 @@ export type PassportCommittedClaimsWitnessInput = {
 export type InstagramCanonicalClaims = {
   schemaVersion: number;
   credentialType: CredentialType.Instagram;
-  handleHash: bigint;
+  handleCommitment: bigint;
   expiryTs: bigint;
+};
+
+export type InstagramCommittedClaimsWitness = {
+  handleHash: bigint;
+  handleBlind: bigint;
 };
 
 export type RegisterPassportInput = {
@@ -115,9 +120,7 @@ export type VerifyInstagramInput = {
   policy: Policy;
   hintedCredentialNote: unknown;
   hintedStatusNote: unknown;
-  claimsWitness: {
-    handleHash: bigint;
-  };
+  claimsWitness: InstagramCommittedClaimsWitness;
   sponsorSlot?: number;
 };
 
@@ -134,7 +137,12 @@ export type RecoverInput = {
 
 export type RecoverRootInput = {
   hintedRootRecoveryNote: unknown;
-  newActiveOwner: string;
+  destination: string;
+  authorizationNonce: bigint | string;
+  claimsHash: bigint | string;
+  credentialValidUntil: bigint | string;
+  messageSecret: bigint | string;
+  messageLeafIndex: bigint | string;
 };
 
 export type RefreshRootAuthorityInput = {
@@ -166,7 +174,7 @@ export type GhostKeyMaterial = {
   domainSeparator: bigint;
   seedField: bigint;
   saltHex: string;
-  secretHex: string;
+  signingKeyHex: string;
 };
 
 export type GhostDerivationVersion = "v1_legacy_unscoped" | "v2_scoped";

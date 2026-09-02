@@ -1,14 +1,19 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
-  generateInstagramCircuitInputs,
+  generateInstagramCircuitInputsFromVerifiedDkim,
   normalizeInstagramHandle,
   packInstagramHandle,
 } from "./inputs.js";
+import { loadVerifiedInstagramFixture } from "./fixture-dkim.js";
 
-const fixturePath = resolve(import.meta.dirname, "../fixtures/instagram-valid.eml");
+const issuance = {
+  handleBlind: 123456789n,
+  expiryTs: 2_000_000_000n,
+  activeOwner: 101n,
+  issuerAddress: 202n,
+  chainId: 31_337n,
+};
 
 describe("Instagram input generation", () => {
   it("normalizes handles", () => {
@@ -20,9 +25,9 @@ describe("Instagram input generation", () => {
     assert.equal(packInstagramHandle("ab"), 0x6162n);
   });
 
-  it("generates constrained inputs for an English Instagram email", async () => {
-    const eml = readFileSync(fixturePath);
-    const result = await generateInstagramCircuitInputs(eml, "akinspur");
+  it("generates constrained inputs for the signed English Instagram ownership footer", async () => {
+    const verifiedDkim = await loadVerifiedInstagramFixture();
+    const result = generateInstagramCircuitInputsFromVerifiedDkim(verifiedDkim, "akinspur", issuance);
     assert.equal(result.metadata.normalizedHandle, "akinspur");
     assert.equal(result.metadata.template, "english");
     assert.equal(result.metadata.handleLen, 8);
@@ -32,13 +37,27 @@ describe("Instagram input generation", () => {
     assert.ok(result.inputs.body);
     assert.equal("decoded_body" in result.inputs, false);
     assert.ok(result.inputs.partial_body_hash);
+    assert.equal(result.inputs.handle_blind, issuance.handleBlind.toString());
+    assert.equal(result.inputs.expiry_ts, issuance.expiryTs.toString());
+    assert.equal(result.inputs.active_owner, issuance.activeOwner.toString());
+    assert.equal(result.inputs.issuer_address, issuance.issuerAddress.toString());
+    assert.equal(result.inputs.chain_id, issuance.chainId.toString());
   });
 
   it("rejects a claimed handle that is not in the signed body", async () => {
-    const eml = readFileSync(fixturePath);
-    await assert.rejects(
-      () => generateInstagramCircuitInputs(eml, "differenthandle"),
+    const verifiedDkim = await loadVerifiedInstagramFixture();
+    assert.throws(
+      () => generateInstagramCircuitInputsFromVerifiedDkim(verifiedDkim, "differenthandle", issuance),
       /Could not find|does not contain/,
+    );
+  });
+
+  it("fails closed on an unsupported DKIM preprocessing profile", async () => {
+    const verifiedDkim = await loadVerifiedInstagramFixture();
+    const unsupported = { ...verifiedDkim, format: "relaxed/relaxed" };
+    assert.throws(
+      () => generateInstagramCircuitInputsFromVerifiedDkim(unsupported, "akinspur", issuance),
+      /Unsupported Instagram DKIM canonicalization/,
     );
   });
 });

@@ -5,13 +5,21 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const profileArgument = process.argv.find(argument => argument.startsWith("--profile="));
+const profile = profileArgument?.slice("--profile=".length) ?? "production";
+if (profile !== "development" && profile !== "production") {
+  throw new Error("Passport A2 artifact profile must be development or production.");
+}
+const circuitDirectory = profile === "development" ? "circuit-dev" : "circuit";
+const artifactName =
+  profile === "development" ? "magna_passport_wrapper_proof_dev" : "magna_passport_wrapper_proof";
 const generatedPath = resolve(
   repoRoot,
-  "packages/magna-passport-wrapper-proof/circuit/target/magna_passport_wrapper_proof.json",
+  `packages/magna-passport-wrapper-proof/${circuitDirectory}/target/${artifactName}.json`,
 );
 const committedPath = resolve(
   repoRoot,
-  "packages/magna-passport-wrapper-proof/circuit/bundle/magna_passport_wrapper_proof.json",
+  `packages/magna-passport-wrapper-proof/${circuitDirectory}/bundle/${artifactName}.json`,
 );
 const expectedParameters = [
   "zkpassport_outer_vkey",
@@ -28,6 +36,11 @@ const expectedParameters = [
   "age_min_bound",
   "age_max_bound",
   "bind_data",
+  "facematch_root_key_leaf",
+  "facematch_environment",
+  "facematch_app_id_hash",
+  "facematch_integrity_public_key_hash",
+  "facematch_mode",
   "credential_valid_until",
   "action",
   "issuer",
@@ -64,11 +77,14 @@ const bundle = {
 };
 const bundleBytes = Buffer.from(JSON.stringify(bundle));
 const bundleHash = createHash("sha256").update(bundleBytes).digest("hex");
-const expectedBundleHash = "562cc3ad7b512e6b0ad966313c43e2c497bb80747a0df822f07b87520ae7e91f";
+const expectedBundleHash =
+  profile === "development"
+    ? "b952eb6435ac847e6dc87e5400b5e81703c2537629b56bab1a550a4561eca4c4"
+    : "a7093ad57c0a5cfcb073134d7ed0907067e9b253b11f929fd84b4a321179cea7";
 if (bundleHash !== expectedBundleHash) {
   throw new Error(`Refusing to sync unpinned Passport A2 bundle hash ${bundleHash}.`);
 }
 
 mkdirSync(dirname(committedPath), { recursive: true });
 writeFileSync(committedPath, bundleBytes);
-console.log(`Synced deterministic Passport A2 artifact to ${committedPath}`);
+console.log(`Synced deterministic Passport A2 ${profile} artifact to ${committedPath}`);

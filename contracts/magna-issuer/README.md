@@ -9,10 +9,13 @@
   - multi-constraint policy evaluation via `magna-lib`
   - revocation nullifier non-inclusion proof
   - public metering enqueue
-- Private `recover()` flow that:
-  - spends `RecoveryNote`
-  - emits kill-switch nullifier
-  - re-mints fresh status/recovery (and optional credential refresh)
+- Proof-bound rooted recovery that:
+  - consumes an authenticated L1→L2 message from an immutable Ethereum recovery portal
+  - binds the deployment, destination, nonce, message secret, root, claims, and credential expiry
+  - spends `RootRecoveryNote` and emits the root kill-switch nullifier
+  - atomically mints the complete rooted passport note set for the approved destination
+- The generic rootless `recover()` entrypoint has been removed. The orchestrator has no V3
+  recovery authority.
 
 ## Current assumptions
 
@@ -78,24 +81,29 @@ Only a holder who can produce the required private note witness and satisfy the
 contract call constraints can trigger the corresponding nullifier creation in
 private execution.
 
-### Which notes are nullified when recovery runs?
+### Which notes are nullified when rooted recovery runs?
 
 Nullification is **not "all note types at once"**:
 
-- The consumed `RecoveryNote` is nullified by spending that note in `recover(...)`.
-- The emitted kill-switch nullifier (`H(secret, type, claims_hash; ds)`) marks the
-  prior `StatusNote` lineage as revoked for `verify(...)` checks.
-- The old `CredentialNote` is not directly spent in `recover(...)`, but it becomes
-  non-usable in practice because `verify(...)` requires a valid non-revoked
-  status path tied to the same `(type, claims_hash)` scope.
+- The settled `RootRecoveryNote` is nullified in `recover_root_v3(...)`.
+- The emitted root kill-switch nullifier marks the prior root lineage revoked for linked verifies.
+- The canonical Inbox message is consumed exactly once; a second consumption fails.
+- Old linked credential notes are not directly spent, but they cannot verify against the killed
+  root lineage.
 
 ## Recovery ownership invariant
 
-After `recover(...)`, the rotated `RecoveryNote` is re-minted to
-`self.msg_sender()` (ghost owner), while `StatusNote` (and optional credential)
-are minted to `new_active_owner`.
+After `recover_root_v3(...)`, the rotated `RootRecoveryNote` is re-minted to
+`self.msg_sender()` (Ghost owner), while `RootStatusNote` is minted to
+the proof-bound destination. The same transaction also mints fresh root authority and linked
+passport credential/status/recovery notes to that destination.
 
 This is a deliberate separation of daily-use vs break-glass control.
+
+The Ghost call presents the recovery nonce, authenticated claims and expiry, message secret, and
+canonical Inbox leaf index. The contract recomputes the V3 intent and authorization from its anchor
+chain/version, immutable portal, issuer address, destination, and secret hash, then consumes the
+message from that portal. Neither the orchestrator nor the Magna API can create this authorization.
 
 ## TestEnvironment note
 

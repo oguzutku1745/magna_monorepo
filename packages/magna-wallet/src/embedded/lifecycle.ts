@@ -1,5 +1,6 @@
 import { getInitialTestAccountsData, INITIAL_TEST_SIGNING_KEYS } from "@aztec/accounts/testing";
 import { getSchnorrAccountContractAddress } from "@aztec/accounts/schnorr";
+import { deriveSecretKeyFromSigningKey } from "@aztec/accounts/utils";
 import { AztecAddress } from "@aztec/aztec.js/addresses";
 import type { Account } from "@aztec/aztec.js/account";
 import { createAztecNodeClient, waitForNode } from "@aztec/aztec.js/node";
@@ -148,17 +149,6 @@ async function getChainInfo(nodeUrl: string): Promise<ChainInfo> {
   };
 }
 
-function getWebCrypto(): Crypto {
-  if (typeof globalThis !== "undefined" && globalThis.crypto) {
-    return globalThis.crypto;
-  }
-  throw new Error("Web Crypto API is not available in this runtime.");
-}
-
-function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-}
-
 function pickReusableManagedAccount(accounts: WalletAccount[], alias: string): WalletAccount | null {
   const normalizedAlias = alias.trim();
   if (normalizedAlias) {
@@ -200,6 +190,22 @@ export type DeploymentFundingOptions = {
   fromAddress?: string;
 };
 
+/**
+ * Aztec 5.1's pipelined local-network fee test uses a padding value of 30 for
+ * setup transactions. The upstream test documents that a setup/account-deploy
+ * transaction can observe roughly a 20x fee increase between the PXE snapshot
+ * and checkpoint inclusion under proposer pipelining. Keep this local-test
+ * override separate from the SDK's production/default fee policy.
+ *
+ * Source in the pinned 5.1.0 image:
+ * end-to-end/single-node/fees/fee_settings.test.ts (PR #23150 regression setup).
+ */
+export const LOCAL_PIPELINED_MIN_FEE_PADDING = 30;
+
+export function configureLocalTestFeePadding(wallet: EmbeddedWallet): void {
+  wallet.setMinFeePadding(LOCAL_PIPELINED_MIN_FEE_PADDING);
+}
+
 export async function readAccountInitializationStatus(
   wallet: EmbeddedWallet,
   address: AztecAddress,
@@ -214,13 +220,16 @@ export async function ensureAccountManagerDeployed(
   accountManager: AccountManager,
   funding?: DeploymentFundingOptions,
 ): Promise<AccountDeploymentResult> {
+  if (funding?.localTestAccountIndex !== undefined) {
+    configureLocalTestFeePadding(wallet);
+  }
   const initializationStatus = await readAccountInitializationStatus(wallet, accountManager.address);
   if (initializationStatus === ContractInitializationStatus.INITIALIZED) {
     return { isReady: true };
   }
   let feePayerAddress: AztecAddress | undefined;
   if (funding?.fromAddress) {
-    feePayerAddress = AztecAddress.fromString(funding.fromAddress);
+    feePayerAddress = AztecAddress.fromStringUnsafe(funding.fromAddress);
   } else if (funding?.localTestAccountIndex !== undefined) {
     feePayerAddress = await ensureImportedLocalTestAccountAddress(wallet, funding.localTestAccountIndex);
   }
@@ -296,7 +305,7 @@ type ExternalWalletCapabilityGrant = {
   grantedCapabilityTypes: string[];
 };
 
-function createExternalWalletCapabilityManifest(appId: string): AppCapabilities {
+function createExternalWalletCapabilityManifest(): AppCapabilities {
   const url = typeof window !== "undefined" ? window.location.origin : undefined;
   return {
     version: CAPABILITY_VERSION,
@@ -342,7 +351,7 @@ function createExternalWalletCapabilityManifest(appId: string): AppCapabilities 
 }
 
 async function requestExternalWalletCapabilities(wallet: Wallet, appId: string): Promise<ExternalWalletCapabilityGrant> {
-  const manifest = createExternalWalletCapabilityManifest(appId);
+  const manifest = createExternalWalletCapabilityManifest();
   logExternalWalletFlow("capabilities:request:start", {
     appId,
     capabilityTypes: manifest.capabilities.map(capability => capability.type),
@@ -487,6 +496,24 @@ async function generateValidSecp256r1PrivateKey(): Promise<Uint8Array> {
 export async function createEmbeddedWallet(nodeUrl: string, ephemeral: boolean): Promise<EmbeddedWallet> {
   const node = createAztecNodeClient(nodeUrl);
   await waitForNode(node);
+  if (ephemeral && typeof window !== "undefined") {
+    // Aztec 5.1's BrowserEmbeddedWallet only applies `ephemeral` to the wallet
+    // database. Its lazy PXE factory still opens the default persistent
+    // `pxe_data_<network>-v13` OPFS pool unless a store is supplied explicitly.
+    // A transient Ghost wallet must therefore provide its own in-memory PXE
+    // store or it will contend with the already-open passkey wallet PXE.
+    const { openTmpStore } = await import("@aztec/kv-store/sqlite-opfs");
+    const pxeStore = await openTmpStore(true);
+    try {
+      return await EmbeddedWallet.create(node, {
+        ephemeral: true,
+        pxe: { store: pxeStore },
+      });
+    } catch (error) {
+      await pxeStore.close().catch(() => undefined);
+      throw error;
+    }
+  }
   return EmbeddedWallet.create(node, { ephemeral });
 }
 
@@ -557,7 +584,9 @@ export async function createManagedAccount(
   alias: string,
 ): Promise<AccountManager> {
   if (flavor === "schnorr") {
-    return wallet.createSchnorrAccount(Fr.random(), Fr.random(), undefined, alias);
+    const signingKey = Fq.random();
+    const secret = await deriveSecretKeyFromSigningKey(signingKey);
+    return wallet.createSchnorrAccount(secret, Fr.random(), signingKey, alias);
   }
 
   const signingKey = await generateValidSecp256r1PrivateKey();
@@ -832,6 +861,14 @@ function fieldFromHexString(value: string, label: string): Fr {
   }
 }
 
+function signingKeyFromHexString(value: string, label: string): Fq {
+  try {
+    return Fq.fromHexString(value.startsWith("0x") ? value : `0x${value}`);
+  } catch {
+    throw new Error(`${label} must be a valid Grumpkin scalar hex string.`);
+  }
+}
+
 export async function prepareGhostAccountOnWallet(
   wallet: EmbeddedWallet,
   options: GhostAccountLifecycleOptions,
@@ -846,19 +883,19 @@ export async function prepareGhostAccountOnWallet(
     credentialType: options.credentialType,
     derivationVersion,
   });
-  const derivedAddress = await getSchnorrAccountContractAddress(
-    fieldFromHexString(ghostMaterial.secretHex, "Ghost secret"),
-    fieldFromHexString(ghostMaterial.saltHex, "Ghost salt"),
-  );
+  const signingKey = signingKeyFromHexString(ghostMaterial.signingKeyHex, "Ghost signing key");
+  const secret = await deriveSecretKeyFromSigningKey(signingKey);
+  const salt = fieldFromHexString(ghostMaterial.saltHex, "Ghost salt");
+  const derivedAddress = await getSchnorrAccountContractAddress(signingKey, salt, secret);
   const ghostAddress = derivedAddress.toString();
   if (options.deploymentFromAddress?.trim()) {
-    await wallet.registerSender(AztecAddress.fromString(options.deploymentFromAddress.trim()), "magna-ghost-fee-payer");
+    await wallet.registerSender(AztecAddress.fromStringUnsafe(options.deploymentFromAddress.trim()), "magna-ghost-fee-payer");
   }
   const alias = options.alias?.trim() || `magna-ghost-${options.credentialType}`;
   const ghostManager = await wallet.createSchnorrAccount(
-    fieldFromHexString(ghostMaterial.secretHex, "Ghost secret"),
-    fieldFromHexString(ghostMaterial.saltHex, "Ghost salt"),
-    undefined,
+    secret,
+    salt,
+    signingKey,
     alias,
   );
   if (ghostManager.address.toString() !== ghostAddress) {
@@ -899,7 +936,15 @@ export async function createTransientGhostWalletSession(
   options: GhostAccountLifecycleOptions,
 ): Promise<TransientGhostWalletSession> {
   const wallet = await createEmbeddedWallet(options.nodeUrl, true);
-  const lifecycle = await prepareGhostAccountOnWallet(wallet, options);
+  let lifecycle: GhostAccountLifecycleResult;
+  try {
+    lifecycle = await prepareGhostAccountOnWallet(wallet, options);
+  } catch (error) {
+    // A failed fee-payer/deployment attempt must not strand the transient PXE,
+    // especially because recovery may immediately retry with another payer.
+    await wallet.stop().catch(() => undefined);
+    throw error;
+  }
   let disposed = false;
   return {
     wallet,

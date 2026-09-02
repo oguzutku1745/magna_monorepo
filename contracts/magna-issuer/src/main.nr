@@ -7,6 +7,7 @@ use aztec::macros::aztec;
 #[aztec]
 pub contract MagnaIssuer {
     use aztec::{
+        hash::compute_secret_hash,
         history::nullifier::assert_nullifier_did_not_exist_by,
         macros::{functions::{external, initializer, internal, only_self, view}, storage::storage},
         messages::delivery::MessageDelivery,
@@ -20,7 +21,7 @@ pub contract MagnaIssuer {
         },
         oracle::random::random,
         protocol::{
-            address::AztecAddress,
+            address::{AztecAddress, EthAddress},
             hash::{compute_siloed_nullifier, poseidon2_hash_with_separator},
             traits::ToField,
         },
@@ -30,6 +31,7 @@ pub contract MagnaIssuer {
     use crate::internal::{
         claims::{
             compute_instagram_claims_hash,
+            compute_instagram_handle_commitment,
             compute_passport_claims_hash,
             compute_passport_claims_hash_v2,
             compute_passport_expiry_commitment,
@@ -37,6 +39,7 @@ pub contract MagnaIssuer {
         },
         constants::{
             MAGNA_CLAIMS_DS,
+            MAGNA_INSTAGRAM_HANDLE_COMMITMENT_DS,
             MAGNA_PASSPORT_EXPIRY_COMMITMENT_DS,
             MAGNA_PASSPORT_NATIONALITY_COMMITMENT_DS,
             MAGNA_REVOCATION_DS,
@@ -61,10 +64,15 @@ pub contract MagnaIssuer {
             compute_root_revocation_nullifier,
         },
     };
+    use magna_recovery_v3_protocol::{
+        compute_recovery_authorization,
+        compute_recovery_intent,
+    };
     use magna_verify_meter_hook::MagnaVerifyMeterHook;
 
     use magna_lib::{
         InstagramClaims,
+        InstagramCommittedClaimsWitness,
         PassportCommittedClaimsWitness,
         PassportClaims,
         Policy,
@@ -113,6 +121,7 @@ pub contract MagnaIssuer {
         sponsored_credential_type_mask: DelayedPublicMutable<u64, MAGNA_SPONSOR_POLICY_DELAY_SECONDS, Context>,
         verify_meter_count: PublicMutable<u64, Context>,
         root_authority_refresh_authorizations: Map<Field, PublicImmutable<bool, Context>, Context>,
+        recovery_portal: PublicImmutable<EthAddress, Context>,
         credential_notes: Owned<PrivateSet<CredentialNote, Context>, Context>,
         status_notes: Owned<PrivateSet<StatusNote, Context>, Context>,
         recovery_notes: Owned<PrivateSet<RecoveryNote, Context>, Context>,
@@ -131,6 +140,13 @@ pub contract MagnaIssuer {
         self.storage.verify_meter_hook.initialize(verify_meter_hook_address);
         self.storage.sponsored_credential_type_mask.schedule_value_change(0);
         self.storage.verify_meter_count.write(0);
+    }
+
+    #[external("public")]
+    fn initialize_recovery_portal(recovery_portal: EthAddress) {
+        assert_orchestrator_sender(self.msg_sender(), self.storage.orchestrator.read());
+        assert(!recovery_portal.is_zero(), "recovery portal must be non-zero");
+        self.storage.recovery_portal.initialize(recovery_portal);
     }
 
     #[external("public")]
@@ -503,7 +519,7 @@ pub contract MagnaIssuer {
         policy: Policy,
         hinted_credential: HintedNote<CredentialNote>,
         hinted_status: HintedNote<StatusNote>,
-        handle_hash: Field,
+        claims_witness: InstagramCommittedClaimsWitness,
         sponsor_slot: u8,
     ) {
         self.internal.verify_instagram_for_caller(
@@ -511,7 +527,7 @@ pub contract MagnaIssuer {
             policy,
             hinted_credential,
             hinted_status,
-            handle_hash,
+            claims_witness,
             sponsor_slot,
             false,
         );
@@ -575,7 +591,7 @@ pub contract MagnaIssuer {
         policy: Policy,
         hinted_credential: HintedNote<CredentialNote>,
         hinted_status: HintedNote<StatusNote>,
-        handle_hash: Field,
+        claims_witness: InstagramCommittedClaimsWitness,
         sponsor_slot: u8,
     ) {
         assert(caller != AztecAddress::zero(), "caller must be non-zero");
@@ -588,7 +604,7 @@ pub contract MagnaIssuer {
             policy,
             hinted_credential,
             hinted_status,
-            handle_hash,
+            claims_witness,
             sponsor_slot,
             true,
         );
@@ -761,7 +777,7 @@ pub contract MagnaIssuer {
         hinted_root_authority: HintedNote<RootAuthorityNote>,
         hinted_credential: HintedNote<LinkedCredentialNote>,
         hinted_status: HintedNote<LinkedStatusNote>,
-        handle_hash: Field,
+        claims_witness: InstagramCommittedClaimsWitness,
         sponsor_slot: u8,
     ) {
         self.internal.verify_linked_instagram_for_caller(
@@ -771,7 +787,7 @@ pub contract MagnaIssuer {
             hinted_root_authority,
             hinted_credential,
             hinted_status,
-            handle_hash,
+            claims_witness,
             sponsor_slot,
             false,
         );
@@ -845,7 +861,7 @@ pub contract MagnaIssuer {
         hinted_root_authority: HintedNote<RootAuthorityNote>,
         hinted_credential: HintedNote<LinkedCredentialNote>,
         hinted_status: HintedNote<LinkedStatusNote>,
-        handle_hash: Field,
+        claims_witness: InstagramCommittedClaimsWitness,
         sponsor_slot: u8,
     ) {
         assert(caller != AztecAddress::zero(), "caller must be non-zero");
@@ -860,7 +876,7 @@ pub contract MagnaIssuer {
             hinted_root_authority,
             hinted_credential,
             hinted_status,
-            handle_hash,
+            claims_witness,
             sponsor_slot,
             true,
         );
@@ -1058,25 +1074,80 @@ pub contract MagnaIssuer {
     }
 
     #[external("private")]
-    fn recover(
-        hinted_recovery: HintedNote<RecoveryNote>,
-        new_active_owner: AztecAddress,
-        remint_credential: bool,
+    fn recover_root_v3(
+        hinted_root_recovery: HintedNote<RootRecoveryNote>,
+        destination: AztecAddress,
+        recovery_nonce: Field,
+        claims_hash: Field,
+        credential_valid_until: u64,
+        message_secret: Field,
+        message_leaf_index: Field,
     ) {
-        self.internal.recover_for_caller(
-            self.msg_sender(),
-            hinted_recovery,
-            new_active_owner,
-            remint_credential,
-        );
-    }
+        let ghost_owner = self.msg_sender();
+        assert(destination != AztecAddress::zero(), "recovery destination required");
+        assert(recovery_nonce != 0, "recovery nonce required");
+        assert(claims_hash != 0, "recovery claims hash required");
+        assert(message_secret != 0, "recovery message secret required");
+        let header = self.context.get_anchor_block_header();
+        let anchor_ts = header.global_variables.timestamp;
+        assert(credential_valid_until > anchor_ts, "recovered credential is expired");
 
-    #[external("private")]
-    fn recover_root(hinted_root_recovery: HintedNote<RootRecoveryNote>, new_active_owner: AztecAddress) {
+        let recovery_portal = self.storage.recovery_portal.read();
+        let message_secret_hash = compute_secret_hash([message_secret]);
+        let recovery_intent = compute_recovery_intent(
+            header.global_variables.chain_id,
+            recovery_portal.to_field(),
+            header.global_variables.version,
+            header.global_variables.chain_id,
+            self.address.to_field(),
+            destination.to_field(),
+            recovery_nonce,
+            message_secret_hash,
+        );
+        let recovery_authorization = compute_recovery_authorization(
+            recovery_intent,
+            hinted_root_recovery.note.root_commitment,
+            claims_hash,
+            credential_valid_until,
+        );
+
+        self.context.consume_l1_to_l2_message(
+            recovery_authorization,
+            [message_secret],
+            recovery_portal,
+            message_leaf_index,
+        );
+
         self.internal.recover_root_for_caller(
-            self.msg_sender(),
+            ghost_owner,
             hinted_root_recovery,
-            new_active_owner,
+            destination,
+        );
+
+        // The root rotation helper intentionally handles only the shared root
+        // status/recovery pair. V3 completes the same rooted passport note set
+        // as issuance in this transaction, eliminating recovery_pending.
+        // SAFETY: sampled privately and only committed into the
+        // destination-owned authority note.
+        let authority_revocation_secret = unsafe { random() };
+        self.internal.mint_root_authority_note(
+            destination,
+            hinted_root_recovery.note.root_commitment,
+            claims_hash,
+            credential_valid_until,
+            authority_revocation_secret,
+        );
+        // SAFETY: sampled privately and only committed into the
+        // destination-owned linked status/recovery notes.
+        let linked_revocation_secret = unsafe { random() };
+        self.internal.mint_linked_credential_notes(
+            destination,
+            ghost_owner,
+            hinted_root_recovery.note.root_commitment,
+            claims_hash,
+            1,
+            credential_valid_until,
+            linked_revocation_secret,
         );
     }
 
@@ -1342,7 +1413,7 @@ pub contract MagnaIssuer {
         policy: Policy,
         hinted_credential: HintedNote<CredentialNote>,
         hinted_status: HintedNote<StatusNote>,
-        handle_hash: Field,
+        claims_witness: InstagramCommittedClaimsWitness,
         sponsor_slot: u8,
         force_sponsored: bool,
     ) {
@@ -1358,16 +1429,24 @@ pub contract MagnaIssuer {
         );
         assert(hinted_credential.note.claims_hash == hinted_status.note.claims_hash, "claims mismatch");
 
+        let handle_commitment = compute_instagram_handle_commitment(
+            claims_witness.handle_hash,
+            claims_witness.handle_blind,
+            MAGNA_INSTAGRAM_HANDLE_COMMITMENT_DS,
+        );
         let claims_hash = compute_instagram_claims_hash(
-            SCHEMA_VERSION_V1,
+            SCHEMA_VERSION_V2,
             hinted_credential.note.credential_type,
-            handle_hash,
+            handle_commitment,
             hinted_credential.note.expiry_ts,
             MAGNA_CLAIMS_DS,
         );
         assert(claims_hash == hinted_credential.note.claims_hash, "claims hash mismatch");
 
-        let claims = InstagramClaims { handle_hash, expiry_ts: hinted_credential.note.expiry_ts };
+        let claims = InstagramClaims {
+            handle_hash: claims_witness.handle_hash,
+            expiry_ts: hinted_credential.note.expiry_ts,
+        };
         require_policy_matches_instagram(policy, hinted_credential.note.credential_type, claims);
 
         let verify_meter_hook = self.storage.verify_meter_hook.read();
@@ -1695,7 +1774,7 @@ pub contract MagnaIssuer {
         hinted_root_authority: HintedNote<RootAuthorityNote>,
         hinted_credential: HintedNote<LinkedCredentialNote>,
         hinted_status: HintedNote<LinkedStatusNote>,
-        handle_hash: Field,
+        claims_witness: InstagramCommittedClaimsWitness,
         sponsor_slot: u8,
         force_sponsored: bool,
     ) {
@@ -1728,16 +1807,24 @@ pub contract MagnaIssuer {
         );
         assert(hinted_credential.note.claims_hash == hinted_status.note.claims_hash, "linked claims mismatch");
 
+        let handle_commitment = compute_instagram_handle_commitment(
+            claims_witness.handle_hash,
+            claims_witness.handle_blind,
+            MAGNA_INSTAGRAM_HANDLE_COMMITMENT_DS,
+        );
         let claims_hash = compute_instagram_claims_hash(
-            SCHEMA_VERSION_V1,
+            SCHEMA_VERSION_V2,
             hinted_credential.note.credential_type,
-            handle_hash,
+            handle_commitment,
             hinted_credential.note.expiry_ts,
             MAGNA_CLAIMS_DS,
         );
         assert(claims_hash == hinted_credential.note.claims_hash, "claims hash mismatch");
 
-        let claims = InstagramClaims { handle_hash, expiry_ts: hinted_credential.note.expiry_ts };
+        let claims = InstagramClaims {
+            handle_hash: claims_witness.handle_hash,
+            expiry_ts: hinted_credential.note.expiry_ts,
+        };
         require_policy_matches_instagram(policy, hinted_credential.note.credential_type, claims);
 
         let verify_meter_hook = self.storage.verify_meter_hook.read();

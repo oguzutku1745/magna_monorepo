@@ -1,12 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  clearPendingRecoveryV3Finalization,
   loadCredentialRefs,
+  loadPendingRecoveryV3Finalization,
+  loadRecoveryTargetProfile,
   loadWalletProfile,
   readPassportA2Witness,
   reconcileStoredChainFingerprint,
   refsForOwner,
   saveCredentialRefs,
   savePassportA2Witness,
+  savePendingRecoveryV3Finalization,
+  saveRecoveryTargetProfile,
   saveWalletProfile,
   upsertCredentialRef,
   type PassportCommittedClaimsV2LocalWitness,
@@ -92,5 +97,54 @@ describe("credential ref storage", () => {
     expect(loadCredentialRefs()).toEqual([]);
     expect(loadWalletProfile()).toBeNull();
     expect(readPassportA2Witness(ref)).toEqual(witness);
+  });
+
+  it("persists and clears non-secret Recovery V3 finalization state", () => {
+    const recoveredCredential = passportRef({
+      id: "recovered",
+      ownerAddress: "0xtarget",
+      claimsHash: "456",
+      issuanceKind: "a2",
+      passportCommittedClaimsV2Witness: witness,
+    });
+    savePendingRecoveryV3Finalization({
+      version: 1,
+      phase: "submitted",
+      sourceCredentialId: "source",
+      target: {
+        address: "0xtarget",
+        walletKind: "passkey",
+        publicKey: `04${"01".repeat(32)}${"02".repeat(32)}`,
+        createdAt: "2026-08-27T00:00:00.000Z",
+      },
+      recoveredCredential,
+      recoveryTxHash: "0xtx",
+      createdAt: "2026-08-27T00:00:00.000Z",
+      updatedAt: "2026-08-27T00:01:00.000Z",
+    });
+
+    expect(loadPendingRecoveryV3Finalization()).toMatchObject({
+      phase: "submitted",
+      sourceCredentialId: "source",
+      recoveryTxHash: "0xtx",
+      recoveredCredential: { id: "recovered", ownerAddress: "0xtarget" },
+    });
+
+    clearPendingRecoveryV3Finalization();
+    expect(loadPendingRecoveryV3Finalization()).toBeNull();
+  });
+
+  it("persists the non-secret recovery target across frontend restarts", () => {
+    const target = {
+      address: "0xtarget",
+      label: "Magna recovery · Alice",
+      walletKind: "passkey",
+      createdAt: "2026-08-27T00:00:00.000Z",
+      publicKey: `04${"01".repeat(64)}`,
+      deploymentStatus: "deployed",
+    };
+
+    saveRecoveryTargetProfile(target);
+    expect(loadRecoveryTargetProfile()).toEqual(target);
   });
 });

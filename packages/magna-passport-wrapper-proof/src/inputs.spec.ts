@@ -6,6 +6,7 @@ import {
   getAgeParameterCommitment,
   getBindParameterCommitment,
   getDiscloseParameterCommitment,
+  getFacematchParameterCommitment,
 } from "@zkpassport/utils";
 import { buildPassportWrapperInputs } from "./inputs.js";
 import { parsePassportWrapperPublicInputs } from "./public-inputs.js";
@@ -13,6 +14,9 @@ import {
   PASSPORT_A2_INNER_PROOF_FIELD_COUNT,
   PASSPORT_A2_INNER_VKEY_FIELD_COUNT,
   PASSPORT_A2_INNER_VKEY_HASH,
+  PASSPORT_A2_DEVELOPMENT_OPRF_PUBLIC_KEY_HASH,
+  PASSPORT_A2_OPRF_PUBLIC_KEY_HASH,
+  type PassportA2ProofProfile,
   type PassportWrapperLocalWitness,
   type RegistryClientLike,
 } from "./types.js";
@@ -36,7 +40,7 @@ function replaceOuterPublicInput(
   };
 }
 
-async function fixture(): Promise<{
+async function fixture(profile: PassportA2ProofProfile = "production"): Promise<{
   witness: PassportWrapperLocalWitness;
   registryClient: RegistryClientLike;
 }> {
@@ -57,10 +61,20 @@ async function fixture(): Promise<{
     bytes[65 + index] = value;
   });
   const customData = "0x" + "12".repeat(32);
-  const [disclose, age, bind] = await Promise.all([
+  const facematchRootKeyLeaf =
+    0x2532418a107c5306fa8308c22255792cf77e4a290cbce8a840a642a3e591340bn;
+  const facematchAppIdHash =
+    0x1fa73686cf510f8f85757b0602de0dd72a13e68ae2092462be8b72662e7f179bn;
+  const [disclose, age, bind, facematch] = await Promise.all([
     getDiscloseParameterCommitment(mask, bytes),
     getAgeParameterCommitment(18, 0),
     getBindParameterCommitment(formatBoundData({ custom_data: customData })),
+    getFacematchParameterCommitment(
+      facematchRootKeyLeaf,
+      1n,
+      facematchAppIdHash,
+      profile === "development" ? 1n : 2n,
+    ),
   ]);
   const publicInputs = [
     11n,
@@ -71,14 +85,20 @@ async function fixture(): Promise<{
     disclose,
     age,
     bind,
-    0n,
+    facematch,
+    profile === "development" ? 2n : 1n,
     999n,
-    0n,
+    BigInt(
+      profile === "development"
+        ? PASSPORT_A2_DEVELOPMENT_OPRF_PUBLIC_KEY_HASH
+        : PASSPORT_A2_OPRF_PUBLIC_KEY_HASH,
+    ),
   ];
-  const proof = [
-    ...publicInputs.map(fieldHex),
-    ...Array<string>(PASSPORT_A2_INNER_PROOF_FIELD_COUNT).fill(fieldHex(0)),
-  ].join("");
+  const privateProofFields = Array<string>(PASSPORT_A2_INNER_PROOF_FIELD_COUNT).fill(fieldHex(0));
+  // getProofData returns private proof fields as unprefixed hexadecimal. Use
+  // alphabetic hex digits so a mistaken decimal BigInt conversion cannot pass.
+  privateProofFields[0] = fieldHex(0xabcdefn);
+  const proof = [...publicInputs.map(fieldHex), ...privateProofFields].join("");
   const registryClient: RegistryClientLike = {
     getCircuitManifest: async () => ({ version: "0.20.0" }),
     getPackagedCircuit: async () => ({
@@ -88,9 +108,10 @@ async function fixture(): Promise<{
   };
   return {
     witness: {
+      profile,
       zkPassportOuterProof: {
         proof,
-        name: "outer_count_6",
+        name: "outer_count_7",
         version: "0.20.0",
         vkeyHash: PASSPORT_A2_INNER_VKEY_HASH,
       },
@@ -99,6 +120,13 @@ async function fixture(): Promise<{
       minAgeProven: 18,
       agePredicate: { minAge: 18, maxAge: 0 },
       bind: { customData },
+      facematch: {
+        rootKeyLeaf: facematchRootKeyLeaf,
+        environment: "production",
+        appIdHash: facematchAppIdHash,
+        integrityPublicKeyHash: 0n,
+        mode: profile === "development" ? "regular" : "strict",
+      },
       credentialValidUntil: expiryTs - 86_400n,
       nationalityBlind: 111n,
       expiryBlind: 222n,
@@ -115,6 +143,14 @@ async function fixture(): Promise<{
 }
 
 describe("Passport A2 inputs", () => {
+  it("fails closed when the proof profile is absent", async () => {
+    const { witness, registryClient } = await fixture();
+    await assert.rejects(
+      () => buildPassportWrapperInputs({ ...witness, profile: undefined } as never, { registryClient }),
+      /explicitly development or production/,
+    );
+  });
+
   it("keeps the inner proof and scoped nullifier private", async () => {
     const { witness, registryClient } = await fixture();
     const built = await buildPassportWrapperInputs(witness, { registryClient });
@@ -122,6 +158,10 @@ describe("Passport A2 inputs", () => {
     assert.equal(
       (built.inputs.zkpassport_outer_proof as unknown[]).length,
       PASSPORT_A2_INNER_PROOF_FIELD_COUNT,
+    );
+    assert.equal(
+      (built.inputs.zkpassport_outer_proof as string[])[0],
+      0xabcdefn.toString(),
     );
     assert.equal(
       (built.inputs.zkpassport_outer_vkey as unknown[]).length,
@@ -186,8 +226,55 @@ describe("Passport A2 inputs", () => {
     assert.equal(baseline.publicInputs.includes("11"), false);
 
     await assert.rejects(
-      () => buildPassportWrapperInputs(replaceOuterPublicInput(witness, 8, 4n), { registryClient }),
-      /invalid nullifier type/,
+      () => buildPassportWrapperInputs(replaceOuterPublicInput(witness, 9, 0n), { registryClient }),
+      /production salted/,
+    );
+  });
+
+  it("pins the OPRF key and strict production facematch", async () => {
+    const { witness, registryClient } = await fixture();
+    const built = await buildPassportWrapperInputs(witness, { registryClient });
+    assert.equal(
+      built.metadata.registryContext.oprfPublicKeyHash,
+      PASSPORT_A2_OPRF_PUBLIC_KEY_HASH,
+    );
+
+    await assert.rejects(
+      () => buildPassportWrapperInputs(replaceOuterPublicInput(witness, 11, 123n), { registryClient }),
+      /unpinned OPRF public key/,
+    );
+    await assert.rejects(
+      () =>
+        buildPassportWrapperInputs(
+          { ...witness, facematch: { ...witness.facematch, mode: "regular" } },
+          { registryClient },
+        ),
+      /production environment in strict mode/,
+    );
+  });
+
+  it("accepts only regular facematch and NON_SALTED_MOCK for the development profile", async () => {
+    const { witness, registryClient } = await fixture("development");
+    const built = await buildPassportWrapperInputs(witness, { registryClient });
+    assert.equal(built.metadata.registryContext.nullifierType, 2);
+    assert.equal(built.metadata.registryContext.oprfPublicKeyHash, "0");
+    assert.equal(built.inputs.facematch_mode, "1");
+
+    await assert.rejects(
+      () =>
+        buildPassportWrapperInputs(
+          { ...witness, facematch: { ...witness.facematch, mode: "strict" } },
+          { registryClient },
+        ),
+      /regular mode for the development profile/,
+    );
+    await assert.rejects(
+      () => buildPassportWrapperInputs(replaceOuterPublicInput(witness, 9, 1n), { registryClient }),
+      /official non-salted-mock/,
+    );
+    await assert.rejects(
+      () => buildPassportWrapperInputs(replaceOuterPublicInput(witness, 11, 1n), { registryClient }),
+      /zero OPRF public-key hash/,
     );
   });
 });

@@ -62,7 +62,7 @@ pub contract MagnaCompanyRightsRegistry {
             .concat(package_id_bytes)
             .concat(credit_nonce_bytes);
         let content_hash = sha256_to_field(payload_bytes);
-        self.context.consume_l1_to_l2_message(content_hash, secret, portal, message_leaf_index);
+        self.context.consume_l1_to_l2_message(content_hash, [secret], portal, message_leaf_index);
         let remaining = self.storage.remaining_verifies.at(sponsor).read();
         self.storage.remaining_verifies.at(sponsor).write(remaining + rights_amount);
         self.storage.last_credit_nonce.at(sponsor).write(credit_nonce);

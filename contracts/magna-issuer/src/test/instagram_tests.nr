@@ -1,7 +1,7 @@
 use crate::MagnaIssuer;
 use crate::internal::{
-    claims::{compute_instagram_claims_hash, compute_passport_claims_hash},
-    constants::{MAGNA_CLAIMS_DS, SCHEMA_VERSION_V1},
+    claims::{compute_instagram_claims_hash, compute_instagram_handle_commitment, compute_passport_claims_hash},
+    constants::{MAGNA_CLAIMS_DS, MAGNA_INSTAGRAM_HANDLE_COMMITMENT_DS, SCHEMA_VERSION_V1, SCHEMA_VERSION_V2},
 };
 use crate::test::setup::setup;
 use magna_lib::{
@@ -10,6 +10,7 @@ use magna_lib::{
     CLAIM_NONE,
     Constraint,
     InstagramClaims,
+    InstagramCommittedClaimsWitness,
     MAX_CONSTRAINTS,
     OP_EQ,
     OP_GTE,
@@ -21,6 +22,7 @@ use magna_lib::{
 
 global INSTAGRAM_CREDENTIAL_TYPE: u8 = 3;
 global INSTAGRAM_HANDLE_HASH: Field = 123456;
+global INSTAGRAM_HANDLE_BLIND: Field = 654321;
 global INSTAGRAM_EXPIRY_TS: u64 = 1_893_456_000;
 global ROOT_COMMITMENT: Field = 987654321;
 
@@ -40,13 +42,29 @@ fn instagram_policy() -> Policy {
 }
 
 fn instagram_claims_hash(handle_hash: Field) -> Field {
-    compute_instagram_claims_hash(
-        SCHEMA_VERSION_V1,
-        INSTAGRAM_CREDENTIAL_TYPE,
+    instagram_claims_hash_with_blind(handle_hash, INSTAGRAM_HANDLE_BLIND)
+}
+
+fn instagram_claims_hash_with_blind(handle_hash: Field, handle_blind: Field) -> Field {
+    let handle_commitment = compute_instagram_handle_commitment(
         handle_hash,
+        handle_blind,
+        MAGNA_INSTAGRAM_HANDLE_COMMITMENT_DS,
+    );
+    compute_instagram_claims_hash(
+        SCHEMA_VERSION_V2,
+        INSTAGRAM_CREDENTIAL_TYPE,
+        handle_commitment,
         INSTAGRAM_EXPIRY_TS,
         MAGNA_CLAIMS_DS,
     )
+}
+
+fn instagram_claims_witness(handle_hash: Field) -> InstagramCommittedClaimsWitness {
+    InstagramCommittedClaimsWitness {
+        handle_hash,
+        handle_blind: INSTAGRAM_HANDLE_BLIND,
+    }
 }
 
 fn passport_authority_claims_hash() -> Field {
@@ -88,6 +106,13 @@ unconstrained fn test_instagram_claims_hash_changes_when_handle_changes() {
 }
 
 #[test]
+unconstrained fn test_instagram_claims_hash_changes_when_blind_changes() {
+    let first = instagram_claims_hash_with_blind(INSTAGRAM_HANDLE_HASH, INSTAGRAM_HANDLE_BLIND);
+    let second = instagram_claims_hash_with_blind(INSTAGRAM_HANDLE_HASH, INSTAGRAM_HANDLE_BLIND + 1);
+    assert(first != second, "instagram handle blind must affect claims hash");
+}
+
+#[test]
 unconstrained fn test_verify_instagram_succeeds_for_matching_handle_hash() {
     let (mut env, issuer, orchestrator, active_owner, ghost_owner, _) = setup();
     let claims_hash = instagram_claims_hash(INSTAGRAM_HANDLE_HASH);
@@ -118,7 +143,7 @@ unconstrained fn test_verify_instagram_succeeds_for_matching_handle_hash() {
             instagram_policy(),
             hinted_credential,
             hinted_status,
-            INSTAGRAM_HANDLE_HASH,
+            instagram_claims_witness(INSTAGRAM_HANDLE_HASH),
             0,
         ),
     );
@@ -183,7 +208,7 @@ unconstrained fn test_verify_linked_instagram_succeeds_for_matching_handle_hash(
             hinted_root_authority,
             hinted_credential,
             hinted_status,
-            INSTAGRAM_HANDLE_HASH,
+            instagram_claims_witness(INSTAGRAM_HANDLE_HASH),
             0,
         ),
     );
@@ -270,7 +295,7 @@ unconstrained fn test_refresh_root_authority_keeps_linked_instagram_usable() {
             refreshed_root_authority,
             hinted_credential,
             hinted_status,
-            INSTAGRAM_HANDLE_HASH,
+            instagram_claims_witness(INSTAGRAM_HANDLE_HASH),
             0,
         ),
     );
@@ -307,7 +332,47 @@ unconstrained fn test_verify_instagram_rejects_mismatched_handle_hash() {
             instagram_policy(),
             hinted_credential,
             hinted_status,
-            INSTAGRAM_HANDLE_HASH + 1,
+            instagram_claims_witness(INSTAGRAM_HANDLE_HASH + 1),
+            0,
+        ),
+    );
+}
+
+#[test(should_fail_with = "claims hash mismatch")]
+unconstrained fn test_verify_instagram_rejects_mismatched_handle_blind() {
+    let (mut env, issuer, orchestrator, active_owner, ghost_owner, _) = setup();
+    let claims_hash = instagram_claims_hash(INSTAGRAM_HANDLE_HASH);
+
+    env.call_private(
+        orchestrator,
+        MagnaIssuer::at(issuer).register_credential(
+            active_owner,
+            ghost_owner,
+            claims_hash,
+            INSTAGRAM_CREDENTIAL_TYPE,
+            INSTAGRAM_EXPIRY_TS,
+        ),
+    );
+
+    let hinted_credential = env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).get_credential_hinted(active_owner, claims_hash),
+    );
+    let hinted_status = env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).get_status_hinted(active_owner, claims_hash),
+    );
+
+    env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).verify_instagram(
+            instagram_policy(),
+            hinted_credential,
+            hinted_status,
+            InstagramCommittedClaimsWitness {
+                handle_hash: INSTAGRAM_HANDLE_HASH,
+                handle_blind: INSTAGRAM_HANDLE_BLIND + 1,
+            },
             0,
         ),
     );

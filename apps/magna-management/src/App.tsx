@@ -1,36 +1,66 @@
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import QRCode from "react-qr-code";
-import type { PassportWrapperLocalWitness } from "@magna/passport-wrapper-proof";
+import type { PassportWrapperLocalWitness } from "@magna/passport-wrapper-proof/safe";
+import type { RecoveryWrapperLocalWitness } from "@magna/recovery-wrapper-proof/safe";
+import {
+  INSTAGRAM_V2_SCHEMA,
+  INSTAGRAM_V2_VALIDITY_SECONDS,
+  proveInstagramEmailInBrowser,
+} from "@magna/instagram-proof/browser";
 import {
   CredentialType,
+  computeInstagramClaimsHash,
+  computeInstagramHandleCommitment,
+  computeInstagramHandleHash,
   createTransientGhostWalletSession,
   createWebAuthnWalletSession,
+  clearEmbeddedPxeCacheForNode,
+  deriveGhostAccountPreview,
+  fundLocalFeeJuice,
+  prepareWebAuthnRecoveryTarget,
   loadStoredWebAuthnAccounts,
+  parseWebAuthnPublicKeyRecoveryBundle,
+  rememberWebAuthnWalletSessionAccount,
+  serializeWebAuthnPublicKeyRecoveryBundle,
   MagnaBrowserClient,
   isRootedPassportHints,
   packAlpha3,
+  readLocalFeeJuiceBalance,
   type DiscoveredMagnaCredentialRef,
   type PassportHints,
   type PassportCommittedClaimsWitness,
   type RootedPassportHints,
+  type RootedCredentialChainState,
   type SponsorRightsSnapshot,
   type SponsorRuntimeStatus,
+  type StoredWebAuthnAccount,
   type WalletSession,
+  SCOPED_GHOST_DERIVATION_VERSION,
 } from "@magna/wallet";
 import { AuthorizePage } from "./AuthorizePage";
 import { Threads } from "./components/Threads";
-import { getChainInfo } from "./lib/aztec";
+import {
+  getChainInfo,
+  getRecoveryTransactionChainState,
+  type RecoveryTransactionChainState,
+} from "./lib/aztec";
 import { getManagementEnv, type ManagementEnv } from "./lib/env";
 import { navigate, useRoute } from "./lib/router";
 import {
+  clearPendingRecoveryV3Finalization,
   loadCredentialRefs,
+  loadPendingRecoveryV3Finalization,
+  loadRecoveryTargetProfile,
   loadWalletProfile,
   hydratePassportA2Witness,
   reconcileStoredChainFingerprint,
   refsForOwner,
   saveWalletProfile,
   saveCredentialRefs,
+  savePendingRecoveryV3Finalization,
+  saveRecoveryTargetProfile,
   upsertCredentialRef,
+  type PendingRecoveryV3Finalization,
   type PassportCommittedClaimsV2LocalWitness,
   type StoredCredentialRef,
   type WalletProfile,
@@ -40,19 +70,31 @@ import {
   verifyAndRefreshRootAuthorityThroughBackend,
   verifyAndIssueInstagramThroughBackend,
   verifyAndIssuePassportA2ThroughBackend,
-  verifyRootRecoveryPreflightThroughBackend,
   type ActiveZkPassportRequest,
   type ZkPassportLifecycleEvent,
 } from "./lib/zkpassport";
 import {
   buildPassportA2ProofMaterial,
+  compressedOuterProof,
   issuePassportThroughConfiguredBackend,
   PASSPORT_A2_LOCAL_WITNESS_MISSING_MESSAGE,
   passportA2BindCustomData,
   passportCredentialUsageBlock,
   proofModeForPassportIssuanceKind,
+  secureRandomField,
   type PassportA2LocalWitness,
 } from "./lib/passport-issuance";
+import {
+  assertRecoveryV3PrivateMutationsRejected,
+  buildRecoveryV3DeveloperProof,
+  preflightRecoveryV3LocalClock,
+  prepareRecoveryV3Request,
+  submitRecoveryV3DeveloperAuthorization,
+  waitForRecoveryV3InboxMessage,
+  type RecoveryV3NetworkContext,
+} from "./lib/recovery-v3";
+import { runWalletLoginForRequestWithSession } from "./lib/wallet-login";
+import { registerWalletSessionLoginBroker } from "./lib/wallet-session-broker";
 
 type Role = "user" | "company";
 
@@ -61,6 +103,10 @@ type OpenPasskeyWalletOptions = {
   captureRecoveryTarget?: boolean;
   stayOnCurrentPage?: boolean;
   forceCreate?: boolean;
+  storedCredentialId?: string;
+  passkeyName?: string;
+  expectedAddress?: string;
+  replaceActiveSession?: boolean;
 };
 
 type Notice = {
@@ -71,6 +117,7 @@ type Notice = {
 type CredentialHintState = {
   status: "loading" | "loaded" | "error";
   hints?: PassportHints | RootedPassportHints;
+  chainState?: RootedCredentialChainState;
   message?: string;
 };
 
@@ -90,9 +137,46 @@ const DEFAULT_COMPANY_ALIAS = "magna-company";
 const WALLET_OPEN_MINIMUM_MS = 2_500;
 const ZKPASSPORT_FINAL_RESULT_TIMEOUT_MS = 120_000;
 
+export function defaultPasskeyName(
+  purpose: "wallet" | "recovery",
+  now: Date = new Date(),
+): string {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const timestamp = [
+    `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
+    `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`,
+  ].join(" ");
+  return `Magna ${purpose === "recovery" ? "recovery" : "wallet"} · ${timestamp}`;
+}
+
+export function feeJuiceBalanceLabel(value?: string): string {
+  if (!value) return "checking…";
+  try {
+    return `${BigInt(value).toLocaleString("en-US")} base units`;
+  } catch {
+    return "unavailable";
+  }
+}
+
+export function boundWalletProfileRecoveryBundle(profile: WalletProfile): string | null {
+  if (!profile.publicKey) return null;
+  try {
+    const parsed = parseWebAuthnPublicKeyRecoveryBundle(profile.publicKey);
+    return JSON.stringify({
+      ...parsed,
+      address: profile.address,
+      rpId: profile.rpId ?? parsed.rpId,
+      origin: profile.origin ?? parsed.origin,
+    });
+  } catch {
+    return null;
+  }
+}
+
 function fingerprintFromChainContext(chain: { chainId: string; version: string }, env: ManagementEnv): string {
   return JSON.stringify({
     aztecNodeUrl: env.aztecNodeUrl,
+    deploymentInstanceId: env.deploymentInstanceId ?? "",
     chainId: chain.chainId,
     version: chain.version,
     issuerAddress: env.issuerAddress ?? "",
@@ -154,6 +238,20 @@ function errorMessage(value: unknown): string {
 async function provePassportWrapperInBrowser(witness: PassportWrapperLocalWitness) {
   const { provePassportWrapper } = await import("../../../packages/magna-passport-wrapper-proof/src/browser");
   return provePassportWrapper(witness);
+}
+
+async function proveRecoveryWrapperInBrowser(witness: RecoveryWrapperLocalWitness) {
+  const { proveRecoveryWrapperInBrowser: prove } = await import(
+    "../../../packages/magna-recovery-wrapper-proof/src/browser"
+  );
+  return prove(witness);
+}
+
+async function assertRecoveryWrapperWitnessRejectedInBrowser(witness: RecoveryWrapperLocalWitness) {
+  const { assertRecoveryWrapperWitnessRejectedInBrowser: assertRejected } = await import(
+    "../../../packages/magna-recovery-wrapper-proof/src/browser"
+  );
+  return assertRejected(witness);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -357,27 +455,11 @@ function walletClaimsWitnessFromA2LocalWitness(
   };
 }
 
-function readFileAsBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Could not read Instagram email file."));
-    reader.onload = () => {
-      const result = reader.result;
-      if (typeof result !== "string") {
-        reject(new Error("Could not read Instagram email file as base64."));
-        return;
-      }
-      const commaIndex = result.indexOf(",");
-      resolve(commaIndex >= 0 ? result.slice(commaIndex + 1) : result);
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
 export function App() {
   const env = useMemo(() => getManagementEnv(), []);
   const route = useRoute();
   const [busy, setBusy] = useState<string | null>(null);
+  const busyRef = useRef<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [session, setSession] = useState<WalletSession | null>(null);
   const [walletProfile, setWalletProfile] = useState<WalletProfile | null>(() => loadWalletProfile());
@@ -390,9 +472,39 @@ export function App() {
   const [ageThreshold, setAgeThreshold] = useState("18");
   const [instagramHandle, setInstagramHandle] = useState("");
   const [instagramEmailFile, setInstagramEmailFile] = useState<File | null>(null);
-  const [recoveryTarget, setRecoveryTarget] = useState<WalletProfile | null>(null);
+  const [recoveryTarget, setRecoveryTarget] = useState<WalletProfile | null>(() => {
+    const persisted = loadRecoveryTargetProfile();
+    if (persisted) return persisted;
+    const recovered = loadCredentialRefs().find(
+      ref => ref.kind === "passport" && ref.mode === "rooted" && Boolean(ref.recoveryTxHash),
+    );
+    if (!recovered || typeof window === "undefined") return null;
+    const stored = loadStoredWebAuthnAccounts(window.localStorage).find(
+      account => normalizeAddress(account.address) === normalizeAddress(recovered.ownerAddress),
+    );
+    if (!stored) return null;
+    return {
+      address: stored.address,
+      label: stored.displayName ?? "Recovered passkey",
+      walletKind: "passkey",
+      role: "user",
+      createdAt: recovered.updatedAt ?? recovered.createdAt,
+      publicKey: serializeWebAuthnPublicKeyRecoveryBundle(stored),
+      rpId: stored.rpId,
+      origin: stored.origin,
+      deploymentStatus: "deployed",
+      sessionOrigin: "recovered",
+    };
+  });
+  const [pendingRecoveryFinalization, setPendingRecoveryFinalization] =
+    useState<PendingRecoveryV3Finalization | null>(() => loadPendingRecoveryV3Finalization());
   const [latestRecoveryBundle, setLatestRecoveryBundle] = useState(() => walletProfile?.publicKey ?? "");
   const [storedPublicKeyInput, setStoredPublicKeyInput] = useState("");
+  const [newPasskeyName, setNewPasskeyName] = useState(() => defaultPasskeyName("wallet"));
+  const [recoveryPasskeyName, setRecoveryPasskeyName] = useState(() => defaultPasskeyName("recovery"));
+  const [feeJuiceBalances, setFeeJuiceBalances] = useState<Record<string, string>>({});
+  const [recoveryTransactionChainState, setRecoveryTransactionChainState] =
+    useState<RecoveryTransactionChainState | null>(null);
   const [companySponsorAddress, setCompanySponsorAddress] = useState(env.activeCompanySponsorAddress ?? "");
   const [sponsorSnapshot, setSponsorSnapshot] = useState<SponsorRightsSnapshot | null>(null);
   const [sponsorStatuses, setSponsorStatuses] = useState<SponsorRuntimeStatus[]>([]);
@@ -400,17 +512,60 @@ export function App() {
   const [topUpPackageId, setTopUpPackageId] = useState("");
   const [gatewayCandidate, setGatewayCandidate] = useState(env.activeCompanySponsorAddress ?? "");
   const [restoreAttempted, setRestoreAttempted] = useState(false);
+  const [chainContextReady, setChainContextReady] = useState(false);
+  const [storedPasskeyRevision, setStoredPasskeyRevision] = useState(0);
 
   const activeAddress = walletIdentityAddress(session, walletProfile, env);
   const activeCredentialRefs = useMemo(
     () => refsForOwner(activeAddress, { issuerAddress: env.issuerAddress }),
     [activeAddress, credentials, env.issuerAddress],
   );
+  // This record is only a locator for the destination credential. Its presence
+  // in localStorage is not evidence that recovery completed.
+  const recoveredCredentialCandidate = useMemo(
+    () => credentials.find(ref => ref.kind === "passport" && ref.mode === "rooted" && Boolean(ref.recoveryTxHash)),
+    [credentials],
+  );
+  const recoveredCredentialChainState = recoveredCredentialCandidate
+    ? credentialHints[recoveredCredentialCandidate.id]?.chainState
+    : undefined;
+  // Completion is asserted only after authenticated target notes have been
+  // checked against Aztec's canonical nullifier tree.
+  const chainConfirmedRecoveredCredential =
+    recoveredCredentialChainState?.status === "active" && recoveryTransactionChainState?.status === "confirmed"
+      ? recoveredCredentialCandidate
+      : undefined;
+  const displayedRecoveryTarget = useMemo<WalletProfile | null>(() => {
+    if (recoveryTarget) return recoveryTarget;
+    if (!recoveredCredentialCandidate) return null;
+    return {
+      address: recoveredCredentialCandidate.ownerAddress,
+      label: "Recovered passkey · public key required",
+      walletKind: "passkey",
+      role: "user",
+      createdAt: recoveredCredentialCandidate.updatedAt ?? recoveredCredentialCandidate.createdAt,
+      deploymentStatus: "deployed",
+    };
+  }, [recoveredCredentialCandidate, recoveryTarget]);
   const hasCredentials = activeCredentialRefs.length > 0;
-  const storedPasskeyCount = useMemo(() => {
-    if (typeof window === "undefined") return 0;
-    return loadStoredWebAuthnAccounts(window.localStorage).length;
-  }, [session]);
+  const localFundingEnabled = Boolean(
+    env.enableLocalTestBootstrap && env.l1RpcUrl && env.localFaucetPrivateKey,
+  );
+  const storedPasskeyAccounts = useMemo<StoredWebAuthnAccount[]>(() => {
+    if (typeof window === "undefined") return [];
+    return loadStoredWebAuthnAccounts(window.localStorage);
+  }, [recoveryTarget, route.path, session, storedPasskeyRevision]);
+  const storedPasskeyCount = storedPasskeyAccounts.length;
+  const missingRememberedWallet = useMemo(() => {
+    if (!walletProfile || walletProfile.role === "company" || !boundWalletProfileRecoveryBundle(walletProfile)) {
+      return null;
+    }
+    return storedPasskeyAccounts.some(
+      account => normalizeAddress(account.address) === normalizeAddress(walletProfile.address),
+    )
+      ? null
+      : walletProfile;
+  }, [storedPasskeyAccounts, walletProfile]);
 
   // Notices describe the current route only. Clear them for menu clicks,
   // redirects, and browser back/forward navigation so stale feedback cannot
@@ -433,10 +588,113 @@ export function App() {
     console.info(`[magna-management] ${message}`);
   }, []);
 
+  busyRef.current = busy;
+
+  useEffect(() => {
+    if (!session || session.kind !== "passkey" || route.path === "/authorize") return;
+    return registerWalletSessionLoginBroker(async input => {
+      if (busyRef.current) {
+        throw new Error(`The open Magna wallet is busy with: ${busyRef.current}.`);
+      }
+      const label = "Login with Magna";
+      busyRef.current = label;
+      setBusy(label);
+      appendLog("Accepted Login with Magna through the existing wallet/PXE session.");
+      try {
+        return await runWalletLoginForRequestWithSession(
+          {
+            ...input,
+            onVerifying: () => appendLog("Running brokered private verification through the registered gateway."),
+          },
+          session,
+        );
+      } finally {
+        busyRef.current = null;
+        setBusy(null);
+      }
+    });
+  }, [appendLog, route.path, session]);
+
+  useEffect(() => {
+    if (!session || session.kind !== "passkey" || typeof window === "undefined") return;
+    const address = session.activeAccount.address;
+    if (storedPasskeyAccounts.some(account => normalizeAddress(account.address) === normalizeAddress(address))) return;
+    let cancelled = false;
+    void rememberWebAuthnWalletSessionAccount(session, {
+      rpId: window.location.hostname || "localhost",
+      origin: window.location.origin,
+      displayName: walletProfile?.label ?? session.metadata?.passkeyName,
+      storage: window.localStorage,
+    })
+      .then(account => {
+        if (cancelled) return;
+        setStoredPasskeyRevision(revision => revision + 1);
+        appendLog(`Restored authenticated passkey lookup metadata for ${account.address}.`);
+      })
+      .catch(error => appendLog(`Authenticated passkey lookup repair skipped: ${errorMessage(error)}`));
+    return () => {
+      cancelled = true;
+    };
+  }, [appendLog, session, storedPasskeyAccounts, walletProfile?.label]);
+
+  useEffect(() => {
+    const txHash = recoveredCredentialCandidate?.recoveryTxHash;
+    if (!txHash) {
+      setRecoveryTransactionChainState(null);
+      return;
+    }
+    let cancelled = false;
+    setRecoveryTransactionChainState({ status: "pending", txStatus: "checking" });
+    void getRecoveryTransactionChainState(env.aztecNodeUrl, txHash)
+      .then(state => {
+        if (cancelled) return;
+        setRecoveryTransactionChainState(state);
+        appendLog(
+          state.status === "confirmed"
+            ? `Recovery transaction ${txHash} is ${state.txStatus} with successful execution at Aztec L2 block ${state.blockNumber}.`
+            : `Recovery transaction ${txHash} is ${state.status} on Aztec (${state.txStatus}).`,
+        );
+      })
+      .catch(error => {
+        if (cancelled) return;
+        setRecoveryTransactionChainState({
+          status: "unavailable",
+          txStatus: "unavailable",
+          message: errorMessage(error),
+        });
+        appendLog(`Recovery transaction chain check failed: ${errorMessage(error)}`);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [appendLog, env.aztecNodeUrl, recoveredCredentialCandidate?.recoveryTxHash]);
+
+  useEffect(() => {
+    const addresses = [activeAddress, recoveryTarget?.address].filter((value): value is string => Boolean(value));
+    if (!localFundingEnabled || addresses.length === 0) return;
+    let cancelled = false;
+    void Promise.all(
+      addresses.map(async address => {
+        const balance = await readLocalFeeJuiceBalance(env.aztecNodeUrl, address);
+        return [normalizeAddress(address), balance.toString()] as const;
+      }),
+    )
+      .then(entries => {
+        if (!cancelled) {
+          setFeeJuiceBalances(current => ({ ...current, ...Object.fromEntries(entries) }));
+        }
+      })
+      .catch(error => appendLog(`Fee Juice balance refresh skipped: ${errorMessage(error)}`));
+    return () => {
+      cancelled = true;
+    };
+  }, [activeAddress, appendLog, env.aztecNodeUrl, localFundingEnabled, recoveryTarget?.address]);
+
   useEffect(() => {
     let cancelled = false;
+    setChainContextReady(false);
     void getChainInfo(env.aztecNodeUrl)
-      .then(info => {
+      .then(async info => {
         if (cancelled || typeof window === "undefined") return;
         const nextFingerprint = fingerprintFromChainContext(
           {
@@ -446,8 +704,10 @@ export function App() {
           env,
         );
         if (!reconcileStoredChainFingerprint(nextFingerprint)) return;
+        await clearEmbeddedPxeCacheForNode(env.aztecNodeUrl);
         setSession(null);
         setWalletProfile(null);
+        setRecoveryTarget(null);
         setCredentials(loadCredentialRefs());
         setCredentialHints({});
         setNotice({
@@ -461,6 +721,9 @@ export function App() {
       })
       .catch(error => {
         appendLog(`Chain fingerprint check skipped: ${errorMessage(error)}`);
+      })
+      .finally(() => {
+        if (!cancelled) setChainContextReady(true);
       });
     return () => {
       cancelled = true;
@@ -470,6 +733,7 @@ export function App() {
   useEffect(() => {
     if (
       restoreAttempted ||
+      !chainContextReady ||
       session ||
       !walletProfile ||
       walletProfile.role === "company" ||
@@ -482,10 +746,23 @@ export function App() {
     }
     setRestoreAttempted(true);
     appendLog("Restoring remembered passkey wallet after refresh.");
-    void openPasskeyWallet("user", { stayOnCurrentPage: true });
-  }, [appendLog, busy, restoreAttempted, route.path, session, storedPasskeyCount, walletProfile]);
+    const remembered = storedPasskeyAccounts.find(
+      account => normalizeAddress(account.address) === normalizeAddress(walletProfile.address),
+    );
+    if (!remembered) {
+      appendLog("Remembered wallet has no matching stored passkey credential; automatic restore skipped.");
+      return;
+    }
+    void openPasskeyWallet("user", {
+      stayOnCurrentPage: true,
+      storedCredentialId: remembered.credentialId,
+      passkeyName: remembered.displayName,
+      expectedAddress: remembered.address,
+    });
+  }, [appendLog, busy, chainContextReady, restoreAttempted, route.path, session, storedPasskeyAccounts, storedPasskeyCount, walletProfile]);
 
   async function runAction<T>(label: string, action: () => Promise<T>): Promise<T | null> {
+    busyRef.current = label;
     setBusy(label);
     setNotice({ tone: "info", text: label });
     appendLog(`${label} started.`);
@@ -500,8 +777,47 @@ export function App() {
       appendLog(`${label} failed: ${message}`);
       return null;
     } finally {
+      busyRef.current = null;
       setBusy(null);
     }
+  }
+
+  async function fundLocalAddress(
+    address: string,
+    subject: "active wallet" | "recovery target",
+  ) {
+    const activeSession = requireDeployedWallet(`funding the ${subject}`);
+    if (!activeSession) return;
+    if (!localFundingEnabled || !env.l1RpcUrl || !env.localFaucetPrivateKey) {
+      setNotice({
+        tone: "danger",
+        text: "The local Fee Juice faucet is unavailable. It is enabled only for the chain-31337 developer profile.",
+      });
+      return;
+    }
+    const result = await runAction(`Fund ${subject}`, () =>
+      fundLocalFeeJuice({
+        wallet: activeSession.wallet,
+        recipient: address,
+        nodeUrl: env.aztecNodeUrl,
+        l1RpcUrl: env.l1RpcUrl!,
+        l1PrivateKey: env.localFaucetPrivateKey as `0x${string}`,
+        localTestAccountIndex: env.localTestAccountIndex,
+        onProgress: progress => appendLog(`Local Fee Juice ${subject}: ${progress}.`),
+      }),
+    );
+    if (!result) return;
+    setFeeJuiceBalances(current => ({
+      ...current,
+      [normalizeAddress(result.recipient)]: result.balanceAfter.toString(),
+    }));
+    setNotice({
+      tone: "success",
+      text: `${subject === "active wallet" ? "Active wallet" : "Recovery target"} funded with Fee Juice.`,
+    });
+    appendLog(
+      `Local Fee Juice claim ${result.claimTxHash}: ${result.balanceBefore.toString()} -> ${result.balanceAfter.toString()} base units.`,
+    );
   }
 
   function createClient(nextSession: WalletSession = session!): MagnaBrowserClient {
@@ -537,12 +853,19 @@ export function App() {
 
   async function loadHintsForCredentialRefs(nextSession: WalletSession, refs: StoredCredentialRef[]) {
     const ownerAddress = requireSessionIdentityAddress(nextSession, env);
-    const activeRefs = refs.filter(ref => (ref.kind === "passport" || ref.kind === "instagram") && ref.status === "active");
-    if (activeRefs.length === 0 || !env.issuerAddress) return;
+    // Rooted references must be revalidated even if a previous local snapshot
+    // called them inactive. Reorgs and later chain sync are decided by Aztec,
+    // never by localStorage.
+    const refsToValidate = refs.filter(
+      ref =>
+        (ref.kind === "passport" || ref.kind === "instagram") &&
+        (ref.status === "active" || ref.mode === "rooted"),
+    );
+    if (refsToValidate.length === 0 || !env.issuerAddress) return;
 
     const client = new MagnaBrowserClient(nextSession.wallet, env, ownerAddress);
     await client.syncOrchestratorSender();
-    for (const ref of activeRefs) {
+    for (const ref of refsToValidate) {
       const passportBlock = ref.kind === "passport" ? passportCredentialUsageBlock(ref) : null;
       if (passportBlock) {
         setCredentialHints(current => ({
@@ -560,10 +883,23 @@ export function App() {
           ref.kind === "passport" && ref.mode === "rooted" && ref.rootCommitment
             ? await client.fetchRootedPassportHintsByClaimsHash(ref.ownerAddress, ref.rootCommitment, ref.claimsHash)
             : await client.fetchPassportHintsByClaimsHash(ref.ownerAddress, ref.claimsHash);
+        const chainState = isRootedPassportHints(hints)
+          ? await client.readRootedPassportChainState(hints)
+          : undefined;
         setCredentialHints(current => ({
           ...current,
-          [ref.id]: { status: "loaded", hints, message: "Hinted notes loaded" },
+          [ref.id]: {
+            status: "loaded",
+            hints,
+            chainState,
+            message: chainState ? "Notes loaded; chain state confirmed" : "Hinted notes loaded",
+          },
         }));
+        if (chainState) {
+          appendLog(
+            `Credential ${ref.id} is ${chainState.status} from Aztec nullifier state at L2 block ${chainState.checkedAtBlock} (${chainState.reason}).`,
+          );
+        }
       } catch (error) {
         setCredentialHints(current => ({
           ...current,
@@ -669,8 +1005,19 @@ export function App() {
     }
 
     const refs = await refreshCredentialRefsFromPxe(nextSession);
-    setCredentials(loadCredentialRefs());
-    await loadHintsForCredentialRefs(nextSession, refs);
+    const storedRefs = loadCredentialRefs();
+    setCredentials(storedRefs);
+    const recoveredCandidates = storedRefs.filter(
+      ref =>
+        ref.kind === "passport" &&
+        ref.mode === "rooted" &&
+        Boolean(ref.recoveryTxHash) &&
+        !refs.some(activeRef => activeRef.id === ref.id),
+    );
+    // The saved refs identify which private notes to ask PXE for. They do not
+    // supply status: readRootedPassportChainState derives status from the
+    // authenticated notes and Aztec's nullifier tree at one pinned L2 block.
+    await loadHintsForCredentialRefs(nextSession, [...refs, ...recoveredCandidates]);
     setNotice({
       tone: refs.length > 0 ? "success" : "warning",
       text:
@@ -686,13 +1033,98 @@ export function App() {
       setNotice({ tone: "danger", text: "Passkeys are not supported in this browser." });
       return;
     }
+
+    // Switching to a recovered destination is an explicit post-recovery user
+    // action. Close the source PXE first so the target session can take the
+    // same persistent OPFS store without creating a second live store owner.
+    // This is never used while authorizing or executing recovery.
+    if (options.replaceActiveSession && session) {
+      setBusy("Switch to recovered wallet");
+      setNotice({ tone: "info", text: "Closing the source wallet before opening the recovered passkey." });
+      try {
+        await session.disconnect();
+        setSession(null);
+      } catch (error) {
+        setNotice({ tone: "danger", text: `Could not close the source wallet: ${errorMessage(error)}` });
+        setBusy(null);
+        return;
+      }
+      setBusy(null);
+    }
+
     const label = options.publicKeyRecoveryBundle
       ? "Use stored passkey wallet"
       : options.forceCreate
         ? "Create passkey wallet"
         : "Open passkey wallet";
+
+    if (options.captureRecoveryTarget) {
+      const activeSession = requireDeployedWallet("preparing a recovery target");
+      if (!activeSession) return;
+      const prepared = await runAction(label, async () => {
+        const [target] = await Promise.all([
+          prepareWebAuthnRecoveryTarget({
+            wallet: activeSession.wallet,
+            userName: options.passkeyName?.trim() || defaultPasskeyName("recovery"),
+            rpId: window.location.hostname || "localhost",
+            publicKeyRecoveryBundle: options.publicKeyRecoveryBundle,
+            localTestAccountIndex: env.localTestAccountIndex,
+            deployWithLocalTestAccount: env.enableLocalTestBootstrap,
+          }),
+          sleep(WALLET_OPEN_MINIMUM_MS),
+        ]);
+        if (
+          recoveredCredentialCandidate &&
+          !recoveryTarget &&
+          normalizeAddress(target.address) !== normalizeAddress(recoveredCredentialCandidate.ownerAddress)
+        ) {
+          throw new Error(
+            `Selected passkey does not derive the completed recovery destination. ` +
+              `expected=${recoveredCredentialCandidate.ownerAddress} actual=${target.address}`,
+          );
+        }
+        return target;
+      });
+      if (!prepared) return;
+
+      const targetProfile: WalletProfile = {
+        address: prepared.address,
+        label: prepared.displayName,
+        walletKind: "passkey",
+        role: "user",
+        createdAt: new Date().toISOString(),
+        publicKey: prepared.publicKeyRecoveryBundle,
+        rpId: window.location.hostname || "localhost",
+        origin: window.location.origin,
+        deploymentStatus: prepared.deploymentStatus,
+        sessionOrigin: prepared.materialOrigin,
+        feePayer: prepared.feePayer,
+        lastOpenedAt: new Date().toISOString(),
+      };
+      setLatestRecoveryBundle(targetProfile.publicKey ?? "");
+      if (!isDeployedProfile(targetProfile)) {
+        setNotice({
+          tone: "danger",
+          text: "Recovery target is counterfactual. Deploy the new passkey wallet before rotating credentials to it.",
+        });
+        return;
+      }
+      setRecoveryTarget(targetProfile);
+      saveRecoveryTargetProfile(targetProfile);
+      appendLog(`Recovery target prepared on the active wallet session: ${targetProfile.address}`);
+      route.go("/user/recovery");
+      return;
+    }
+
     const next = await runAction(label, async () => {
-      const alias = role === "company" ? DEFAULT_COMPANY_ALIAS : DEFAULT_ALIAS;
+      const alias =
+        role === "company"
+          ? DEFAULT_COMPANY_ALIAS
+          : options.forceCreate
+            ? options.passkeyName?.trim() || defaultPasskeyName("wallet")
+            : options.publicKeyRecoveryBundle
+              ? options.passkeyName?.trim() || DEFAULT_ALIAS
+              : DEFAULT_ALIAS;
       const [nextSession] = await Promise.all([
         createWebAuthnWalletSession({
           nodeUrl: env.aztecNodeUrl,
@@ -701,6 +1133,7 @@ export function App() {
           rpId: window.location.hostname || "localhost",
           publicKeyRecoveryBundle: options.publicKeyRecoveryBundle,
           forceCreate: options.forceCreate,
+          storedCredentialId: options.storedCredentialId,
           localTestAccountIndex: env.localTestAccountIndex,
           deployWithLocalTestAccount: env.enableLocalTestBootstrap,
         }),
@@ -709,12 +1142,19 @@ export function App() {
       let address: string;
       try {
         address = requireSessionIdentityAddress(nextSession, env);
+        if (options.expectedAddress && normalizeAddress(address) !== normalizeAddress(options.expectedAddress)) {
+          throw new Error(
+            `Selected passkey does not derive the recovered destination. ` +
+              `expected=${options.expectedAddress} actual=${address}`,
+          );
+        }
       } catch (error) {
         await nextSession.disconnect().catch(() => undefined);
         throw error;
       }
       const profile: WalletProfile = {
         address,
+        label: nextSession.metadata?.passkeyName ?? alias,
         walletKind: nextSession.kind,
         role,
         createdAt: new Date().toISOString(),
@@ -729,23 +1169,6 @@ export function App() {
       return { nextSession, profile };
     });
     if (!next) return;
-
-    if (options.captureRecoveryTarget) {
-      setLatestRecoveryBundle(next.profile.publicKey ?? "");
-      if (!isDeployedSession(next.nextSession)) {
-        await next.nextSession.disconnect().catch(() => undefined);
-        setNotice({
-          tone: "danger",
-          text: "Recovery target is counterfactual. Deploy the new passkey wallet before rotating credentials to it.",
-        });
-        return;
-      }
-      setRecoveryTarget(next.profile);
-      appendLog(`Recovery target prepared: ${next.profile.address}`);
-      await next.nextSession.disconnect().catch(() => undefined);
-      route.go("/user/recovery");
-      return;
-    }
 
     setSession(next.nextSession);
     setWalletProfile(next.profile);
@@ -771,6 +1194,25 @@ export function App() {
       return;
     }
     await syncAfterLogin(next.nextSession, role);
+  }
+
+  async function openRecoveredTargetWallet() {
+    const target = recoveryTarget;
+    if (!target?.publicKey) {
+      setNotice({ tone: "danger", text: "The recovered target is missing its passkey public key." });
+      return;
+    }
+    const storedTarget = storedPasskeyAccounts.find(
+      account => normalizeAddress(account.address) === normalizeAddress(target.address),
+    );
+    await openPasskeyWallet("user", {
+      ...(storedTarget
+        ? { storedCredentialId: storedTarget.credentialId }
+        : { publicKeyRecoveryBundle: target.publicKey }),
+      passkeyName: target.label,
+      expectedAddress: target.address,
+      replaceActiveSession: true,
+    });
   }
 
   async function useStoredPasskey(role: Role, captureRecoveryTarget = false) {
@@ -818,6 +1260,9 @@ export function App() {
       case "query_result_received":
         appendLog("zkPassport final query result received.");
         break;
+      case "sdk_verification_prepared":
+        appendLog(`zkPassport SDK local verifier CRS prepared (${event.srsSize} points).`);
+        break;
       case "result_received":
         appendLog(`zkPassport result received (verified=${event.verified}).`);
         break;
@@ -854,7 +1299,7 @@ export function App() {
     setPassportA2LocalWitness(null);
     appendLog("zkPassport issuance flow started.");
     if (env.zkPassportDevMode) {
-      appendLog("zkPassport dev mode enabled (mock proofs allowed).");
+      appendLog("zkPassport dev mode enabled (official non-salted mock identifier; OPRF disabled).");
     }
     appendLog("Passport A2 issuance will recursively verify the compressed proof in the local wrapper.");
     let finalResultTimeout: number | undefined;
@@ -1017,12 +1462,44 @@ export function App() {
       return;
     }
     await runAction("Issuing Instagram credential", async () => {
-      const emlBase64 = await readFileAsBase64(instagramEmailFile);
+      if (!env.issuerAddress) {
+        throw new Error("VITE_MAGNA_ISSUER_ADDRESS is required for Instagram issuance.");
+      }
+      appendLog("Reading and verifying the Instagram email locally. The .eml and handle are not sent to Magna API.");
+      const handleBlind = secureRandomField();
+      const expiryTs = BigInt(Math.floor(Date.now() / 1000) + INSTAGRAM_V2_VALIDITY_SECONDS);
+      const chainInfo = await getChainInfo(env.aztecNodeUrl);
+      const artifact = await proveInstagramEmailInBrowser(
+        new Uint8Array(await instagramEmailFile.arrayBuffer()),
+        handle,
+        {
+          handleBlind,
+          expiryTs,
+          activeOwner: BigInt(activeOwner),
+          issuerAddress: BigInt(env.issuerAddress),
+          chainId: chainInfo.chainId.toBigInt(),
+        },
+      );
+      const handleHash = computeInstagramHandleHash(handle);
+      const handleCommitment = computeInstagramHandleCommitment(handleHash, handleBlind);
+      const localClaimsHash = computeInstagramClaimsHash({
+        schemaVersion: 2,
+        credentialType: CredentialType.Instagram,
+        handleCommitment,
+        expiryTs,
+      });
+      if (BigInt(artifact.outputs.claimsHash) !== localClaimsHash) {
+        throw new Error("Instagram V2 proof claims hash does not match the locally retained handle witness.");
+      }
+      appendLog("Instagram V2 proof generated locally with owner, issuer, chain, expiry, and blinded handle binding.");
       const issued = await (async () => {
         try {
           return await verifyAndIssueInstagramThroughBackend(env.verificationApiUrl!, {
-            emlBase64,
-            claimedHandle: handle,
+            schema: INSTAGRAM_V2_SCHEMA,
+            proof: {
+              proof: Array.from(artifact.proof.proof),
+              publicInputs: artifact.publicInputs,
+            },
             activeOwner,
           });
         } catch (error) {
@@ -1032,8 +1509,8 @@ export function App() {
           throw error;
         }
       })();
-      if (issued.normalizedClaims.instagramHandle !== handle) {
-        throw new Error(INVALID_INSTAGRAM_USERNAME_MESSAGE);
+      if (issued.claimsHash !== localClaimsHash.toString() || BigInt(issued.expiryTs) !== expiryTs) {
+        throw new Error("Instagram API issuance response does not match the locally generated proof.");
       }
       const ref: StoredCredentialRef = {
         id: credentialId({
@@ -1052,8 +1529,9 @@ export function App() {
         orchestratorAddress: issued.orchestratorAddress,
         ghostOwner: issued.ghostOwner,
         ghostDerivationVersion: issued.ghostDerivationVersion,
-        instagramHandle: issued.normalizedClaims.instagramHandle,
-        handleHash: issued.normalizedClaims.handleHash,
+        instagramHandle: handle,
+        handleHash: handleHash.toString(),
+        handleBlind: handleBlind.toString(),
       };
       setCredentials(upsertCredentialRef(ref));
       await loadHintsForCredentialRefs(activeSession, [ref]);
@@ -1209,10 +1687,126 @@ export function App() {
       .finally(() => setZkRequest(null));
   }
 
+  function completeRecoveryV3Finalization(
+    pending: PendingRecoveryV3Finalization,
+    recoveredHints: RootedPassportHints,
+    recoveredChainState: RootedCredentialChainState,
+  ) {
+    const recoveredRef: StoredCredentialRef = {
+      ...pending.recoveredCredential,
+      status: "active",
+      recoveryTxHash: pending.recoveryTxHash ?? pending.recoveredCredential.recoveryTxHash,
+      updatedAt: new Date().toISOString(),
+    };
+    const nextRefs = [
+      recoveredRef,
+      ...loadCredentialRefs().filter(
+        existing => existing.id !== pending.sourceCredentialId && existing.id !== recoveredRef.id,
+      ),
+    ];
+    saveCredentialRefs(nextRefs);
+    clearPendingRecoveryV3Finalization();
+    setPendingRecoveryFinalization(null);
+    setCredentials(nextRefs);
+    setCredentialHints(current => ({
+      ...current,
+      [recoveredRef.id]: {
+        status: "loaded",
+        hints: recoveredHints,
+        chainState: recoveredChainState,
+        message: "Recovered notes loaded; chain state confirmed",
+      },
+    }));
+    return recoveredRef;
+  }
+
+  async function resumeRecoveryV3Finalization() {
+    const activeSession = requireDeployedWallet("resuming Recovery V3 finalization");
+    if (!activeSession) return;
+    const pending = pendingRecoveryFinalization ?? loadPendingRecoveryV3Finalization();
+    if (!pending) {
+      setNotice({ tone: "warning", text: "No pending Recovery V3 finalization is stored." });
+      return;
+    }
+    if (!pending.target.publicKey) {
+      setNotice({ tone: "danger", text: "Pending recovery is missing the target passkey public key." });
+      return;
+    }
+    const result = await runAction("Resume Recovery V3 finalization", async () => {
+      const preparedTarget = await prepareWebAuthnRecoveryTarget({
+        wallet: activeSession.wallet,
+        userName: pending.target.label ?? defaultPasskeyName("recovery"),
+        rpId: window.location.hostname || "localhost",
+        publicKeyRecoveryBundle: pending.target.publicKey,
+        localTestAccountIndex: env.localTestAccountIndex,
+        deployWithLocalTestAccount: env.enableLocalTestBootstrap,
+      });
+      if (normalizeAddress(preparedTarget.address) !== normalizeAddress(pending.target.address)) {
+        throw new Error(
+          `Recovered target account mismatch. expected=${pending.target.address} actual=${preparedTarget.address}`,
+        );
+      }
+      if (preparedTarget.deploymentStatus !== "deployed") {
+        throw new Error("The pending recovery target is not deployed.");
+      }
+      const rootCommitment = pending.recoveredCredential.rootCommitment;
+      if (!rootCommitment) {
+        throw new Error("Pending recovery is missing its authenticated root commitment.");
+      }
+      const targetClient = new MagnaBrowserClient(
+        activeSession.wallet,
+        env,
+        preparedTarget.address,
+      );
+      const hints = await targetClient.fetchRootedPassportHintsByClaimsHash(
+        preparedTarget.address,
+        rootCommitment,
+        pending.recoveredCredential.claimsHash,
+      );
+      if (!isRootedPassportHints(hints)) {
+        throw new Error("Recovered destination is missing the complete rooted passport note set.");
+      }
+      const chainState = await targetClient.readRootedPassportChainState(hints);
+      if (chainState.status !== "active") {
+        throw new Error(
+          `Recovered destination credential is ${chainState.status} at Aztec L2 block ${chainState.checkedAtBlock}.`,
+        );
+      }
+      return {
+        targetProfile: {
+          ...pending.target,
+          address: preparedTarget.address,
+          label: preparedTarget.displayName,
+          deploymentStatus: preparedTarget.deploymentStatus,
+          feePayer: preparedTarget.feePayer,
+          sessionOrigin: preparedTarget.materialOrigin,
+          lastOpenedAt: new Date().toISOString(),
+        } satisfies WalletProfile,
+        hints,
+        chainState,
+      };
+    });
+    if (!result) return;
+
+    setRecoveryTarget(result.targetProfile);
+    saveRecoveryTargetProfile(result.targetProfile);
+    setLatestRecoveryBundle(result.targetProfile.publicKey ?? "");
+    completeRecoveryV3Finalization(pending, result.hints, result.chainState);
+    appendLog(
+      `Recovery V3 finalization resumed${pending.recoveryTxHash ? ` for tx ${pending.recoveryTxHash}` : ""}; ` +
+        "the complete destination note set is available.",
+    );
+    setNotice({
+      tone: "success",
+      text: "Recovery V3 finalization completed from the stored destination-bound metadata.",
+    });
+    setZkStage("recovery_v3_complete");
+  }
+
   async function startRootRecovery(ref: StoredCredentialRef) {
     const activeSession = requireDeployedWallet("recovery");
     if (!activeSession) return;
-    const activeOwner = requireSessionIdentityAddress(activeSession, env);
+    const currentOwnerAddress = requireSessionIdentityAddress(activeSession, env);
     const passportBlock = passportCredentialUsageBlock(ref);
     if (passportBlock) {
       setNotice({ tone: "danger", text: passportBlock });
@@ -1234,15 +1828,6 @@ export function App() {
       return;
     }
     const recoveryTargetAddress = recoveryTarget.address;
-    if (!env.verificationApiUrl) {
-      setNotice({ tone: "danger", text: "VITE_MAGNA_VERIFICATION_API_URL is required for rooted recovery." });
-      return;
-    }
-    const hintState = credentialHints[ref.id];
-    if (!hintState?.hints || !isRootedPassportHints(hintState.hints)) {
-      setNotice({ tone: "danger", text: "Rooted hinted notes must load before recovery." });
-      return;
-    }
     if (!ref.ghostOwner || !ref.rootCommitment) {
       setNotice({ tone: "danger", text: "Root recovery requires ghost owner and root commitment." });
       return;
@@ -1256,25 +1841,65 @@ export function App() {
       setNotice({ tone: "danger", text: PASSPORT_A2_LOCAL_WITNESS_MISSING_MESSAGE });
       return;
     }
+    if (!env.zkPassportDevMode) {
+      setNotice({ tone: "danger", text: "The current Recovery V3 integration is isolated to Gate B-dev." });
+      return;
+    }
+    if (!env.recoveryV3 || !env.l1RpcUrl || !env.recoveryV3RelayerPrivateKey) {
+      setNotice({
+        tone: "danger",
+        text: "Run npm run recovery-v3:bootstrap:local, then restart the management app with its local L1 RPC/key configuration.",
+      });
+      return;
+    }
+    if (window.location.hostname !== env.recoveryV3.domain) {
+      setNotice({
+        tone: "danger",
+        text: `Recovery V3 was bootstrapped for ${env.recoveryV3.domain}, but this app is running on ${window.location.hostname}. Re-bootstrap with the exact browser hostname.`,
+      });
+      return;
+    }
+    if (!/^0x[0-9a-fA-F]{64}$/.test(recoveryTargetAddress) || !/^0x[0-9a-fA-F]{64}$/.test(ref.issuerAddress)) {
+      setNotice({ tone: "danger", text: "Recovery V3 requires field-compatible Aztec destination and issuer addresses." });
+      return;
+    }
+    try {
+      const drift = await preflightRecoveryV3LocalClock(
+        env.l1RpcUrl,
+        env.recoveryV3.ethereumChainId,
+      );
+      appendLog(`Recovery V3 pre-scan local clock check passed (L1-host drift ${drift}s).`);
+    } catch (error) {
+      const message = errorMessage(error);
+      setNotice({ tone: "danger", text: message });
+      appendLog(`Recovery V3 pre-scan local clock check failed: ${message}`);
+      return;
+    }
     const age = localClaimsWitness.minAgeProven;
-    const derivationVersion = ref.ghostDerivationVersion ?? env.zkPassportGhostDerivationVersion;
-    const a2BindCustomData = passportA2BindCustomData({
-      action: "recover",
-      activeOwner: recoveryTargetAddress,
-      requestScope: env.zkPassportRequestScope,
-    });
+    const network: RecoveryV3NetworkContext = {
+      ethereumChainId: env.recoveryV3.ethereumChainId,
+      recoveryPortalL1Address: env.recoveryV3.portalAddress,
+      aztecProtocolVersion: env.recoveryV3.aztecProtocolVersion,
+      aztecChainId: env.recoveryV3.aztecChainId,
+      issuerL2Address: ref.issuerAddress as `0x${string}`,
+    };
+    const prepared = await prepareRecoveryV3Request(
+      network,
+      recoveryTargetAddress as `0x${string}`,
+    );
+    appendLog(`Recovery V3 intent prepared for portal ${env.recoveryV3.portalAddress}.`);
     const request = await runAction("Create zkPassport root recovery request", async () =>
       startPassportZkRequest({
         ageThreshold: age,
         proofMode: proofModeForPassportIssuanceKind("a2"),
-        a2BindCustomData,
+        a2BindCustomData: prepared.bindCustomData,
         metadata: {
           name: env.zkPassportRequestName,
           logo: env.zkPassportRequestLogo,
           purpose: env.zkPassportRequestPurpose,
-          scope: env.zkPassportRequestScope,
+          scope: env.recoveryV3!.scope,
         },
-        devMode: env.zkPassportDevMode,
+        devMode: true,
         onEvent: handleZkEvent,
       }),
     );
@@ -1289,113 +1914,262 @@ export function App() {
           setZkStage("rejected");
           return;
         }
-        if (!completion.uniqueIdentifier) {
-          throw new Error("zkPassport verification succeeded but uniqueIdentifier is missing.");
+        // Recovery V3 never sends the authenticated identifier to Magna's API. The
+        // dedicated wrapper consumes it only inside the local witness.
+        completion.uniqueIdentifier = undefined;
+        const outerArtifact = compressedOuterProof(completion);
+        const outerArtifactHash = Array.from(
+          new Uint8Array(
+            await crypto.subtle.digest("SHA-256", new TextEncoder().encode(outerArtifact.proof)),
+          ),
+          byte => byte.toString(16).padStart(2, "0"),
+        ).join("");
+        appendLog(
+          `Recovery proof metadata: ${outerArtifact.name}@${outerArtifact.version}, VK ${outerArtifact.vkeyHash}, outer-proof SHA-256 ${outerArtifactHash} (raw proof not retained).`,
+        );
+        setZkStage("building_recovery_v3_witness");
+        appendLog("Building the dedicated Recovery V3 developer wrapper witness.");
+        setZkStage("generating_recovery_v3_wrapper_proof");
+        const artifact = await buildRecoveryV3DeveloperProof(
+          completion,
+          age,
+          network,
+          prepared,
+          proveRecoveryWrapperInBrowser,
+        );
+        const authenticatedRoot = artifact.metadata.rootCommitment;
+        if (authenticatedRoot !== BigInt(ref.rootCommitment!)) {
+          throw new Error(
+            `Authenticated passport root does not match the selected Magna lineage. ` +
+              `proof=${authenticatedRoot} stored=${ref.rootCommitment}`,
+          );
         }
-        setZkStage("submitting_recovery_preflight");
-        const a2ProofMaterial = await buildPassportA2ProofMaterial(
-          {
-            action: "recover",
-            ghostOwner: ref.ghostOwner!,
-            issuanceKind: "a2",
-            verificationApiUrl: env.verificationApiUrl!,
-            completion,
-            activeOwner: recoveryTargetAddress,
-            issuerAddress: ref.issuerAddress!,
-            ageThreshold: age,
-            mode: "rooted",
-            ghostDerivationVersion: derivationVersion,
-            preparedGhostOwner: ref.ghostOwner,
-            requestScope: env.zkPassportRequestScope,
-            a2BindCustomData,
+        const ghostPreview = await deriveGhostAccountPreview({
+          uniqueIdentifier: artifact.metadata.identityValue.toString(),
+          credentialType: CredentialType.Passport,
+          derivationVersion: SCOPED_GHOST_DERIVATION_VERSION,
+        });
+        if (ghostPreview.rootCommitment !== authenticatedRoot) {
+          throw new Error("Recovery Ghost/root derivation does not match rooted A2 issuance.");
+        }
+        if (normalizeAddress(ghostPreview.address) !== normalizeAddress(ref.ghostOwner)) {
+          throw new Error(
+            `Authenticated passport derives a different Ghost owner. ` +
+              `derived=${ghostPreview.address} stored=${ref.ghostOwner}`,
+          );
+        }
+        appendLog("Authenticated recovery identity matches the selected A2 root and Ghost owner.");
+        appendLog("Running live private-witness mutation checks against the exact scanned proof.");
+        const privateMutations = await assertRecoveryV3PrivateMutationsRejected({
+          completion,
+          ageThreshold: age,
+          network,
+          prepared,
+          assertRejected: assertRecoveryWrapperWitnessRejectedInBrowser,
+        });
+        appendLog(`Rejected private mutations: ${privateMutations.join(", ")}.`);
+        setZkStage("submitting_recovery_v3_portal");
+        appendLog("Submitting the real EVM-target proof directly from the browser; Magna API is not used.");
+        const evidence = await submitRecoveryV3DeveloperAuthorization({
+          aztecNodeUrl: env.aztecNodeUrl,
+          l1RpcUrl: env.l1RpcUrl!,
+          relayerPrivateKey: env.recoveryV3RelayerPrivateKey as `0x${string}`,
+          network,
+          contracts: {
+            rootRegistryAddress: env.recoveryV3!.rootRegistryAddress,
+            certificateRegistryAddress: env.recoveryV3!.certificateRegistryAddress,
+            circuitRegistryAddress: env.recoveryV3!.circuitRegistryAddress,
+            recoveryPortalAddress: env.recoveryV3!.portalAddress,
           },
-          {
-            provePassportWrapper: provePassportWrapperInBrowser,
-            onA2Progress: event => {
-              if (event.type === "building_witness") {
-                setZkStage("building_a2_witness");
-                appendLog("Building local A2 recovery preflight wrapper witness.");
-              } else if (event.type === "generating_wrapper_proof") {
-                setZkStage("generating_a2_wrapper_proof");
-                appendLog("Generating local A2 recovery preflight wrapper proof.");
-              }
-            },
-          },
-        );
-        setZkStage("submitting_recovery_preflight");
-        appendLog("Submitting A2 recovery preflight without recovery notes.");
-        const preflight = await verifyRootRecoveryPreflightThroughBackend(
-          env.verificationApiUrl!,
-          {
-            ...a2ProofMaterial.payload,
-            targetOwner: recoveryTargetAddress,
-            expectedGhostOwner: ref.ghostOwner!,
-            expectedRootCommitment: ref.rootCommitment!,
-            ghostDerivationVersion: derivationVersion,
-          },
-        );
+          artifact,
+          sdkVerified: true,
+        });
+        if (evidence.clockSync) {
+          appendLog(
+            `Local L1/L2 clock synchronized through ${evidence.clockSync.method}: ` +
+              `L1 block ${evidence.clockSync.fromBlockNumber} (${evidence.clockSync.fromBlockTimestamp}) -> ` +
+              `${evidence.clockSync.toBlockNumber} (${evidence.clockSync.toBlockTimestamp}), ` +
+              `result block ${evidence.clockSync.toBlockHash}.`,
+          );
+        }
+        appendLog(`Recovery V3 portal tx: ${evidence.transactionHash}`);
+        appendLog(`Recovery wrapper proof keccak256: ${evidence.wrapperProofHash}`);
+        appendLog(`Canonical Inbox leaf/index: ${evidence.inboxLeaf} / ${evidence.messageLeafIndex}`);
+        appendLog(`Rejected EVM mutations: ${evidence.evmMutationsRejected.join(", ")}; replay rejected.`);
 
-        setZkStage("recovering_root");
-        const attempts = buildRecoveryGhostDeploymentAttempts({
+        setZkStage("waiting_recovery_v3_inbox");
+        appendLog("Waiting for the canonical Inbox leaf to become provable on Aztec.");
+        const inboxWait = await waitForRecoveryV3InboxMessage({
+          aztecNodeUrl: env.aztecNodeUrl,
+          l1RpcUrl: env.l1RpcUrl!,
+          inboxLeaf: evidence.inboxLeaf,
+          expectedLeafIndex: evidence.messageLeafIndex,
+          enableLocalCheckpointAdvancement:
+            env.enableLocalTestBootstrap && network.ethereumChainId === 31_337n,
+        });
+        if (inboxWait.localCheckpointsAdvanced > 0) {
+          appendLog(
+            `Advanced ${inboxWait.localCheckpointsAdvanced} official local Aztec checkpoint(s) ` +
+              `to ingest the canonical Inbox message.`,
+          );
+        }
+        appendLog("Canonical Inbox membership is available on Aztec.");
+
+        const deploymentAttempts = buildRecoveryGhostDeploymentAttempts({
           feePayer: activeSession.metadata?.feePayer,
-          activeAddress: activeOwner,
+          activeAddress: currentOwnerAddress,
           enableLocalTestBootstrap: env.enableLocalTestBootstrap,
           localTestAccountIndex: env.localTestAccountIndex,
         });
-        let recoveredTxHash: string | undefined;
-        let lastRecoveryError: unknown;
-        for (const [index, attempt] of attempts.entries()) {
+        let ghostSession: Awaited<ReturnType<typeof createTransientGhostWalletSession>> | undefined;
+        const deploymentErrors: string[] = [];
+        for (const deployment of deploymentAttempts) {
           try {
-            const transientGhost = await createTransientGhostWalletSession({
+            ghostSession = await createTransientGhostWalletSession({
               nodeUrl: env.aztecNodeUrl,
-              uniqueIdentifier: completion.uniqueIdentifier,
+              uniqueIdentifier: artifact.metadata.identityValue.toString(),
               credentialType: CredentialType.Passport,
-              derivationVersion: preflight.ghostDerivationVersion,
-              ...attempt,
+              derivationVersion: SCOPED_GHOST_DERIVATION_VERSION,
+              ...deployment,
             });
-            try {
-              if (transientGhost.ghostAddress !== preflight.derivedGhostOwner) {
-                throw new Error(
-                  `Ghost derivation mismatch. preflight=${preflight.derivedGhostOwner} local=${transientGhost.ghostAddress}`,
-                );
-              }
-              const ghostClient = new MagnaBrowserClient(transientGhost.wallet, env, transientGhost.ghostAddress);
-              const hintedRootRecovery = await ghostClient.fetchRootRecoveryHint(
-                transientGhost.ghostAddress,
-                ref.rootCommitment!,
-              );
-              const recovered = await ghostClient.recoverRoot(hintedRootRecovery, recoveryTargetAddress);
-              recoveredTxHash = recovered.txHash;
-              break;
-            } finally {
-              await transientGhost.dispose();
-            }
+            break;
           } catch (error) {
-            lastRecoveryError = error;
-            if (index < attempts.length - 1) {
-              appendLog(
-                `Root recovery attempt failed with preferred fee payer; retrying fallback: ${errorMessage(error)}`,
-              );
-            }
+            deploymentErrors.push(errorMessage(error));
           }
         }
-        if (lastRecoveryError && !recoveredTxHash) {
-          throw lastRecoveryError;
+        if (!ghostSession) {
+          throw new Error(`Could not prepare the authenticated Ghost account: ${deploymentErrors.join(" | ")}`);
         }
-        const recoveredRef: StoredCredentialRef = {
-          ...ref,
-          ownerAddress: recoveryTargetAddress,
-          status: "recovery_pending",
-          updatedAt: new Date().toISOString(),
-          renewalTxHash: recoveredTxHash ?? ref.renewalTxHash,
-        };
-        setCredentials(upsertCredentialRef(recoveredRef));
+        appendLog("Authenticated Ghost account prepared in an isolated in-memory PXE.");
+        let submittedFinalization: PendingRecoveryV3Finalization | undefined;
+        try {
+          if (normalizeAddress(ghostSession.ghostAddress) !== normalizeAddress(ref.ghostOwner)) {
+            throw new Error(
+              `Prepared Ghost account does not own the selected recovery note. ` +
+                `prepared=${ghostSession.ghostAddress} stored=${ref.ghostOwner}`,
+            );
+          }
+          if (localFundingEnabled && env.l1RpcUrl && env.localFaucetPrivateKey) {
+            appendLog("Funding the transient recovery Ghost through the chain-31337 UI faucet.");
+            const ghostFunding = await fundLocalFeeJuice({
+              wallet: ghostSession.wallet,
+              recipient: ghostSession.ghostAddress,
+              nodeUrl: env.aztecNodeUrl,
+              l1RpcUrl: env.l1RpcUrl,
+              l1PrivateKey: env.localFaucetPrivateKey as `0x${string}`,
+              localTestAccountIndex: env.localTestAccountIndex,
+              onProgress: progress => appendLog(`Local Fee Juice recovery Ghost: ${progress}.`),
+            });
+            appendLog(
+              `Recovery Ghost Fee Juice: ${ghostFunding.balanceBefore.toString()} -> ` +
+                `${ghostFunding.balanceAfter.toString()} base units (claim ${ghostFunding.claimTxHash}).`,
+            );
+          }
+          const preparedAt = new Date().toISOString();
+          const recoveredCredential: StoredCredentialRef = {
+            ...ref,
+            id: credentialId({
+              ownerAddress: recoveryTargetAddress,
+              kind: "passport",
+              claimsHash: artifact.metadata.claimsHash.toString(),
+              issuerAddress: ref.issuerAddress,
+              mode: "rooted",
+              rootCommitment: authenticatedRoot.toString(),
+            }),
+            ownerAddress: recoveryTargetAddress,
+            status: "recovery_pending",
+            claimsHash: artifact.metadata.claimsHash.toString(),
+            rootCommitment: authenticatedRoot.toString(),
+            ghostOwner: ghostSession.ghostAddress,
+            ghostDerivationVersion: SCOPED_GHOST_DERIVATION_VERSION,
+            recoveryTxHash: undefined,
+            updatedAt: preparedAt,
+            passportCommittedClaimsV2Witness: {
+              ...localClaimsWitness,
+              nationalityBlind: artifact.metadata.nationalityBlind.toString(),
+              expiryBlind: artifact.metadata.expiryBlind.toString(),
+            },
+          };
+          const preparedFinalization: PendingRecoveryV3Finalization = {
+            version: 1,
+            phase: "prepared",
+            sourceCredentialId: ref.id,
+            target: recoveryTarget,
+            recoveredCredential,
+            createdAt: preparedAt,
+            updatedAt: preparedAt,
+          };
+          savePendingRecoveryV3Finalization(preparedFinalization);
+          setPendingRecoveryFinalization(preparedFinalization);
+          setZkStage("consuming_recovery_v3_inbox");
+          const ghostClient = new MagnaBrowserClient(ghostSession.wallet, env, ghostSession.ghostAddress);
+          const hintedRootRecovery = await ghostClient.fetchRootRecoveryHint(
+            ghostSession.ghostAddress,
+            authenticatedRoot,
+          );
+          const recoveryOutcome = await ghostClient.recoverRootV3(hintedRootRecovery, {
+            destination: recoveryTargetAddress,
+            nonce: prepared.recoveryNonce,
+            claimsHash: artifact.metadata.claimsHash,
+            credentialValidUntil: artifact.metadata.credentialValidUntil,
+            messageSecret: prepared.messageSecret,
+            messageLeafIndex: evidence.messageLeafIndex,
+          });
+          appendLog(`Recovery V3 Aztec issuer tx: ${recoveryOutcome.txHash}`);
+          const submittedAt = new Date().toISOString();
+          submittedFinalization = {
+            ...preparedFinalization,
+            phase: "submitted",
+            recoveryTxHash: recoveryOutcome.txHash,
+            recoveredCredential: {
+              ...recoveredCredential,
+              recoveryTxHash: recoveryOutcome.txHash,
+              updatedAt: submittedAt,
+            },
+            updatedAt: submittedAt,
+          };
+          savePendingRecoveryV3Finalization(submittedFinalization);
+          setPendingRecoveryFinalization(submittedFinalization);
+          await Promise.all([
+            ghostClient.fetchRootRecoveryHint(ghostSession.ghostAddress, authenticatedRoot),
+            ghostClient.fetchLinkedRecoveryHint(
+              ghostSession.ghostAddress,
+              authenticatedRoot,
+              artifact.metadata.claimsHash,
+            ),
+          ]);
+          appendLog("Fresh Ghost-owned root and linked recovery notes are discoverable after recovery.");
+        } finally {
+          await ghostSession.dispose();
+          appendLog("Transient Ghost PXE disposed; the active passkey wallet session remains open.");
+        }
+
+        if (!submittedFinalization) {
+          throw new Error("Recovery V3 issuer transaction did not produce resumable finalization state.");
+        }
+
+        const targetClient = new MagnaBrowserClient(activeSession.wallet, env, recoveryTargetAddress);
+        const recoveredHints = await targetClient.fetchRootedPassportHintsByClaimsHash(
+          recoveryTargetAddress,
+          authenticatedRoot,
+          artifact.metadata.claimsHash,
+        );
+        if (!isRootedPassportHints(recoveredHints)) {
+          throw new Error("Recovered destination is missing the complete rooted passport note set.");
+        }
+        const recoveredChainState = await targetClient.readRootedPassportChainState(recoveredHints);
+        if (recoveredChainState.status !== "active") {
+          throw new Error(
+            `Recovered destination credential is ${recoveredChainState.status} at Aztec L2 block ` +
+              `${recoveredChainState.checkedAtBlock}.`,
+          );
+        }
+        completeRecoveryV3Finalization(submittedFinalization, recoveredHints, recoveredChainState);
         setNotice({
           tone: "success",
-          text: "Root recovery sent to the new passkey wallet. Re-issue credentials on the new wallet before verify.",
+          text: "Recovery V3 completed: the destination-bound Inbox authorization was consumed and the complete rooted passport note set was minted to the target passkey.",
         });
-        setZkStage("recovered");
-        navigate("/user/issue");
+        setZkStage("recovery_v3_complete");
       })
       .catch(error => {
         setNotice({ tone: "danger", text: errorMessage(error) });
@@ -1482,8 +2256,30 @@ export function App() {
       return (
         <UserLogin
           busy={busy}
-          onCreate={() => openPasskeyWallet("user", { forceCreate: true })}
-          onExisting={() => openPasskeyWallet("user")}
+          passkeyName={newPasskeyName}
+          setPasskeyName={setNewPasskeyName}
+          storedAccounts={storedPasskeyAccounts}
+          missingRememberedWallet={missingRememberedWallet}
+          onCreate={() => openPasskeyWallet("user", { forceCreate: true, passkeyName: newPasskeyName })}
+          onExisting={account =>
+            openPasskeyWallet("user", {
+              storedCredentialId: account.credentialId,
+              passkeyName: account.displayName,
+              expectedAddress: account.address,
+            })
+          }
+          onRestoreRemembered={profile => {
+            const publicKeyRecoveryBundle = boundWalletProfileRecoveryBundle(profile);
+            if (!publicKeyRecoveryBundle) {
+              setNotice({ tone: "danger", text: "The remembered wallet has no valid public passkey recovery value." });
+              return;
+            }
+            void openPasskeyWallet("user", {
+              publicKeyRecoveryBundle,
+              passkeyName: profile.label,
+              expectedAddress: profile.address,
+            });
+          }}
           onRecovery={() => goTo("/user/recovery")}
         />
       );
@@ -1564,7 +2360,17 @@ export function App() {
           <Recovery
             busy={busy}
             walletReady={isReadyWallet(session, walletProfile, env)}
-            recoveryTarget={recoveryTarget}
+            recoveryTarget={displayedRecoveryTarget}
+            recoveredCredentialChainState={recoveredCredentialChainState}
+            recoveryTransactionChainState={recoveryTransactionChainState}
+            recoveryComplete={Boolean(chainConfirmedRecoveredCredential)}
+            passkeyName={recoveryPasskeyName}
+            setPasskeyName={setRecoveryPasskeyName}
+            localFundingEnabled={localFundingEnabled}
+            targetFeeJuiceBalance={
+              displayedRecoveryTarget ? feeJuiceBalances[normalizeAddress(displayedRecoveryTarget.address)] : undefined
+            }
+            pendingRecoveryFinalization={pendingRecoveryFinalization}
             storedPublicKeyInput={storedPublicKeyInput}
             setStoredPublicKeyInput={setStoredPublicKeyInput}
             credentials={activeCredentialRefs}
@@ -1572,9 +2378,22 @@ export function App() {
             zkRequest={zkRequest}
             zkStage={zkStage}
             zkProofCount={zkProofCount}
-            onCreateTarget={() => openPasskeyWallet("user", { captureRecoveryTarget: true, forceCreate: true })}
+            onCreateTarget={() =>
+              openPasskeyWallet("user", {
+                captureRecoveryTarget: true,
+                forceCreate: true,
+                passkeyName: recoveryPasskeyName,
+              })
+            }
             onStoredTarget={() => useStoredPasskey("user", true)}
             onCopyTargetPublicKey={() => void copyRecoveryBundle()}
+            onFundTarget={
+              recoveryTarget
+                ? () => void fundLocalAddress(recoveryTarget.address, "recovery target")
+                : undefined
+            }
+            onFinalizePending={() => void resumeRecoveryV3Finalization()}
+            onOpenTarget={() => void openRecoveredTargetWallet()}
             onRecover={ref => void startRootRecovery(ref)}
           />
         </UserFrame>
@@ -1595,9 +2414,13 @@ export function App() {
         >
           <Settings
             env={env}
+            busy={busy}
             profile={walletProfile}
             session={session}
             recoveryBundle={latestRecoveryBundle}
+            localFundingEnabled={localFundingEnabled}
+            feeJuiceBalance={activeAddress ? feeJuiceBalances[normalizeAddress(activeAddress)] : undefined}
+            onFundActive={() => activeAddress && void fundLocalAddress(activeAddress, "active wallet")}
             onCopyRecoveryBundle={() => void copyRecoveryBundle()}
           />
         </UserFrame>
@@ -1646,6 +2469,10 @@ function WalletStatusPanel(props: {
   profile: WalletProfile | null;
   recoveryBundle: string;
   onCopyRecoveryBundle: () => void;
+  localFundingEnabled?: boolean;
+  feeJuiceBalance?: string;
+  onFund?: () => void;
+  busy?: boolean;
 }) {
   const identityAddress = walletIdentityAddress(props.session, props.profile, props.env);
   const status = identityAddress ? deploymentStatusFor(props.session, props.profile) : "not opened";
@@ -1656,9 +2483,21 @@ function WalletStatusPanel(props: {
         <span>Wallet readiness</span>
         <strong>{status}</strong>
       </div>
+      <KeyValue label="Wallet name" value={props.profile?.label ?? props.session?.metadata?.passkeyName ?? "legacy unnamed passkey"} />
       <KeyValue label="Address" value={identityAddress ?? "not opened"} />
       <KeyValue label="Session origin" value={sessionOriginFor(props.session, props.profile)} />
       <KeyValue label="Fee payer" value={feePayerFor(props.session, props.profile)} />
+      {props.localFundingEnabled ? (
+        <div className="local-funding-strip">
+          <div>
+            <span>Local Fee Juice</span>
+            <strong>{feeJuiceBalanceLabel(props.feeJuiceBalance)}</strong>
+          </div>
+          <button className="secondary" type="button" disabled={props.busy || !isReady} onClick={props.onFund}>
+            Fund active wallet
+          </button>
+        </div>
+      ) : null}
       <KeyValue label="Last opened" value={props.profile?.lastOpenedAt ?? "unknown"} />
       {!isReady ? (
         <p className="fine-print danger-text">
@@ -1699,6 +2538,28 @@ function StoredPasskeyInput(props: { value: string; onChange: (value: string) =>
         spellCheck={false}
       />
       <p>Expected format: uncompressed P-256 public key hex, starting with 04.</p>
+    </div>
+  );
+}
+
+function PasskeyNameInput(props: {
+  value: string;
+  onChange: (value: string) => void;
+  purpose: "wallet" | "recovery";
+}) {
+  const inputId = useId();
+  return (
+    <div className="passkey-name-input">
+      <label htmlFor={inputId}>New wallet name</label>
+      <input
+        id={inputId}
+        value={props.value}
+        onChange={event => props.onChange(event.target.value)}
+        maxLength={64}
+        autoComplete="off"
+        spellCheck={false}
+      />
+      <small>Passkey name that is being used to create the wallet.</small>
     </div>
   );
 }
@@ -1764,7 +2625,6 @@ function CompanyLogin(props: {
   onStored: () => void;
   onCopyRecoveryBundle: () => void;
 }) {
-  const identityAddress = walletIdentityAddress(props.session, props.profile, props.env);
   return (
     <main className="login-split">
       <section>
@@ -1790,10 +2650,15 @@ function CompanyLogin(props: {
   );
 }
 
-function UserLogin(props: {
+export function UserLogin(props: {
   busy: string | null;
+  passkeyName: string;
+  setPasskeyName: (value: string) => void;
+  storedAccounts: StoredWebAuthnAccount[];
+  missingRememberedWallet: WalletProfile | null;
   onCreate: () => void;
-  onExisting: () => void;
+  onExisting: (account: StoredWebAuthnAccount) => void;
+  onRestoreRemembered: (profile: WalletProfile) => void;
   onRecovery: () => void;
 }) {
   const busy = Boolean(props.busy);
@@ -1804,16 +2669,66 @@ function UserLogin(props: {
         <p className="eyebrow">Magna wallet</p>
         <h1>Sign in to Magna</h1>
         <p className="auth-sub">
-          Use the passkey on this device, or create a new wallet to get started. Your face or fingerprint unlocks it,
-          nothing leaves your device.
+          Choose the wallet you intend to open. Your face or fingerprint unlocks its passkey; private wallet material
+          never leaves the authenticator.
         </p>
-        <div className="auth-actions">
-          <button type="button" disabled={busy} onClick={props.onCreate}>
-            {busy ? "Opening wallet\u2026" : "Create new passkey wallet"}
-          </button>
-          <button className="secondary" type="button" disabled={busy} onClick={props.onExisting}>
-            Use existing wallet
-          </button>
+        {props.storedAccounts.length > 0 ? (
+          <div className="stored-wallet-picker" aria-label="Stored Magna wallets">
+            <div className="stored-wallet-picker-head">
+              <span>Stored wallets</span>
+              <small>Choose the passkey account you intend to open.</small>
+            </div>
+            {props.storedAccounts.map(account => (
+              <button
+                className="stored-wallet-choice"
+                type="button"
+                key={account.credentialId}
+                disabled={busy}
+                onClick={() => props.onExisting(account)}
+              >
+                <span>
+                  <strong>{account.displayName ?? "Legacy unnamed Magna passkey"}</strong>
+                  <small>{account.address}</small>
+                </span>
+                <b>Open</b>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="auth-empty-wallets">No Magna passkeys are remembered by this browser profile.</p>
+        )}
+        {props.missingRememberedWallet ? (
+          <div className="remembered-wallet-repair">
+            <div>
+              <span>Previous wallet record</span>
+              <strong>{props.missingRememberedWallet.label ?? "Legacy unnamed Magna passkey"}</strong>
+              <small>{props.missingRememberedWallet.address}</small>
+            </div>
+            <p>
+              Its passkey lookup entry was replaced by an earlier single-wallet build. Select the matching passkey to
+              restore the lookup record; Magna verifies the derived Aztec address before accepting it.
+            </p>
+            <button
+              type="button"
+              className="secondary"
+              disabled={busy}
+              onClick={() => props.onRestoreRemembered(props.missingRememberedWallet!)}
+            >
+              Restore previous wallet
+            </button>
+          </div>
+        ) : null}
+        <div className="create-wallet-panel">
+          <div className="create-wallet-panel-head">
+            <span>Create a different wallet</span>
+            <small>This name applies only to the new passkey.</small>
+          </div>
+          <PasskeyNameInput value={props.passkeyName} onChange={props.setPasskeyName} purpose="wallet" />
+          <div className="auth-actions">
+            <button type="button" disabled={busy || !props.passkeyName.trim()} onClick={props.onCreate}>
+              {busy ? "Opening wallet\u2026" : "Create new passkey wallet"}
+            </button>
+          </div>
         </div>
         <button className="auth-link" type="button" disabled={busy} onClick={props.onRecovery}>
           I forgot my account
@@ -1845,7 +2760,7 @@ function UserFrame(props: {
     <main className="workspace">
       <aside className="sidebar">
         <p className="eyebrow">User surface</p>
-        <span>{props.credentials.length} credential{props.credentials.length === 1 ? "" : "s"} stored</span>
+        <span>{props.credentials.length} credential{props.credentials.length === 1 ? "" : "s"} in active wallet</span>
         <nav>
           {tabs.map(([id, path, label]) => (
             <button
@@ -1895,15 +2810,17 @@ function Dashboard(props: {
 }) {
   if (!props.hasCredentials) {
     return (
-      <section className="empty-state">
-        <p className="eyebrow">No credentials</p>
-        <h2>Issue zkPassport or collect Instagram next.</h2>
-        <button type="button" onClick={() => props.go("/user/issue")}>Go to issuance</button>
+      <section className="dashboard-surface">
+        <div className="empty-state">
+          <p className="eyebrow">No credentials</p>
+          <h2>Issue zkPassport or collect Instagram next.</h2>
+          <button type="button" onClick={() => props.go("/user/issue")}>Go to issuance</button>
+        </div>
       </section>
     );
   }
   return (
-    <section>
+    <section className="dashboard-surface">
       <div className="section-heading">
         <div>
           <p className="eyebrow">Dashboard</p>
@@ -1921,15 +2838,28 @@ function Dashboard(props: {
 function CredentialCard(props: { refData: StoredCredentialRef; hintState?: CredentialHintState }) {
   const ref = props.refData;
   const passportAuthenticity = passportCredentialAuthenticityLabel(ref);
+  const chainGoverned = ref.kind === "passport" && ref.mode === "rooted";
+  const displayedStatus = chainGoverned
+    ? props.hintState?.chainState?.status ?? (props.hintState?.status === "loading" ? "checking" : "unverified")
+    : ref.status.replace(/_/g, " ");
+  const chainReason = props.hintState?.chainState
+    ? rootedChainStateReasonLabel(props.hintState.chainState.reason)
+    : undefined;
   return (
     <article className="credential-card">
       <div className="card-head">
         <span>{ref.kind}</span>
-        <strong>{ref.status.replace(/_/g, " ")}</strong>
+        <strong className={`credential-state credential-state-${displayedStatus.replace(/\s+/g, "-")}`}>
+          {displayedStatus}
+        </strong>
       </div>
       <KeyValue label="Claims hash" value={ref.claimsHash} />
       {passportAuthenticity ? <KeyValue label="Authenticity" value={passportAuthenticity} /> : null}
       {props.hintState ? <KeyValue label="Hinted notes" value={props.hintState.message ?? props.hintState.status} /> : null}
+      {chainReason ? <KeyValue label="Chain state" value={chainReason} /> : null}
+      {props.hintState?.chainState ? (
+        <KeyValue label="Checked at" value={`Aztec L2 block ${props.hintState.chainState.checkedAtBlock}`} />
+      ) : null}
       {ref.mode ? <KeyValue label="Mode" value={ref.mode} /> : null}
       {ref.rootCommitment ? <KeyValue label="Root commitment" value={ref.rootCommitment} /> : null}
       {ref.ghostOwner ? <KeyValue label="Ghost owner" value={ref.ghostOwner} /> : null}
@@ -1946,6 +2876,23 @@ function CredentialCard(props: { refData: StoredCredentialRef; hintState?: Crede
   );
 }
 
+export function rootedChainStateReasonLabel(reason: RootedCredentialChainState["reason"]): string {
+  switch (reason) {
+    case "chain-valid":
+      return "No credential, root, or authority revocation nullifier exists";
+    case "root-lineage-revoked-or-recovered":
+      return "Root lineage was revoked or recovered on-chain";
+    case "root-authority-superseded":
+      return "Root authority was superseded on-chain";
+    case "linked-credential-revoked":
+      return "Credential was revoked on-chain";
+    case "credential-expired":
+      return "Credential expired at the checked chain timestamp";
+    case "root-authority-expired":
+      return "Root authority expired at the checked chain timestamp";
+  }
+}
+
 function zkUserStatus(stage: string): "pending" | "success" | "failed" {
   if (stage === "issued" || stage === "renewed" || stage === "recovered") return "success";
   if (stage === "error" || stage === "rejected") return "failed";
@@ -1958,7 +2905,7 @@ function zkStatusMessage(status: "pending" | "success" | "failed"): string {
   return "Pending. Credential issuance is being finalized.";
 }
 
-function Issuance(props: {
+export function Issuance(props: {
   busy: string | null;
   walletReady: boolean;
   zkRequest: ActiveZkPassportRequest | null;
@@ -1975,8 +2922,9 @@ function Issuance(props: {
   onReconnect: () => void;
   onStartZkPassport: () => void;
   onIssueInstagram: () => void;
+  initialOpenRail?: CredentialRailId;
 }) {
-  const [openRail, setOpenRail] = useState<CredentialRailId | null>(null);
+  const [openRail, setOpenRail] = useState<CredentialRailId | null>(props.initialOpenRail ?? null);
 
   function railBody(rail: CredentialRail) {
     if (rail.id === "passport") {
@@ -2041,7 +2989,11 @@ function Issuance(props: {
           <button type="button" disabled={Boolean(props.busy || !props.walletReady)} onClick={props.onIssueInstagram}>
             Issue Instagram credential
           </button>
-          <p className="fine-print">We privately verify your Instagram security email to confirm the handle is yours. Nothing is posted or shared.</p>
+          <p className="fine-print">
+            Your browser verifies the .eml and generates the proof locally. Neither the email nor the Instagram
+            handle leaves this device; Magna API receives only the proof and its proof-bound public fields, including
+            the blinded handle commitment.
+          </p>
         </>
       );
     }
@@ -2139,6 +3091,7 @@ function Renewal(props: {
               props.busy ||
                 !props.walletReady ||
                 props.zkRequest ||
+                hintState?.chainState?.status !== "active" ||
                 !hintState?.hints ||
                 !isRootedPassportHints(hintState.hints),
             )}
@@ -2156,6 +3109,14 @@ export function Recovery(props: {
   busy: string | null;
   walletReady: boolean;
   recoveryTarget: WalletProfile | null;
+  recoveryComplete?: boolean;
+  recoveredCredentialChainState?: RootedCredentialChainState;
+  recoveryTransactionChainState?: RecoveryTransactionChainState | null;
+  passkeyName: string;
+  setPasskeyName: (value: string) => void;
+  localFundingEnabled?: boolean;
+  targetFeeJuiceBalance?: string;
+  pendingRecoveryFinalization?: PendingRecoveryV3Finalization | null;
   storedPublicKeyInput: string;
   setStoredPublicKeyInput: (value: string) => void;
   credentials: StoredCredentialRef[];
@@ -2166,10 +3127,18 @@ export function Recovery(props: {
   onCreateTarget: () => void;
   onStoredTarget: () => void;
   onCopyTargetPublicKey: () => void;
+  onFundTarget?: () => void;
+  onFinalizePending?: () => void;
+  onOpenTarget: () => void;
   onRecover: (ref: StoredCredentialRef) => void;
 }) {
   const rootedPassport = props.credentials.find(ref => ref.kind === "passport" && ref.mode === "rooted");
   const hintState = rootedPassport ? props.hints[rootedPassport.id] : undefined;
+  const recoveryComplete =
+    props.recoveryComplete &&
+    props.recoveredCredentialChainState?.status === "active" &&
+    props.recoveryTransactionChainState?.status === "confirmed" &&
+    Boolean(props.recoveryTarget);
   return (
     <section className="recovery-surface">
       <div className="section-heading">
@@ -2179,19 +3148,73 @@ export function Recovery(props: {
         </div>
       </div>
       {!props.walletReady ? <WalletBlockBanner /> : null}
+      {recoveryComplete && props.recoveryTarget ? (
+        <article className="recovery-complete-state recovery-complete-banner" role="status">
+          <p className="eyebrow">Rotation complete</p>
+          <h4>The passport credential now belongs to the new passkey.</h4>
+          <p>
+            The source wallet remains open only as the previous session. Its credential count is zero because the old
+            root lineage was consumed on-chain.
+          </p>
+          <KeyValue
+            label="Recovery transaction"
+            value={`Successful at Aztec L2 block ${props.recoveryTransactionChainState?.blockNumber ?? "unknown"}`}
+          />
+          <KeyValue
+            label="Chain verification"
+            value={`Active at Aztec L2 block ${props.recoveredCredentialChainState?.checkedAtBlock ?? "unknown"}`}
+          />
+          <KeyValue label="Recovered owner" value={props.recoveryTarget.address} />
+          <KeyValue label="Recovered wallet" value={props.recoveryTarget.label ?? "recovered passkey"} />
+          {props.recoveryTarget.publicKey ? (
+            <button type="button" disabled={Boolean(props.busy)} onClick={props.onOpenTarget}>
+              Open recovered wallet
+            </button>
+          ) : (
+            <p className="fine-print danger-text">
+              Paste the target public key below and choose “Use stored passkey target” once. Magna will verify that it
+              derives this exact recovered owner before enabling the wallet switch.
+            </p>
+          )}
+        </article>
+      ) : null}
       <div className="issue-grid">
         <article className="issue-card">
           <h3>New passkey target</h3>
-          <button type="button" disabled={Boolean(props.busy)} onClick={props.onCreateTarget}>Create new passkey target</button>
+          <PasskeyNameInput value={props.passkeyName} onChange={props.setPasskeyName} purpose="recovery" />
+          <button
+            type="button"
+            disabled={Boolean(props.busy || !props.walletReady || !props.passkeyName.trim())}
+            onClick={props.onCreateTarget}
+          >
+            Create new passkey target
+          </button>
           <StoredPasskeyInput value={props.storedPublicKeyInput} onChange={props.setStoredPublicKeyInput} />
-          <button className="secondary" type="button" disabled={Boolean(props.busy)} onClick={props.onStoredTarget}>
+          <button className="secondary" type="button" disabled={Boolean(props.busy || !props.walletReady)} onClick={props.onStoredTarget}>
             Use stored passkey target
           </button>
           {props.recoveryTarget ? (
             <>
               <KeyValue label="Target address" value={props.recoveryTarget.address} />
+              <KeyValue label="Target wallet name" value={props.recoveryTarget.label ?? "legacy unnamed passkey"} />
               <KeyValue label="Target deployment" value={props.recoveryTarget.deploymentStatus ?? "unknown"} />
               <KeyValue label="Target fee payer" value={props.recoveryTarget.feePayer ?? "not configured"} />
+              {props.localFundingEnabled ? (
+                <div className="local-funding-strip">
+                  <div>
+                    <span>Target Fee Juice</span>
+                    <strong>{feeJuiceBalanceLabel(props.targetFeeJuiceBalance)}</strong>
+                  </div>
+                  <button
+                    className="secondary"
+                    type="button"
+                    disabled={Boolean(props.busy || !props.onFundTarget)}
+                    onClick={props.onFundTarget}
+                  >
+                    Fund recovery target
+                  </button>
+                </div>
+              ) : null}
               {props.recoveryTarget.publicKey ? (
                 <div className="recovery-bundle">
                   <label>
@@ -2201,35 +3224,71 @@ export function Recovery(props: {
                   <button className="secondary" type="button" onClick={props.onCopyTargetPublicKey}>
                     Copy target public key
                   </button>
+                  <button type="button" disabled={Boolean(props.busy)} onClick={props.onOpenTarget}>
+                    Open saved recovery target
+                  </button>
+                  <p className="fine-print">
+                    The saved target identifies the passkey to open. Credential validity is independently checked from
+                    Aztec after the wallet is opened.
+                  </p>
                 </div>
               ) : (
-                <KeyValue label="Target public key" value="not available" />
+                <>
+                  <KeyValue label="Target public key" value="not available" />
+                  <p className="fine-print danger-text">
+                    This browser does not have the target public-key bundle. Paste that target's bundle above; the
+                    derived address must match before Magna will save or open it.
+                  </p>
+                </>
               )}
             </>
           ) : null}
         </article>
         <article className="issue-card">
           <h3>Root rotation</h3>
-          <KeyValue label="Rooted credential" value={rootedPassport?.claimsHash ?? "missing"} />
-          <KeyValue label="Hinted notes" value={hintState?.message ?? hintState?.status ?? "not loaded"} />
-          <KeyValue label="zkPassport stage" value={props.zkStage} />
-          <KeyValue label="Proofs generated" value={String(props.zkProofCount)} />
-          <button
-            type="button"
-            disabled={Boolean(
-              props.busy ||
-                !props.walletReady ||
-                props.zkRequest ||
-                !props.recoveryTarget ||
-                !isDeployedProfile(props.recoveryTarget) ||
-                !rootedPassport ||
-                !hintState?.hints ||
-                !isRootedPassportHints(hintState.hints),
-            )}
-            onClick={() => rootedPassport && props.onRecover(rootedPassport)}
-          >
-            Recover root to target
-          </button>
+          {props.pendingRecoveryFinalization ? (
+            <div className="recovery-bundle">
+              <KeyValue label="Pending finalization" value={props.pendingRecoveryFinalization.phase} />
+              <KeyValue label="Pending target" value={props.pendingRecoveryFinalization.target.address} />
+              <KeyValue
+                label="Recovery transaction"
+                value={props.pendingRecoveryFinalization.recoveryTxHash ?? "submission status unknown"}
+              />
+              <button
+                className="secondary"
+                type="button"
+                disabled={Boolean(props.busy || !props.walletReady)}
+                onClick={props.onFinalizePending}
+              >
+                Resume destination note finalization
+              </button>
+            </div>
+          ) : null}
+          {!recoveryComplete ? (
+            <>
+              <KeyValue label="Rooted credential" value={rootedPassport?.claimsHash ?? "missing"} />
+              <KeyValue label="Hinted notes" value={hintState?.message ?? hintState?.status ?? "not loaded"} />
+              <KeyValue label="zkPassport stage" value={props.zkStage} />
+              <KeyValue label="Proofs generated" value={String(props.zkProofCount)} />
+              <button
+                type="button"
+                disabled={Boolean(
+                  props.busy ||
+                    !props.walletReady ||
+                    props.zkRequest ||
+                    !props.recoveryTarget ||
+                    !isDeployedProfile(props.recoveryTarget) ||
+                    !rootedPassport ||
+                    hintState?.chainState?.status !== "active" ||
+                    !hintState?.hints ||
+                    !isRootedPassportHints(hintState.hints),
+                )}
+                onClick={() => rootedPassport && props.onRecover(rootedPassport)}
+              >
+                Recover root to target
+              </button>
+            </>
+          ) : null}
           {props.zkRequest ? (
             <div className="qr-block">
               <QRCode value={props.zkRequest.url} size={168} />
@@ -2244,9 +3303,13 @@ export function Recovery(props: {
 
 function Settings(props: {
   env: ManagementEnv;
+  busy: string | null;
   profile: WalletProfile | null;
   session: WalletSession | null;
   recoveryBundle: string;
+  localFundingEnabled: boolean;
+  feeJuiceBalance?: string;
+  onFundActive: () => void;
   onCopyRecoveryBundle: () => void;
 }) {
   const identityAddress = walletIdentityAddress(props.session, props.profile, props.env);
@@ -2265,6 +3328,10 @@ function Settings(props: {
           profile={props.profile}
           recoveryBundle={props.recoveryBundle}
           onCopyRecoveryBundle={props.onCopyRecoveryBundle}
+          localFundingEnabled={props.localFundingEnabled}
+          feeJuiceBalance={props.feeJuiceBalance}
+          onFund={props.onFundActive}
+          busy={Boolean(props.busy)}
         />
         <article className="credential-card">
           <KeyValue label="Address" value={identityAddress ?? "not connected"} />

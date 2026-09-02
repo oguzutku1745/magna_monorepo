@@ -1,6 +1,6 @@
 import { ContractInitializationStatus, type Wallet } from "@aztec/aztec.js/wallet";
 import { AztecAddress } from "@aztec/aztec.js/addresses";
-import { Fr } from "@aztec/aztec.js/fields";
+import { Fq, Fr } from "@aztec/aztec.js/fields";
 import { SetPublicAuthwitContractInteraction } from "@aztec/aztec.js/authorization";
 import { NoteStatus, type NoteDao } from "@aztec/stdlib/note";
 import { getSchnorrAccountContractAddress } from "@aztec/accounts/schnorr";
@@ -50,6 +50,7 @@ import type { MagnaBrowserEnv as MagnaAppEnv } from "./env.js";
 import { createEmbeddedWallet, ensureImportedLocalTestAccountAddress } from "../embedded/lifecycle.js";
 import { createPublicClient, createWalletClient, http, pad, parseAbiItem, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { readRootedCredentialChainState, type RootedCredentialChainState } from "./credential-chain-state.js";
 
 const MAGNA_CLAIMS_DS = 0x4d414743n;
 const MAGNA_PASSPORT_NATIONALITY_COMMITMENT_DS = 0x4d414e43n;
@@ -198,7 +199,7 @@ export const CONTRACT_COMPATIBILITY_REQUIREMENTS = {
     "is_company_sponsor_gateway",
     "refresh_root_authority",
     "recover",
-    "recover_root",
+    "recover_root_v3",
     "get_credential_hinted",
     "get_status_hinted",
     "get_root_status_hinted",
@@ -293,6 +294,14 @@ function fieldFromHexString(value: string, label: string): Fr {
   }
 }
 
+function signingKeyFromHexString(value: string, label: string): Fq {
+  try {
+    return Fq.fromHexString(value.startsWith("0x") ? value : `0x${value}`);
+  } catch {
+    throw new Error(`${label} must be a valid Grumpkin scalar hex string.`);
+  }
+}
+
 function unwrapSimulationResult<T>(value: T | { result: T }): T {
   if (value && typeof value === "object" && "result" in value) {
     return value.result as T;
@@ -347,7 +356,7 @@ function toAztecAddressValue(value: unknown): AztecAddress {
     return unwrapped;
   }
   if (typeof unwrapped === "string") {
-    return AztecAddress.fromString(unwrapped);
+    return AztecAddress.fromStringUnsafe(unwrapped);
   }
   if (unwrapped && typeof unwrapped === "object" && "inner" in unwrapped) {
     return toAztecAddressValue((unwrapped as { inner: unknown }).inner);
@@ -355,7 +364,7 @@ function toAztecAddressValue(value: unknown): AztecAddress {
   if (unwrapped && typeof (unwrapped as { toString?: () => string }).toString === "function") {
     const asString = (unwrapped as { toString: () => string }).toString();
     if (asString && asString !== "[object Object]") {
-      return AztecAddress.fromString(asString);
+      return AztecAddress.fromStringUnsafe(asString);
     }
   }
   throw new Error(`Cannot convert value to AztecAddress: ${String(unwrapped)}`);
@@ -608,7 +617,7 @@ export async function deriveGhostAccountPreview(input: GhostDerivationInputForm)
     derivationVersion,
   });
   const address = await getSchnorrAccountContractAddress(
-    fieldFromHexString(material.secretHex, "Ghost secret"),
+    signingKeyFromHexString(material.signingKeyHex, "Ghost signing key"),
     fieldFromHexString(material.saltHex, "Ghost salt"),
   );
   return {
@@ -1136,6 +1145,17 @@ export class MagnaBrowserClient {
     );
   }
 
+  async readRootedPassportChainState(hints: RootedPassportHints): Promise<RootedCredentialChainState> {
+    if (!this.env.issuerAddress) {
+      throw new Error("Issuer address is required for rooted credential chain-state validation.");
+    }
+    return await readRootedCredentialChainState({
+      node: getAztecNode(this.env.aztecNodeUrl),
+      issuerAddress: this.env.issuerAddress,
+      hints,
+    });
+  }
+
   async fetchRootedPassportHints(
     ownerAddress: string,
     rootCommitment: bigint | string,
@@ -1426,12 +1446,69 @@ export class MagnaBrowserClient {
     );
   }
 
-  async recoverRoot(hintedRootRecoveryNote: unknown, newActiveOwner: string): Promise<TxOutcome> {
-    this.assertRealTransactionMode("recoverRoot");
+  async fetchLinkedRecoveryHint(
+    ownerAddress: string,
+    rootCommitment: bigint | string,
+    claimsHash: bigint | string,
+  ): Promise<unknown> {
+    await this.ensureContractsRegistered();
+    await this.ensureUserAccountIsDeployed();
+    await this.syncOrchestratorSender();
+    const normalizedRootCommitment = typeof rootCommitment === "bigint" ? rootCommitment : BigInt(rootCommitment);
+    const normalizedClaimsHash = typeof claimsHash === "bigint" ? claimsHash : BigInt(claimsHash);
+    for (let attempt = 0; attempt < HINT_SYNC_ATTEMPTS; attempt += 1) {
+      try {
+        await this.syncWalletPxeIfAvailable();
+        return await this.issuer.methods
+          .get_linked_recovery_hinted(
+            toAddress(ownerAddress),
+            toField(normalizedRootCommitment),
+            toField(normalizedClaimsHash),
+          )
+          .simulate({ from: toAddress(ownerAddress) })
+          .then((simulation: unknown) => unwrapSimulationResult(simulation));
+      } catch (error) {
+        if (!this.isHintedNoteLookupPendingError(error) || attempt === HINT_SYNC_ATTEMPTS - 1) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `Fetch linked recovery hint failed for root ${normalizedRootCommitment.toString()} ` +
+              `claims hash ${normalizedClaimsHash.toString()} on owner ${ownerAddress}: ${message}`,
+          );
+        }
+        await sleep(HINT_SYNC_DELAY_MS);
+      }
+    }
+
+    throw new Error(
+      `Fetch linked recovery hint timed out for root ${normalizedRootCommitment.toString()} ` +
+        `claims hash ${normalizedClaimsHash.toString()} on owner ${ownerAddress}.`,
+    );
+  }
+
+  async recoverRootV3(
+    hintedRootRecoveryNote: unknown,
+    authorization: {
+      destination: string;
+      nonce: bigint | string;
+      claimsHash: bigint | string;
+      credentialValidUntil: bigint | string;
+      messageSecret: bigint | string;
+      messageLeafIndex: bigint | string;
+    },
+  ): Promise<TxOutcome> {
+    this.assertRealTransactionMode("recoverRootV3");
     await this.ensureContractsRegistered();
     await this.ensureUserAccountIsDeployed();
     const receipt = await this.issuer.methods
-      .recover_root(hintedRootRecoveryNote as never, toAddress(newActiveOwner))
+      .recover_root_v3(
+        hintedRootRecoveryNote as never,
+        toAddress(authorization.destination),
+        toField(BigInt(authorization.nonce)),
+        toField(BigInt(authorization.claimsHash)),
+        BigInt(authorization.credentialValidUntil),
+        toField(BigInt(authorization.messageSecret)),
+        toField(BigInt(authorization.messageLeafIndex)),
+      )
       .send({ from: toAddress(this.userAddress) });
     return {
       txHash: readTxHash(receipt),

@@ -120,7 +120,7 @@ export async function buildSponsoredFeeConfig(
 ): Promise<FeeConfig> {
   const { SponsoredFeePaymentMethod } = await import("@aztec/aztec.js/fee/testing");
   return {
-    paymentMethod: new SponsoredFeePaymentMethod(AztecAddress.fromString(sponsoredFpcAddress)),
+    paymentMethod: new SponsoredFeePaymentMethod(AztecAddress.fromStringUnsafe(sponsoredFpcAddress)),
     estimateGas: true,
     estimatedGasPadding: 0.2,
   };

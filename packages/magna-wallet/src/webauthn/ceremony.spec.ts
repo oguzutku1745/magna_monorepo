@@ -36,6 +36,7 @@ test("evaluates credential-scoped PRF outputs for Aztec account material", async
   const request = getCalls[0];
   assert.equal(request.rpId, "wallet.example");
   assert.deepEqual(new Uint8Array(request.allowCredentials![0].id as ArrayBuffer), new Uint8Array([1, 2, 3, 4]));
+  assert.deepEqual(request.allowCredentials![0].transports, ["internal", "hybrid"]);
   assert.deepEqual(
     (request.extensions as WebAuthnPrfInputs).prf.evalByCredential.AQIDBA.first,
     new TextEncoder().encode(AZTEC_ACCOUNT_SECRET_PRF_LABEL),
@@ -140,6 +141,7 @@ function registrationFixture(): WebAuthnRegistration {
     rpId: "wallet.example",
     rpIdHash: new Uint8Array(32).fill(3),
     origin: "https://wallet.example",
+    transports: ["internal", "hybrid"],
   };
 }
 

@@ -5,4 +5,4 @@ authors = ["Magna Team"]
 compiler_version = ">=1.0.0"
 
 [dependencies]
-zkemail = { tag = "v0.4.2", git = "https://github.com/zkemail/zkemail.nr", directory = "lib" }
+zkemail = { tag = "v2.0.0", git = "https://github.com/zkemail/zkemail.nr", directory = "lib" }

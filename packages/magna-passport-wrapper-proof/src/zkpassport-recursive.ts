@@ -18,6 +18,21 @@ export type ZkPassportRecursiveArtifacts = {
   vkeyFields: string[];
 };
 
+const FIELD_MODULUS =
+  21888242871839275222246405745257275088548364400416034343698204186575808495617n;
+
+function encodedFieldToDecimal(value: string, label: string): string {
+  const hex = value.trim().replace(/^0x/i, "");
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
+    throw new Error(`${label} must be an exactly 32-byte hexadecimal field.`);
+  }
+  const parsed = BigInt(`0x${hex}`);
+  if (parsed >= FIELD_MODULUS) {
+    throw new Error(`${label} is outside the Noir field modulus.`);
+  }
+  return parsed.toString();
+}
+
 function normalizeHash(value: string, label: string): string {
   const hex = value.trim().replace(/^0x/i, "");
   if (!/^[0-9a-fA-F]{1,64}$/.test(hex)) {
@@ -95,8 +110,16 @@ export async function resolveZkPassportRecursiveArtifacts(
     "zkPassport outer verification key",
   );
   return {
-    proofFields: proofData.proof.map(value => BigInt(value).toString()),
-    publicInputs: proofData.publicInputs.map(value => BigInt(value).toString()),
-    vkeyFields: vkeyFields.map(value => BigInt(value).toString()),
+    // zkPassport getProofData returns private proof fields as unprefixed hex,
+    // while its public inputs are 0x-prefixed. Normalize both explicitly.
+    proofFields: proofData.proof.map((value, index) =>
+      encodedFieldToDecimal(value, `zkPassport outer proof field ${index}`),
+    ),
+    publicInputs: proofData.publicInputs.map((value, index) =>
+      encodedFieldToDecimal(value, `zkPassport outer public input ${index}`),
+    ),
+    vkeyFields: vkeyFields.map((value, index) =>
+      encodedFieldToDecimal(value, `zkPassport outer verification-key field ${index}`),
+    ),
   };
 }

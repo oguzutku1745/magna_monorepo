@@ -1,5 +1,5 @@
 use crate::constants::{
-    COMMA, MAX_INSTAGRAM_HANDLE_LENGTH, TEMPLATE_ENGLISH, TEMPLATE_TURKISH, ZERO,
+    MAX_INSTAGRAM_HANDLE_LENGTH, PERIOD, TEMPLATE_ENGLISH, ZERO,
 };
 
 fn is_digit(byte: u8) -> bool {
@@ -15,20 +15,10 @@ fn is_handle_char(byte: u8) -> bool {
 }
 
 fn english_prefix_matches<let N: u32>(body: BoundedVec<u8, N>, prefix_index: u32) -> bool {
-    let prefix = comptime { "Hi ".as_bytes() };
-    let in_bounds = prefix_index + 3 <= body.len();
+    let prefix = comptime { "and intended for ".as_bytes() };
+    let in_bounds = prefix_index + 17 <= body.len();
     let mut matches = in_bounds;
-    for i in 0..3 {
-        matches = matches & (body.get_unchecked(prefix_index + i) == prefix[i]);
-    }
-    matches
-}
-
-fn turkish_prefix_matches<let N: u32>(body: BoundedVec<u8, N>, prefix_index: u32) -> bool {
-    let prefix = comptime { "Merhaba ".as_bytes() };
-    let in_bounds = prefix_index + 8 <= body.len();
-    let mut matches = in_bounds;
-    for i in 0..8 {
+    for i in 0..17 {
         matches = matches & (body.get_unchecked(prefix_index + i) == prefix[i]);
     }
     matches
@@ -36,9 +26,7 @@ fn turkish_prefix_matches<let N: u32>(body: BoundedVec<u8, N>, prefix_index: u32
 
 pub fn prefix_length(template_kind: u8) -> u32 {
     if template_kind == TEMPLATE_ENGLISH {
-        3
-    } else if template_kind == TEMPLATE_TURKISH {
-        8
+        17
     } else {
         0
     }
@@ -57,14 +45,11 @@ pub fn assert_instagram_handle_match<let N: u32>(
         "Instagram handle is too long",
     );
 
-    let prefix_ok = if template_kind == TEMPLATE_ENGLISH {
-        english_prefix_matches(decoded_body, prefix_index)
-    } else if template_kind == TEMPLATE_TURKISH {
-        turkish_prefix_matches(decoded_body, prefix_index)
-    } else {
-        false
-    };
-    assert(prefix_ok, "Instagram greeting prefix not found at asserted index");
+    assert(template_kind == TEMPLATE_ENGLISH, "Unsupported Instagram email template");
+    assert(
+        english_prefix_matches(decoded_body, prefix_index),
+        "Instagram ownership footer not found at asserted index",
+    );
 
     let handle_start = prefix_index + prefix_length(template_kind);
     assert(
@@ -88,8 +73,8 @@ pub fn assert_instagram_handle_match<let N: u32>(
     }
 
     assert(
-        decoded_body.get_unchecked(handle_start + claimed_handle_len) == COMMA,
-        "Instagram handle must be comma terminated",
+        decoded_body.get_unchecked(handle_start + claimed_handle_len) == PERIOD,
+        "Instagram footer handle must be period terminated",
     );
 
     packed

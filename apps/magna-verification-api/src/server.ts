@@ -6,9 +6,7 @@ import {
   hydrateVerificationApiEnvFromFiles,
   loadVerificationApiConfigFromEnv,
   verifyAndIssueInstagram,
-  verifyRootRecoveryPreflight,
   verifyAndRefreshRootAuthority,
-  type VerifyRootRecoveryPreflightA2Request,
   type VerifyAndRefreshRootAuthorityA2Request,
   type VerifyAndIssueInstagramRequest,
 } from "./service.js";
@@ -51,6 +49,7 @@ app.get("/health", (_req, res) => {
     service: "magna-verification-api",
     issuerAddress: config.issuerAddress,
     aztecNodeUrl: config.aztecNodeUrl,
+    instagramTrustedDkimKeyCount: config.instagramDkimPubkeyHashes.length,
   });
 });
 
@@ -111,19 +110,6 @@ app.post("/zkpassport/verify-and-refresh-root-authority", async (req, res) => {
   try {
     const payload = req.body as VerifyAndRefreshRootAuthorityA2Request;
     const result = await verifyAndRefreshRootAuthority(config, payload, loadIssuanceContext);
-    res.status(200).json(result);
-  } catch (error) {
-    const message = errorMessage(error);
-    res.status(400).json({
-      error: message,
-    });
-  }
-});
-
-app.post("/zkpassport/verify-for-root-recovery", async (req, res) => {
-  try {
-    const payload = req.body as VerifyRootRecoveryPreflightA2Request;
-    const result = await verifyRootRecoveryPreflight(config, payload);
     res.status(200).json(result);
   } catch (error) {
     const message = errorMessage(error);

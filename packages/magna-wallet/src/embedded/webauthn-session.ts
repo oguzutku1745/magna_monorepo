@@ -1,5 +1,6 @@
 import { AccountManager } from "@aztec/aztec.js/wallet";
 import type { Account } from "@aztec/aztec.js/account";
+import type { Wallet } from "@aztec/aztec.js/wallet";
 import { Fr } from "@aztec/aztec.js/fields";
 import { clearEmbeddedPxeCacheForNode, isAztecWorldStateAnchorError } from "../browser/pxe-cache.js";
 import { bytesToHex, hexToBytes } from "@magna/core";
@@ -31,6 +32,8 @@ export type StoredWebAuthnAccount = {
   rpId: string;
   origin: string;
   address: string;
+  displayName?: string;
+  transports?: AuthenticatorTransport[];
   walletMaterialSource: "webauthn-prf";
 };
 
@@ -50,10 +53,37 @@ export type WebAuthnWalletSessionOptions = {
   rpId: string;
   alias: string;
   forceCreate?: boolean;
+  storedCredentialId?: string;
   publicKeyRecoveryBundle?: string;
   storage?: Storage;
   localTestAccountIndex?: number;
   deployWithLocalTestAccount?: boolean;
+};
+
+export type RememberWebAuthnWalletSessionOptions = {
+  rpId: string;
+  origin: string;
+  displayName?: string;
+  storage?: Storage;
+};
+
+export type WebAuthnRecoveryTargetOptions = {
+  wallet: Wallet;
+  userName: string;
+  rpId: string;
+  publicKeyRecoveryBundle?: string;
+  storage?: Storage;
+  localTestAccountIndex?: number;
+  deployWithLocalTestAccount?: boolean;
+};
+
+export type WebAuthnRecoveryTarget = {
+  address: string;
+  displayName: string;
+  publicKeyRecoveryBundle: string;
+  deploymentStatus: "deployed" | "counterfactual";
+  feePayer?: string;
+  materialOrigin: "new" | "recovered";
 };
 
 const STORAGE_KEY = "magna-webauthn-accounts-v1";
@@ -90,10 +120,68 @@ export function loadStoredWebAuthnAccounts(storage: Storage): StoredWebAuthnAcco
 
 export function saveStoredWebAuthnAccount(storage: Storage, account: StoredWebAuthnAccount): void {
   const all = loadStoredWebAuthnAccounts(storage).filter(
-    a => a.credentialId !== account.credentialId && (a.rpId !== account.rpId || a.origin !== account.origin),
+    a => a.credentialId !== account.credentialId && a.address !== account.address,
   );
   all.push(account);
   storage.setItem(STORAGE_KEY, JSON.stringify(all));
+}
+
+/**
+ * Rebuilds the browser lookup record for an already-authenticated passkey
+ * session. This persists public credential metadata only; the PRF-derived
+ * Aztec secret and salt remain inside the WebAuthn ceremony/session.
+ */
+export async function rememberWebAuthnWalletSessionAccount(
+  session: WalletSession,
+  options: RememberWebAuthnWalletSessionOptions,
+): Promise<StoredWebAuthnAccount> {
+  if (session.kind !== "passkey") {
+    throw new Error("Only an authenticated passkey session can be remembered as a WebAuthn wallet.");
+  }
+  const credentialId = session.metadata?.credentialId;
+  const recoveryValue = session.metadata?.publicKeyRecoveryBundle;
+  if (!credentialId || !recoveryValue) {
+    throw new Error("The authenticated passkey session is missing its public credential metadata.");
+  }
+  const publicKey = parseWebAuthnPublicKeyRecoveryBundle(recoveryValue);
+  const address = session.activeAccount.address;
+  if (publicKey.address && publicKey.address !== address) {
+    throw new Error(`Authenticated passkey address mismatch. expected=${publicKey.address} actual=${address}`);
+  }
+  const displayName = options.displayName?.trim() || session.metadata?.passkeyName?.trim();
+  const account: StoredWebAuthnAccount = {
+    credentialId,
+    publicKeyX: publicKey.publicKeyX,
+    publicKeyY: publicKey.publicKeyY,
+    rpIdHash: bytesToHex(await computeWebAuthnRpIdHash(options.rpId)),
+    rpId: options.rpId,
+    origin: options.origin,
+    address,
+    ...(displayName ? { displayName } : {}),
+    walletMaterialSource: "webauthn-prf",
+  };
+  saveStoredWebAuthnAccount(storageForOptions(options.storage), account);
+  return account;
+}
+
+export function selectStoredWebAuthnAccount(
+  accounts: StoredWebAuthnAccount[],
+  input: { rpId: string; origin?: string; credentialId?: string },
+): StoredWebAuthnAccount | undefined {
+  const eligible = accounts.filter(
+    account => account.rpId === input.rpId && (!input.origin || account.origin === input.origin),
+  );
+  if (input.credentialId) {
+    const selected = eligible.find(account => account.credentialId === input.credentialId);
+    if (!selected) {
+      throw new Error("The selected Magna passkey is not stored for this site.");
+    }
+    return selected;
+  }
+  if (eligible.length > 1) {
+    throw new Error("Multiple Magna passkeys are stored. Choose the named wallet you want to open.");
+  }
+  return eligible[0];
 }
 
 export function serializeWebAuthnPublicKeyRecoveryBundle(account: StoredWebAuthnAccount): string {
@@ -246,6 +334,7 @@ function registrationFromStored(account: StoredWebAuthnAccount): WebAuthnRegistr
     rpId: account.rpId,
     rpIdHash: hexToBytes(account.rpIdHash),
     origin: account.origin,
+    transports: account.transports,
   };
 }
 
@@ -271,6 +360,7 @@ function registrationFromPublicKeyRecovery(
 export function storedWebAuthnAccountFromRegistration(
   registration: WebAuthnRegistration,
   address: string,
+  displayName?: string,
 ): StoredWebAuthnAccount {
   return {
     credentialId: base64urlEncode(registration.credentialId),
@@ -280,6 +370,8 @@ export function storedWebAuthnAccountFromRegistration(
     rpId: registration.rpId,
     origin: registration.origin,
     address,
+    ...(displayName?.trim() ? { displayName: displayName.trim() } : {}),
+    ...(registration.transports?.length ? { transports: registration.transports } : {}),
     walletMaterialSource: "webauthn-prf",
   };
 }
@@ -311,6 +403,7 @@ async function installWebAuthnAccountResolverOnEmbeddedWallet(
 async function persistWebAuthnAccountOnEmbeddedWallet(
   wallet: EmbeddedWalletWithInternals,
   accountManager: AccountManager,
+  salt: Fr,
   alias: string,
 ): Promise<void> {
   if (!wallet.walletDB?.storeAccount) {
@@ -319,7 +412,7 @@ async function persistWebAuthnAccountOnEmbeddedWallet(
   await wallet.walletDB.storeAccount(accountManager.address, {
     type: "ecdsasecp256r1",
     secretKey: accountManager.getSecretKey(),
-    salt: Fr.ZERO,
+    salt,
     signingKey: accountManager.getSecretKey().toBuffer(),
     alias,
   });
@@ -330,6 +423,98 @@ async function deleteWebAuthnAccountFromEmbeddedWallet(
   accountManager: AccountManager,
 ): Promise<void> {
   await wallet.walletDB?.deleteAccount?.(accountManager.address);
+}
+
+/**
+ * Prepares a recovery destination through an already-open embedded wallet.
+ * The target never becomes the active wallet session and does not authorize
+ * recovery. It is retained as a secondary wallet-owned account so the PXE can
+ * decrypt and simulate reads of notes minted to it after Ghost-authorized
+ * recovery. The existing source wallet and local fee payer perform any
+ * required counterfactual deployment.
+ */
+export async function prepareWebAuthnRecoveryTarget(
+  options: WebAuthnRecoveryTargetOptions,
+): Promise<WebAuthnRecoveryTarget> {
+  const currentOrigin = globalThis.location?.origin;
+  if (!currentOrigin) {
+    throw new Error("Cannot prepare a WebAuthn recovery target without a wallet origin");
+  }
+
+  let registration: WebAuthnRegistration;
+  let secret: Fr;
+  let salt: Fr;
+  let materialOrigin: WebAuthnRecoveryTarget["materialOrigin"];
+  if (options.publicKeyRecoveryBundle) {
+    const bundle = parseWebAuthnPublicKeyRecoveryBundle(options.publicKeyRecoveryBundle);
+    if (bundle.rpId && bundle.rpId !== options.rpId) {
+      throw new Error(`Public key recovery bundle is for rpId ${bundle.rpId}, not ${options.rpId}`);
+    }
+    if (bundle.origin && bundle.origin !== currentOrigin) {
+      throw new Error(`Public key recovery bundle is for origin ${bundle.origin}, not ${currentOrigin}`);
+    }
+    const discovered = await discoverWebAuthnAccountPrf(options.rpId);
+    const material = webAuthnPrfOutputsToAccountMaterial(discovered);
+    registration = registrationFromPublicKeyRecovery(
+      bundle,
+      discovered,
+      await computeWebAuthnRpIdHash(options.rpId),
+      options.rpId,
+      currentOrigin,
+    );
+    secret = material.secret;
+    salt = material.salt;
+    materialOrigin = "recovered";
+  } else {
+    const material = await createWebAuthnAccountMaterial(options.userName, options.rpId);
+    registration = material.registration;
+    secret = material.secret;
+    salt = material.salt;
+    materialOrigin = "new";
+  }
+
+  const embeddedWallet = options.wallet as EmbeddedWalletWithInternals;
+  const accountManager = await AccountManager.create(
+    embeddedWallet,
+    secret,
+    webAuthnAccountContract(registration),
+    { salt },
+  );
+  await installWebAuthnAccountResolverOnEmbeddedWallet(embeddedWallet, accountManager);
+  await ensureAccountManagerRegistered(embeddedWallet, accountManager);
+  const deployment = await ensureAccountManagerDeployed(
+    embeddedWallet,
+    accountManager,
+    options.deployWithLocalTestAccount
+      ? { localTestAccountIndex: options.localTestAccountIndex ?? 0 }
+      : undefined,
+  );
+  // registerContract() above teaches PXE the target's contract and tagging
+  // secret, but EmbeddedWallet.simulateViaEntrypoint() also requires the
+  // address to exist in WalletDB. Without this record, destination-side hint
+  // discovery fails after the irreversible recovery tx with
+  // `Account "<target>" does not exist on this wallet.`
+  await persistWebAuthnAccountOnEmbeddedWallet(
+    embeddedWallet,
+    accountManager,
+    salt,
+    `WebAuthn recovery target ${accountManager.address.toString()}`,
+  );
+  const storedAccount = storedWebAuthnAccountFromRegistration(
+    registration,
+    accountManager.address.toString(),
+    options.userName,
+  );
+  saveStoredWebAuthnAccount(storageForOptions(options.storage), storedAccount);
+
+  return {
+    address: accountManager.address.toString(),
+    displayName: options.userName,
+    publicKeyRecoveryBundle: serializeWebAuthnPublicKeyRecoveryBundle(storedAccount),
+    deploymentStatus: deployment.isReady ? "deployed" : "counterfactual",
+    feePayer: deployment.feePayerAddress,
+    materialOrigin,
+  };
 }
 
 export async function createWebAuthnWalletSession(options: WebAuthnWalletSessionOptions): Promise<WalletSession> {
@@ -353,9 +538,11 @@ async function createWebAuthnWalletSessionOnce(options: WebAuthnWalletSessionOpt
       : null;
     const stored = options.forceCreate || recoveryBundle
       ? undefined
-      : loadStoredWebAuthnAccounts(storage).find(
-          account => account.rpId === options.rpId && account.origin === globalThis.location?.origin,
-        );
+      : selectStoredWebAuthnAccount(loadStoredWebAuthnAccounts(storage), {
+          rpId: options.rpId,
+          origin: globalThis.location?.origin,
+          credentialId: options.storedCredentialId,
+        });
     let registration: WebAuthnRegistration;
     let secret: Fr;
     let salt: Fr;
@@ -393,12 +580,14 @@ async function createWebAuthnWalletSessionOnce(options: WebAuthnWalletSessionOpt
       secret = material.secret;
       salt = material.salt;
       sessionOrigin = "recovered";
-    } else {
+    } else if (options.forceCreate) {
       const material = await createWebAuthnAccountMaterial(options.userName, options.rpId);
       registration = material.registration;
       secret = material.secret;
       salt = material.salt;
       sessionOrigin = "new";
+    } else {
+      throw new Error("No stored Magna passkey was selected. Choose a named wallet or create a new one.");
     }
 
     const accountManager = await AccountManager.create(wallet, secret, webAuthnAccountContract(registration), { salt });
@@ -406,7 +595,7 @@ async function createWebAuthnWalletSessionOnce(options: WebAuthnWalletSessionOpt
     if (recoveryBundle?.address && recoveryBundle.address !== address) {
       throw new Error(`Recovered WebAuthn account address mismatch. expected=${recoveryBundle.address} derived=${address}`);
     }
-    const storedAccount = stored ?? storedWebAuthnAccountFromRegistration(registration, address);
+    const storedAccount = stored ?? storedWebAuthnAccountFromRegistration(registration, address, options.userName);
     if (!stored) {
       saveStoredWebAuthnAccount(storage, storedAccount);
     }
@@ -419,7 +608,7 @@ async function createWebAuthnWalletSessionOnce(options: WebAuthnWalletSessionOpt
       accountManager,
       options.deployWithLocalTestAccount ? { localTestAccountIndex: options.localTestAccountIndex ?? 0 } : undefined,
     );
-    await persistWebAuthnAccountOnEmbeddedWallet(embeddedWallet, accountManager, `WebAuthn ${options.alias}`);
+    await persistWebAuthnAccountOnEmbeddedWallet(embeddedWallet, accountManager, salt, `WebAuthn ${options.alias}`);
 
     return buildWalletSession(
       "passkey",
@@ -436,6 +625,7 @@ async function createWebAuthnWalletSessionOnce(options: WebAuthnWalletSessionOpt
         storageMode: "persistent",
         walletAuth: "webauthn",
         credentialId: base64urlEncode(registration.credentialId),
+        passkeyName: storedAccount.displayName ?? options.userName,
         publicKeyRecoveryBundle: serializeWebAuthnPublicKeyRecoveryBundle(storedAccount),
         feePayer: deployment.feePayerAddress ?? "not-configured",
       },

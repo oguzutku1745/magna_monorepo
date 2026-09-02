@@ -4,6 +4,7 @@ use std::verify_proof_with_type;
 use zkpassport_age::calculate_param_commitment as calculate_age_param_commitment;
 use zkpassport_bind::calculate_param_commitment as calculate_bind_param_commitment;
 use zkpassport_disclose::calculate_param_commitment as calculate_disclose_param_commitment;
+use zkpassport_facematch::param_commit::calculate_param_commitment as calculate_facematch_param_commitment;
 
 global MAGNA_CLAIMS_DS: u32 = 0x4D414743; // "MAGC"
 global MAGNA_PASSPORT_NATIONALITY_COMMITMENT_DS: u32 = 0x4D414E43; // "MANC"
@@ -12,9 +13,9 @@ global MAGNA_ROOT_DS: u32 = 0x4D414749; // "MAGI"
 global MAGNA_PASSPORT_A2_CONTEXT_DS: u32 = 0x4D413243; // "MA2C"
 global PASSPORT_SCHEMA_VERSION_V2: u8 = 2;
 global PASSPORT_CREDENTIAL_TYPE: u8 = 1;
-global ZKPASSPORT_OUTER_COUNT_6_VKEY_HASH: Field =
-    0x1235fce6de6e5d5f86af3509d1c043bf531b5b01ca97a97eec45ac48ab0cec2c;
-global ZKPASSPORT_OUTER_PUBLIC_INPUT_COUNT: u32 = 11;
+global ZKPASSPORT_OUTER_COUNT_7_VKEY_HASH: Field =
+    0x19d93a8a69386b80903a8559d884bea729dc1ecc1db48afc6d3bb73d4ed3abbe;
+global ZKPASSPORT_OUTER_PUBLIC_INPUT_COUNT: u32 = 12;
 global ZKPASSPORT_OUTER_PROOF_SIZE: u32 = 458;
 global ZKPASSPORT_OUTER_VKEY_SIZE: u32 = 115;
 global ZKPASSPORT_PROOF_TYPE_HONK_ZK: u32 = 6;
@@ -22,9 +23,26 @@ global ZKPASSPORT_MRZ_LENGTH: u32 = 90;
 global ZKPASSPORT_BIND_LENGTH: u32 = 509;
 global PASSPORT_DOCUMENT_TYPE: u8 = 80; // "P"
 global ID_CARD_DOCUMENT_TYPE: u8 = 73; // "I"
+global ZKPASSPORT_SALTED_NULLIFIER_TYPE: Field = 1;
+global ZKPASSPORT_OPRF_PUBLIC_KEY_HASH: Field =
+    1178201404428554206520802247552222388413553631367032661928167491793274360628;
+global FACEMATCH_ENVIRONMENT_PRODUCTION: u8 = 1;
+global FACEMATCH_MODE_STRICT: u8 = 2;
+global APPLE_APP_ATTEST_ROOT_KEY_HASH: Field =
+    0x2532418a107c5306fa8308c22255792cf77e4a290cbce8a840a642a3e591340b;
+global GOOGLE_APP_ATTEST_RSA_ROOT_KEY_HASH: Field =
+    0x16700a2d9168a194fc85f237af5829b5a2be05b8ae8ac4879ada34cf54a9c211;
+global GOOGLE_APP_ATTEST_ECDSA_P384_ROOT_KEY_HASH: Field =
+    0x0e1889bec6c1d686abcf08360ff404f803ab345881ea8cba6aad33b7f7f7ffe0;
+global ZKPASSPORT_IOS_APP_ID_HASH: Field =
+    0x1fa73686cf510f8f85757b0602de0dd72a13e68ae2092462be8b72662e7f179b;
+global ZKPASSPORT_ANDROID_APP_ID_HASH: Field =
+    0x24d9929b248be7eeecaa98e105c034a50539610f3fdd4cb9c8983ef4100d615d;
+global GOOGLE_PLAY_INTEGRITY_PUBLIC_KEY_HASH: Field =
+    8544227306600425492560068004835614964118871262589609739238120993689090208159;
 
-fn contains(values: [Field; 3], expected: Field) -> bool {
-    (values[0] == expected) | (values[1] == expected) | (values[2] == expected)
+fn contains(values: [Field; 4], expected: Field) -> bool {
+    (values[0] == expected) | (values[1] == expected) | (values[2] == expected) | (values[3] == expected)
 }
 
 fn assert_disclosed_claims(
@@ -117,6 +135,11 @@ fn main(
     age_min_bound: u8,
     age_max_bound: u8,
     bind_data: [u8; ZKPASSPORT_BIND_LENGTH],
+    facematch_root_key_leaf: Field,
+    facematch_environment: u8,
+    facematch_app_id_hash: Field,
+    facematch_integrity_public_key_hash: Field,
+    facematch_mode: u8,
     credential_valid_until: u64,
     action: Field,
     issuer: Field,
@@ -128,7 +151,7 @@ fn main(
         zkpassport_outer_vkey,
         zkpassport_outer_proof,
         zkpassport_outer_public_inputs,
-        ZKPASSPORT_OUTER_COUNT_6_VKEY_HASH,
+        ZKPASSPORT_OUTER_COUNT_7_VKEY_HASH,
         ZKPASSPORT_PROOF_TYPE_HONK_ZK,
     );
 
@@ -157,6 +180,7 @@ fn main(
         zkpassport_outer_public_inputs[5],
         zkpassport_outer_public_inputs[6],
         zkpassport_outer_public_inputs[7],
+        zkpassport_outer_public_inputs[8],
     ];
     let disclose_param_commitment = calculate_disclose_param_commitment(
         disclose_mask,
@@ -164,6 +188,31 @@ fn main(
     );
     let age_param_commitment = calculate_age_param_commitment(age_min_bound, age_max_bound);
     let bind_param_commitment = calculate_bind_param_commitment(bind_data);
+    assert(facematch_environment == FACEMATCH_ENVIRONMENT_PRODUCTION, "Facematch must use production environment");
+    assert(facematch_mode == FACEMATCH_MODE_STRICT, "Facematch must use strict mode");
+    let approved_root_key = (facematch_root_key_leaf == APPLE_APP_ATTEST_ROOT_KEY_HASH)
+        | (facematch_root_key_leaf == GOOGLE_APP_ATTEST_RSA_ROOT_KEY_HASH)
+        | (facematch_root_key_leaf == GOOGLE_APP_ATTEST_ECDSA_P384_ROOT_KEY_HASH);
+    assert(approved_root_key, "Facematch attestation root is not approved");
+    let is_ios_app = facematch_app_id_hash == ZKPASSPORT_IOS_APP_ID_HASH;
+    let is_android_app = facematch_app_id_hash == ZKPASSPORT_ANDROID_APP_ID_HASH;
+    assert(is_ios_app | is_android_app, "Facematch app ID is not zkPassport");
+    let expected_integrity_public_key_hash = if is_android_app {
+        GOOGLE_PLAY_INTEGRITY_PUBLIC_KEY_HASH
+    } else {
+        0
+    };
+    assert(
+        facematch_integrity_public_key_hash == expected_integrity_public_key_hash,
+        "Facematch integrity public key is invalid",
+    );
+    let facematch_param_commitment = calculate_facematch_param_commitment(
+        facematch_root_key_leaf,
+        facematch_environment,
+        facematch_app_id_hash,
+        facematch_integrity_public_key_hash,
+        facematch_mode,
+    );
     assert(
         contains(outer_param_commitments, disclose_param_commitment),
         "Disclosure commitment is not authenticated by zkPassport",
@@ -176,6 +225,18 @@ fn main(
         contains(outer_param_commitments, bind_param_commitment),
         "Bind commitment is not authenticated by zkPassport",
     );
+    assert(
+        contains(outer_param_commitments, facematch_param_commitment),
+        "Facematch commitment is not authenticated by zkPassport",
+    );
+    assert(
+        zkpassport_outer_public_inputs[9] == ZKPASSPORT_SALTED_NULLIFIER_TYPE,
+        "zkPassport nullifier is not production salted",
+    );
+    assert(
+        zkpassport_outer_public_inputs[11] == ZKPASSPORT_OPRF_PUBLIC_KEY_HASH,
+        "zkPassport OPRF public key is not pinned",
+    );
 
     let nationality_commitment = compute_nationality_commitment(
         pack_alpha3(nationality),
@@ -187,7 +248,7 @@ fn main(
         min_age_proven,
         expiry_commitment,
     );
-    let scoped_nullifier = zkpassport_outer_public_inputs[9];
+    let scoped_nullifier = zkpassport_outer_public_inputs[10];
     let root_commitment = poseidon2_hash_with_separator([scoped_nullifier], MAGNA_ROOT_DS);
     let request_context_hash = poseidon2_hash_with_separator(
         [
@@ -200,7 +261,8 @@ fn main(
             credential_valid_until as Field,
             zkpassport_outer_public_inputs[0],
             zkpassport_outer_public_inputs[1],
-            zkpassport_outer_public_inputs[8],
+            zkpassport_outer_public_inputs[9],
+            zkpassport_outer_public_inputs[11],
             zkpassport_outer_public_inputs[3],
             zkpassport_outer_public_inputs[4],
             bind_param_commitment,

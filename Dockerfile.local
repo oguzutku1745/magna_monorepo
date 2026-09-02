@@ -1,0 +1,64 @@
+FROM aztecprotocol/aztec:5.1.0@sha256:dd26a01042caf0f34760c4221bd1c855862181842e0cbe3c8c6b4e3f6a5b4128
+
+ARG TARGETARCH
+WORKDIR /workspace
+ENTRYPOINT []
+
+COPY package.json package-lock.json ./
+COPY apps ./apps
+COPY contracts ./contracts
+COPY deployments/docker-build-placeholder.json ./deployments/docker-build-placeholder.json
+RUN cp ./deployments/docker-build-placeholder.json ./deployments/local.json
+COPY l1-contracts ./l1-contracts
+COPY packages ./packages
+COPY scripts ./scripts
+
+RUN npm ci
+COPY docker/aztec /usr/local/bin/aztec
+ENV LD_PRELOAD=""
+RUN chmod 755 /usr/local/bin/aztec
+# Git 2.43/GnuTLS in the pinned Aztec image can receive a spurious 401 from
+# GitHub on the HTTP/2 git-upload-pack POST. Nargo resolves public Git
+# dependencies through Git, so keep that transport on HTTP/1.1.
+RUN git config --global http.version HTTP/1.1
+RUN ln -s /usr/src/noir/noir-repo/target/release/nargo /usr/local/bin/nargo
+RUN ln -s /usr/src/noir/noir-repo/target/release/nargo /usr/local/bin/aztec-nargo
+RUN set -eu; \
+    case "$TARGETARCH" in \
+      arm64) \
+        instagram_nargo_asset="nargo-aarch64-unknown-linux-gnu.tar.gz"; \
+        instagram_nargo_sha256="f13753f589374ccba54a28d19f81937f04fda459f5911fa3c2ee9a0be01f70fc" \
+        ;; \
+      amd64) \
+        instagram_nargo_asset="nargo-x86_64-unknown-linux-gnu.tar.gz"; \
+        instagram_nargo_sha256="a99c2aaab24e97a41a72224dd345aa82e8c8c21911b3d51ab38c232987fbdb5e" \
+        ;; \
+      *) echo "Unsupported Docker architecture for Instagram Nargo: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/noir-lang/noir/releases/download/v1.0.0-beta.5/$instagram_nargo_asset" -o /tmp/instagram-nargo.tar.gz; \
+    echo "$instagram_nargo_sha256  /tmp/instagram-nargo.tar.gz" | sha256sum -c -; \
+    mkdir -p /tmp/instagram-nargo; \
+    tar -xzf /tmp/instagram-nargo.tar.gz -C /tmp/instagram-nargo; \
+    install -m 0755 /tmp/instagram-nargo/nargo /usr/local/bin/nargo-instagram; \
+    rm -rf /tmp/instagram-nargo /tmp/instagram-nargo.tar.gz; \
+    /usr/local/bin/nargo-instagram --version | grep 'nargo version = 1.0.0-beta.5'
+RUN forge build --root ./contracts/magna-recovery-portal && \
+    forge build --root ./contracts/magna-recovery-portal --offline
+RUN npm run compile:contracts
+RUN NARGO_BIN=/usr/local/bin/nargo-instagram npm run -w @magna/instagram-proof compile:circuit
+RUN npm run codegen:contracts
+RUN npm run -w @magna/core build
+RUN npm run -w @magna/recovery-v3 build
+RUN npm run -w @magna/wallet build
+RUN npm run -w @magna/passport-wrapper-proof build
+RUN npm run -w @magna/recovery-wrapper-proof build
+RUN npm run -w @magna/client build
+RUN npm run -w @magna/instagram-proof build
+ENV NODE_OPTIONS="--max-old-space-size=6144"
+RUN npm run -w @magna/management build
+RUN npm run -w @magna/verification-api build
+RUN npm run -w @magna/reference-dapp build
+RUN npm run -w @magna/e2e-tests build
+RUN rm ./deployments/local.json
+
+CMD ["node", "./scripts/start-docker-service.mjs", "management"]

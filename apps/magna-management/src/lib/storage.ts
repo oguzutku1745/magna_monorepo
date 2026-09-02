@@ -24,6 +24,7 @@ export type StoredCredentialRef = {
   updatedAt?: string;
   issuanceTxHash?: string;
   renewalTxHash?: string;
+  recoveryTxHash?: string;
   issuerAddress?: string;
   orchestratorAddress?: string;
   mode?: "passport" | "rooted";
@@ -40,10 +41,12 @@ export type StoredCredentialRef = {
   };
   instagramHandle?: string;
   handleHash?: string;
+  handleBlind?: string;
 };
 
 export type WalletProfile = {
   address: string;
+  label?: string;
   walletKind: string;
   role?: "user" | "company";
   createdAt: string;
@@ -56,10 +59,23 @@ export type WalletProfile = {
   lastOpenedAt?: string;
 };
 
+export type PendingRecoveryV3Finalization = {
+  version: 1;
+  phase: "prepared" | "submitted";
+  sourceCredentialId: string;
+  target: WalletProfile;
+  recoveredCredential: StoredCredentialRef;
+  recoveryTxHash?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 const CREDENTIALS_KEY = "magna-management:credential-refs:v1";
 const WALLET_PROFILE_KEY = "magna-management:wallet-profile:v1";
 const CHAIN_FINGERPRINT_KEY = "magna-management:chain-fingerprint:v1";
 const PASSPORT_A2_WITNESSES_KEY = "magna-management:passport-a2-witnesses:v1";
+const RECOVERY_V3_FINALIZATION_KEY = "magna-management:recovery-v3-finalization:v1";
+const RECOVERY_TARGET_PROFILE_KEY = "magna-management:recovery-target-profile:v1";
 
 type StoredPassportA2WitnessRecord = {
   issuerAddress?: string;
@@ -187,6 +203,60 @@ export function saveCredentialRefs(refs: StoredCredentialRef[]): void {
 export function clearStoredWalletState(): void {
   window.localStorage.removeItem(CREDENTIALS_KEY);
   window.localStorage.removeItem(WALLET_PROFILE_KEY);
+  window.localStorage.removeItem(RECOVERY_V3_FINALIZATION_KEY);
+  window.localStorage.removeItem(RECOVERY_TARGET_PROFILE_KEY);
+}
+
+export function loadRecoveryTargetProfile(): WalletProfile | null {
+  const profile = safeParse<WalletProfile | null>(
+    window.localStorage.getItem(RECOVERY_TARGET_PROFILE_KEY),
+    null,
+  );
+  if (
+    !profile ||
+    typeof profile.address !== "string" ||
+    typeof profile.walletKind !== "string" ||
+    typeof profile.createdAt !== "string" ||
+    typeof profile.publicKey !== "string"
+  ) {
+    return null;
+  }
+  return profile;
+}
+
+export function saveRecoveryTargetProfile(profile: WalletProfile): void {
+  if (!profile.publicKey) {
+    throw new Error("Recovery target profile requires its passkey public key.");
+  }
+  window.localStorage.setItem(RECOVERY_TARGET_PROFILE_KEY, JSON.stringify(profile));
+}
+
+export function loadPendingRecoveryV3Finalization(): PendingRecoveryV3Finalization | null {
+  const pending = safeParse<PendingRecoveryV3Finalization | null>(
+    window.localStorage.getItem(RECOVERY_V3_FINALIZATION_KEY),
+    null,
+  );
+  if (
+    !pending ||
+    pending.version !== 1 ||
+    (pending.phase !== "prepared" && pending.phase !== "submitted") ||
+    typeof pending.sourceCredentialId !== "string" ||
+    typeof pending.target?.address !== "string" ||
+    typeof pending.target?.publicKey !== "string" ||
+    typeof pending.recoveredCredential?.id !== "string" ||
+    typeof pending.recoveredCredential?.claimsHash !== "string"
+  ) {
+    return null;
+  }
+  return pending;
+}
+
+export function savePendingRecoveryV3Finalization(pending: PendingRecoveryV3Finalization): void {
+  window.localStorage.setItem(RECOVERY_V3_FINALIZATION_KEY, JSON.stringify(pending));
+}
+
+export function clearPendingRecoveryV3Finalization(): void {
+  window.localStorage.removeItem(RECOVERY_V3_FINALIZATION_KEY);
 }
 
 export function reconcileStoredChainFingerprint(nextFingerprint: string): boolean {

@@ -27,7 +27,7 @@ import { pad, parseAbiItem } from "viem";
 import rightsRegistryArtifactJson from "../contracts/magna-company-rights-registry/target/magna_company_rights_registry-MagnaCompanyRightsRegistry.json" with { type: "json" };
 import rightsPurchaseArtifactJson from "../contracts/magna-rights-purchase-l2/target/magna_rights_purchase_l2-MagnaRightsPurchaseL2.json" with { type: "json" };
 
-const PINNED_AZTEC_VERSION = process.env.AZTEC_VERSION_PIN ?? "5.0.0-rc.1";
+const PINNED_AZTEC_VERSION = process.env.AZTEC_VERSION_PIN ?? "5.1.0";
 const DEFAULT_PRICE_PER_VERIFY = 150_000n;
 const DEFAULT_L1_TOKEN_DECIMALS = 6;
 const DEFAULT_REPORTS_DIR = "reports";
@@ -613,7 +613,7 @@ async function buildRuntime(config, reporter) {
 }
 
 async function validateL2PaymentTokenAddress(runtime, address) {
-  const tokenAddress = AztecAddress.fromString(address);
+  const tokenAddress = AztecAddress.fromStringUnsafe(address);
   let metadata;
   if (typeof runtime.wallet.getContractMetadata === "function") {
     try {
@@ -843,8 +843,8 @@ async function deployContracts(config, reporter, runtime) {
     runtime.wallet,
     runtime.adminAddress,
     runtime.adminAddress,
-    AztecAddress.fromString(l2PaymentTokenAddress),
-    AztecAddress.fromString(rightsRegistryAddress),
+    AztecAddress.fromStringUnsafe(l2PaymentTokenAddress),
+    AztecAddress.fromStringUnsafe(rightsRegistryAddress),
     config.pricePerVerify,
   ).send({
     from: runtime.adminAddress,
@@ -856,11 +856,11 @@ async function deployContracts(config, reporter, runtime) {
   });
 
   const rightsRegistry = MagnaCompanyRightsRegistry.at(
-    AztecAddress.fromString(rightsRegistryAddress),
+    AztecAddress.fromStringUnsafe(rightsRegistryAddress),
     runtime.wallet,
   );
   const initAdapterResult = await rightsRegistry.methods
-    .initialize_l2_purchase_adapter(AztecAddress.fromString(purchaseAdapterAddress))
+    .initialize_l2_purchase_adapter(AztecAddress.fromStringUnsafe(purchaseAdapterAddress))
     .send({ from: runtime.adminAddress });
   reporter.pass("initialized l2 purchase adapter", {
     txHash: txHashToString(initAdapterResult),
@@ -887,14 +887,14 @@ async function deployContracts(config, reporter, runtime) {
 
 async function bindManifestContracts(manifest, runtime) {
   const rightsRegistry = MagnaCompanyRightsRegistry.at(
-    AztecAddress.fromString(manifest.l2.rightsRegistryAddress),
+    AztecAddress.fromStringUnsafe(manifest.l2.rightsRegistryAddress),
     runtime.wallet,
   );
   const rightsPurchase = MagnaRightsPurchaseL2.at(
-    AztecAddress.fromString(manifest.l2.purchaseAdapterAddress),
+    AztecAddress.fromStringUnsafe(manifest.l2.purchaseAdapterAddress),
     runtime.wallet,
   );
-  const l2PaymentToken = TokenContract.at(AztecAddress.fromString(manifest.l2.paymentTokenAddress), runtime.wallet);
+  const l2PaymentToken = TokenContract.at(AztecAddress.fromStringUnsafe(manifest.l2.paymentTokenAddress), runtime.wallet);
   return { rightsRegistry, rightsPurchase, l2PaymentToken };
 }
 
@@ -1077,7 +1077,7 @@ async function waitForCustomMessageWitness(runtime, rightsRegistryAddress, conte
     try {
       const [messageIndex] = await getNonNullifiedL1ToL2MessageWitness(
         runtime.node,
-        AztecAddress.fromString(rightsRegistryAddress),
+        AztecAddress.fromStringUnsafe(rightsRegistryAddress),
         Fr.fromHexString(contentHash),
         secret,
       );
@@ -1105,7 +1105,7 @@ function resolveSmokeSponsorAddress(config, manifest, runtime) {
 
 async function runSmokeL1(config, reporter, runtime, manifest, consumeAfterSmoke = false) {
   const { rightsRegistry } = await bindManifestContracts(manifest, runtime);
-  const sponsorAddress = AztecAddress.fromString(resolveSmokeSponsorAddress(config, manifest, runtime));
+  const sponsorAddress = AztecAddress.fromStringUnsafe(resolveSmokeSponsorAddress(config, manifest, runtime));
   const rightsAmount = config.smokeRightsAmount;
   const packageIdField = config.smokePackageId ? new Fr(parseBigIntInput(config.smokePackageId, 0n, "package id")) : Fr.random();
   const extraPolicyHash = `0x${randomBytes(32).toString("hex")}`;
@@ -1280,7 +1280,7 @@ async function consumeOneRight(runtime, rightsRegistry, sponsorAddress, reporter
 
 async function runSmokeL2(config, reporter, runtime, manifest, consumeAfterSmoke = false) {
   const { rightsRegistry, rightsPurchase, l2PaymentToken } = await bindManifestContracts(manifest, runtime);
-  const sponsorAddress = AztecAddress.fromString(resolveSmokeSponsorAddress(config, manifest, runtime));
+  const sponsorAddress = AztecAddress.fromStringUnsafe(resolveSmokeSponsorAddress(config, manifest, runtime));
   const rightsAmount = config.smokeRightsAmount;
   const packageId = config.smokePackageId ? parseBigIntInput(config.smokePackageId, 0n, "package id") : Fr.random().toBigInt();
   const authwitNonce = Fr.random();
@@ -1291,7 +1291,7 @@ async function runSmokeL2(config, reporter, runtime, manifest, consumeAfterSmoke
   const payerBalanceBefore = toBigIntValue(
     await l2PaymentToken.methods.balance_of_public(runtime.adminAddress).simulate({ from: runtime.adminAddress }),
   );
-  const treasuryAddress = AztecAddress.fromString(manifest.l2.adminAddress);
+  const treasuryAddress = AztecAddress.fromStringUnsafe(manifest.l2.adminAddress);
   const treasuryBalanceBefore = toBigIntValue(
     await l2PaymentToken.methods.balance_of_public(treasuryAddress).simulate({ from: runtime.adminAddress }),
   );
@@ -1433,7 +1433,7 @@ async function main() {
     console.error(errorDetails(error));
     process.exit(1);
   } finally {
-    // Aztec 5.0.0-rc.1 can double-free native resources during explicit wallet shutdown on macOS.
+    // Avoid explicit native wallet shutdown on macOS; the process owns this short-lived wallet.
     // These scripts are short-lived, so OS process cleanup is safer unless explicitly requested.
     if (process.env.MAGNA_EXPLICIT_WALLET_STOP === "true") {
       try {

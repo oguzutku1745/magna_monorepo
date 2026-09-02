@@ -14,6 +14,7 @@ import {
   type DiscoveredMagnaCredentialRef,
   type MagnaConsumerLoginCredential,
   type MagnaConsumerLoginOutcome,
+  type WalletSession,
 } from "@magna/wallet";
 import { getManagementEnv } from "./env";
 import { hydratePassportA2Witness, refsForOwner, upsertCredentialRef, type StoredCredentialRef } from "./storage";
@@ -86,6 +87,11 @@ function loadInstagramCredential(ownerAddress: string, handleHash: bigint, issue
       handle
         ? `No active Magna Instagram credential for @${handle} is available in this wallet session.`
         : "No active Magna Instagram credential is available in this wallet session.",
+    );
+  }
+  if (!credential.handleBlind) {
+    throw new Error(
+      "Instagram V2 credential is missing its local blinded-handle witness. Re-issue this Instagram credential on this device.",
     );
   }
   return credential;
@@ -321,21 +327,19 @@ async function reconcileStoredRefsFromPxe(input: {
   return reconciled;
 }
 
-export async function runWalletLoginForRequest(input: {
+export type WalletLoginRequestInput = {
   policy: Policy;
   requirements?: LoginRequirement[];
   consumerGatewayAddress: string;
+  storedCredentialId?: string;
   onVerifying?: () => void;
-}): Promise<MagnaConsumerLoginOutcome> {
+};
+
+async function runWalletLoginWithSession(
+  input: WalletLoginRequestInput,
+  session: WalletSession,
+): Promise<MagnaConsumerLoginOutcome> {
   const env = getManagementEnv();
-  const session = await createWebAuthnWalletSession({
-    nodeUrl: env.aztecNodeUrl,
-    alias: "magna-user",
-    userName: "magna-user",
-    rpId: window.location.hostname || "localhost",
-    deployWithLocalTestAccount: env.enableLocalTestBootstrap,
-    localTestAccountIndex: env.localTestAccountIndex,
-  });
   try {
     if (session.metadata?.deploymentStatus !== "deployed") {
       throw new Error(
@@ -426,7 +430,32 @@ export async function runWalletLoginForRequest(input: {
       );
     }
     throw error;
+  }
+}
+
+export async function runWalletLoginForRequest(
+  input: WalletLoginRequestInput,
+): Promise<MagnaConsumerLoginOutcome> {
+  const env = getManagementEnv();
+  const session = await createWebAuthnWalletSession({
+    nodeUrl: env.aztecNodeUrl,
+    alias: "magna-user",
+    userName: "magna-user",
+    rpId: window.location.hostname || "localhost",
+    storedCredentialId: input.storedCredentialId,
+    deployWithLocalTestAccount: env.enableLocalTestBootstrap,
+    localTestAccountIndex: env.localTestAccountIndex,
+  });
+  try {
+    return await runWalletLoginWithSession(input, session);
   } finally {
     await session.disconnect();
   }
+}
+
+export async function runWalletLoginForRequestWithSession(
+  input: WalletLoginRequestInput,
+  session: WalletSession,
+): Promise<MagnaConsumerLoginOutcome> {
+  return await runWalletLoginWithSession(input, session);
 }

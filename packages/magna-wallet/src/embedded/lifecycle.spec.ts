@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildWalletSession } from "./lifecycle.js";
+import {
+  LOCAL_PIPELINED_MIN_FEE_PADDING,
+  buildWalletSession,
+  configureLocalTestFeePadding,
+} from "./lifecycle.js";
 
 test("buildWalletSession keeps a preferred WebAuthn account active even when getAccounts only lists the fee payer", async () => {
   const session = await buildWalletSession(
@@ -60,4 +64,18 @@ test("buildWalletSession hides the fee payer from non-fee-payer passkey sessions
     session.accounts.map(account => account.address),
     ["0xpasskey"],
   );
+});
+
+test("configureLocalTestFeePadding uses Aztec's pipelining-aware local setup padding", () => {
+  let configuredPadding: number | undefined;
+  const wallet = {
+    setMinFeePadding(value?: number) {
+      configuredPadding = value;
+    },
+  };
+
+  configureLocalTestFeePadding(wallet as never);
+
+  assert.equal(LOCAL_PIPELINED_MIN_FEE_PADDING, 30);
+  assert.equal(configuredPadding, 30);
 });

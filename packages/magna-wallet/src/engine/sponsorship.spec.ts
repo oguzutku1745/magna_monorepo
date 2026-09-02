@@ -62,7 +62,7 @@ describe("company sponsor fee config", () => {
   });
 
   it("can attach network-derived gas limits and max fees without hardcoded protocol maxima", () => {
-    const sponsorAddress = AztecAddress.fromString(
+    const sponsorAddress = AztecAddress.fromStringUnsafe(
       "0x0000000000000000000000000000000000000000000000000000000000000005",
     );
     const feeConfig = buildCompanySponsorFeeConfig(sponsorAddress, {
@@ -79,7 +79,7 @@ describe("company sponsor fee config", () => {
 
 describe("legacy Aztec sponsored fee helper", () => {
   it("buildSponsoredFeeConfig returns the official SponsoredFeePaymentMethod shape", async () => {
-    const sponsoredFpcAddress = AztecAddress.fromString(
+    const sponsoredFpcAddress = AztecAddress.fromStringUnsafe(
       "0x0000000000000000000000000000000000000000000000000000000000000001",
     );
 

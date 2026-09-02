@@ -12,9 +12,6 @@ evaluation, and the issuance/verification flows. Application-level integration i
 
 ## 0. System map
 
-Naming matters here because an earlier app (`apps/magna-web`) has been superseded and still exists
-in the tree as a compatibility console. It is **not** the current wallet.
-
 | Role | Current implementation |
 | --- | --- |
 | Wallet + management UI, issuance, renewal, recovery, `/authorize` | `apps/magna-management` |
@@ -25,10 +22,23 @@ in the tree as a compatibility console. It is **not** the current wallet.
 | dApp-facing connector SDK | `packages/magna-client` |
 | A2 recursive wrapper circuit + prover/verifier bindings | `packages/magna-passport-wrapper-proof` |
 | Credential contract | `contracts/magna-issuer` |
-| Superseded console (compatibility only) | `apps/magna-web` |
 
 Default dev ports: management `5174`, reference-dapp `5175`, verification API per its own
 `.env`.
+
+### 0.1 Production-live credential adapters
+
+Magna currently names exactly two live adapters:
+
+1. **Passport A2** — recursive zkPassport verification, blinded passport claims, rooted issuance,
+   private login, renewal/revocation, and destination-bound Root Recovery V3.
+2. **Instagram V2** — client-side proof of an authentic DKIM-signed Instagram recovery email,
+   blinded handle claims, governed historical/current DKIM key commitments, rootless issuance, and
+   private handle login. Wallet-loss handling is re-issuance, not recovery.
+
+`X`, `StudentEmail`, and `WorkEmail` are reserved enum values only. They are not implemented
+adapters and must not be presented as live. Instagram's evidence and exact semantic limits are in
+`docs/evidence/instagram-proof-portability-2026-08-30.md`.
 
 ---
 
@@ -99,9 +109,12 @@ Issuer contract acceptance is a single immutable rule:
 assert(msg_sender == ORCHESTRATOR_ADDRESS)
 ```
 
-The orchestrator address stays stable so recovering devices can register it as a known
-sender-for-tags and rediscover notes. Signer policy rotates inside the orchestrator *account*
-contract, not by changing the address.
+The orchestrator address is intended to stay stable so recovering devices can register it as a
+known sender-for-tags and rediscover notes. The current local verification API imports an Aztec
+initial test account, and the pinned `SchnorrInitializerlessAccount` binds its signing public key
+into the account instance's immutable hash. It does **not** currently provide in-account signer
+rotation. Local-testnet use is expected; production requires a separately reviewed stable-address
+rotation/emergency design and production signer custody before deployment.
 
 This rule governs **who may call**. It says nothing about whether the claims being minted are
 truthful; that property comes from the proof pipeline in §5.
@@ -154,17 +167,24 @@ Unblinded. Anyone holding `claims_hash` and a candidate claim tuple can confirm 
 recomputation, so v1 leaks claims to the issuer and to anyone who can guess. It is retained only as
 a migration path; schema v2 is canonical for new issuance.
 
-### 4.3 Instagram schema v1
+### 4.3 Instagram schema v2
 
 ```
-claims_hash = H(MAGNA_CLAIMS_DS, 1, CredentialType.Instagram, handle_hash, expiry_ts)
+handle_hash       = Pedersen(MAGNA_INSTAGRAM_HANDLE_DS, handle_len, handle_packed)
+handle_commitment = Pedersen(MAGNA_INSTAGRAM_HANDLE_COMMITMENT_DS, handle_hash, handle_blind)
+claims_hash       = Pedersen(MAGNA_CLAIMS_DS, 2, CredentialType.Instagram,
+                             handle_commitment, expiry_ts)
 ```
 
 `CredentialType` values: `None = 0`, `Passport = 1`, `X = 2`, `Instagram = 3`, `StudentEmail = 4`,
 `WorkEmail = 5`.
 
-`handle_hash` binds the credential to a handle without revealing it onchain. Handle ownership is
-established during off-chain attestation and then carried by the note lineage.
+The browser samples the non-zero `handle_blind`; the handle, hash, and blind remain local. The
+zkEmail circuit verifies the Instagram DKIM signature and signed ownership text, then exposes only
+the opaque `claims_hash` plus the DKIM key hash, email nullifier, expiry, active owner, issuer, and
+chain ID. The API verifies the proof and deployment bindings but cannot dictionary-test the handle
+against `claims_hash`. During private login, Aztec recomputes `handle_commitment` and `claims_hash`
+from the local witness while applying handle policy to the private `handle_hash`.
 
 ---
 
@@ -180,7 +200,7 @@ itself.
 
 ```
 magna-management (browser)
-  ├─ zkPassport SDK scan → outer proof + vkey + 11 outer public inputs
+  ├─ zkPassport SDK 0.16.1 scan → outer_count_7 proof + vkey + 12 outer public inputs
   ├─ derive nationality_blind / expiry_blind locally
   ├─ prove wrapper locally — recursively verifies the outer proof
   │                        → wrapper proof + 8 public outputs
@@ -190,30 +210,43 @@ magna-management (browser)
 magna-verification-api
   ├─ verify wrapper proof (public inputs proof-bound or verifier-attested)
   ├─ time bounds: proof freshness, credentialValidUntil ≤ 30 days
-  ├─ registry trust: certificate + circuit roots valid onchain; mock nullifier types dev-only
+  ├─ registry trust: certificate + circuit roots valid onchain; profile nullifier/OPRF field pinned
   ├─ recompute request_context_hash and require equality
   └─ orchestrator → MagnaIssuer.register_rooted_passport_v2 / register_credential_v2
 ```
 
 ### 5.1 What the circuit constrains
 
-`packages/magna-passport-wrapper-proof/circuit/src/main.nr`:
+`packages/magna-passport-wrapper-proof/circuit/src/main.nr` is the production profile. The
+separately compiled `circuit-dev/src/main.nr` retains the same recursive-proof, disclosure, Bind,
+official-app-attestation, and output constraints. Its isolated identity profile uses regular
+FaceMatch, `NON_SALTED_MOCK = 2`, and `oprf_pk_hash = 0`; production uses strict FaceMatch,
+`SALTED = 1`, and the pinned OPRF-key hash.
 
 - `verify_proof_with_type(...)` recursively verifies the zkPassport outer proof against a **pinned**
-  verification-key hash (`ZKPASSPORT_OUTER_COUNT_6_VKEY_HASH`) and proof type, so a different
+  verification-key hash (`ZKPASSPORT_OUTER_COUNT_7_VKEY_HASH`) and proof type, so a different
   circuit cannot be substituted.
 - `assert_disclosed_claims` requires the nationality and expiry MRZ bytes to be *disclosed* in the
   mask and to equal the claimed values.
 - The same disclosure authenticates both MRZ document-type bytes. The circuit accepts `P`
   (passport) or `I` (ID card) and derives the nationality and expiry offsets from that byte; the
   prover cannot select a layout independently.
-- The disclose, age, and bind parameter commitments are recomputed in-circuit from those same
+- The disclose, age, bind, and profile-selected FaceMatch parameter commitments are recomputed in-circuit from those same
   witnesses and each asserted to appear among the outer proof's parameter commitments — this is the
   link that was missing in A1.
+- FaceMatch must use the official application attestation environment, an official zkPassport
+  iOS/Android application identity, an approved Apple/Google attestation root, and the
+  platform-appropriate integrity key. Its mode is strict in production and regular only in the
+  explicit developer artifact.
+- Outer public input 9 must be production `SALTED = 1` in the production artifact or
+  `NON_SALTED_MOCK = 2` in the isolated developer artifact. Public input 11 must equal the
+  documented OPRF key-ID-1 public-key hash
+  `1178201404428554206520802247552222388413553631367032661928167491793274360628`
+  in production and exactly `0` in development.
 - `min_age_proven == age_min_bound`, tying the committed age predicate to the authenticated one.
 - `expiry_ts` must equal `canonical_expiry_timestamp(expiry_mrz, proof_current_date)`, and
   `credential_valid_until <= authenticated_expiry_ts`.
-- `root_commitment = H(MAGNA_ROOT_DS, scoped_nullifier)`, derived from outer public input 9 rather
+- `root_commitment = H(MAGNA_ROOT_DS, scoped_nullifier)`, derived from outer public input 10 rather
   than accepted from the client.
 - `request_context_hash` binds action, issuer, owner, ghost owner, credential mode, root commitment,
   validity, service scope/subscope, registry roots, nullifier type, and the bind commitment.
@@ -243,7 +276,8 @@ Eight fields, in order:
   older than the configured validity window; `credential_valid_until` is in the future and within
   30 days;
 - `assertPassportA2RegistryTrust`: the certificate and circuit registry roots are valid against the
-  onchain zkPassport registry, and mock nullifier types are rejected unless `zkPassportDevMode`;
+  onchain zkPassport registry, while the salted nullifier type and OPRF public-key hash must match
+  the circuit-pinned production values even in local development;
 - `assertPassportA2RequestContext`: the server recomputes `request_context_hash` from its own
   issuer address, domain/scope hashes, the requested action and owner, and the client-supplied
   registry context, then requires exact equality with the proof output. Because the circuit built
@@ -280,7 +314,7 @@ a registry key, and never interprets its preimage.
 root_commitment = H(MAGNA_ROOT_DS, scoped_nullifier)
 ```
 
-where `scoped_nullifier` is outer public input 9 of the recursively verified zkPassport proof, and
+where `scoped_nullifier` is outer public input 10 of the recursively verified zkPassport proof, and
 emits it as a public output. The client cannot choose it, and the API can trust it without ever
 learning `uniqueIdentifier`. Because zkPassport's scoped nullifier is already bound to the
 configured domain and scope, `root_commitment` is scoped to the Magna application context and is
@@ -369,8 +403,8 @@ example `verify_linked_sponsored_v2`.
 8. Enqueue metering / sponsorship logic as in the rootless path.
 
 Rootless credentials never perform the root check. For Instagram-linked credentials, step 3
-recomputes the Instagram `claims_hash` from the `handle_hash` witness while the rooted passport
-authority note still gates validity.
+recomputes the Instagram V2 `handle_commitment` and `claims_hash` from the private handle-hash and
+blind witness while the rooted passport authority note still gates validity.
 
 ---
 
@@ -378,25 +412,47 @@ authority note still gates validity.
 
 ### 9.1 Rootless recovery
 
-1. Re-derive the Ghost account from the scoped identifier.
-2. Register the orchestrator as sender-for-tags; discover `RecoveryNote`.
-3. Spend `RecoveryNote`: emit `N`, mint a fresh `StatusNote` to the new active wallet, mint a fresh
-   `RecoveryNote` to Ghost, optionally refresh `CredentialNote` preserving the claim commitment.
+The generic rootless `recover(...)` entrypoint has been removed and is not part of the pre-release
+rooted passport product. A future rootless recovery design requires a
+separate proof source and threat-model review; it must not reuse Ghost possession as sole authority.
 
 ### 9.2 Linked credential recovery
 
-1. Discover `LinkedRecoveryNote`.
-2. Spend it: emit `N_linked`, mint fresh `LinkedStatusNote` to the active wallet and fresh
-   `LinkedRecoveryNote` to Ghost, optionally refresh `LinkedCredentialNote` preserving
-   `root_commitment`.
-3. `RootStatusNote` is untouched, so sibling credentials stay usable.
+Linked credential recovery is **not implemented**. The repository has never exposed a
+`recover_linked(...)` contract entrypoint. The previous generic `recover(...)` entrypoint handled
+rootless notes only and was removed because Ghost possession alone was not a sufficient recovery
+authorization.
+
+The production-live Instagram V2 adapter currently issues a rootless credential. It is deliberately
+not copied by passport Root Recovery V3. After wallet loss, the holder must obtain a fresh signed
+Instagram recovery email and re-issue the Instagram credential to the recovered wallet. Any future
+linked-social recovery design requires its own destination-bound proof source, contract entrypoint,
+UI/SDK path, and threat-model review; documentation must not imply that the existing
+`LinkedRecoveryNote` data type provides that flow.
 
 ### 9.3 Root recovery
 
-1. Discover `RootRecoveryNote`.
-2. Spend it: emit `N_root`, mint fresh `RootStatusNote` and `RootRecoveryNote`.
-3. Previously issued linked credentials remain present but unusable until re-linked or re-issued,
-   because their old root lineage is nullified.
+1. The browser chooses the destination, recovery nonce, and Aztec message secret before proving.
+2. A fresh zkPassport proof binds those values plus the Ethereum/Aztec deployment domain. The
+   recursive Recovery V3 wrapper authenticates the root, Ghost identity, claims, credential expiry,
+   proof date, registry context, and message-secret hash.
+3. The browser submits the wrapper proof directly to `MagnaRecoveryPortal`. The portal verifies it,
+   checks current zkPassport Ethereum registry validity and the one-hour proof-age policy, rejects
+   replay, and sends the resulting authorization through the canonical Aztec Inbox.
+4. After Aztec reports the exact Inbox leaf/index, the reconstructed Ghost discovers its private
+   `RootRecoveryNote` and calls
+   `recover_root_v3(hinted_note, destination, nonce, claims_hash, credential_valid_until,
+   message_secret, message_leaf_index)`.
+5. The issuer recomputes the proof-bound intent/authorization from its anchor chain and protocol
+   version, immutable portal, issuer address, destination, nonce, secret hash, root, claims, and
+   expiry. It consumes the canonical portal message and spends the Ghost-owned note.
+6. The same private transaction emits `N_root` and mints the complete fresh root status, root
+   recovery, root authority, and linked passport credential/status/recovery note set. A successful
+   V3 recovery never ends in `recovery_pending`.
+
+Possession of the salted identifier/Ghost key alone is therefore insufficient. A valid portal
+authorization alone is also insufficient because only the Ghost can spend the private recovery
+note. The API and orchestrator are absent from the authorization path and may be offline.
 
 ### 9.4 Root authority refresh
 
@@ -412,8 +468,8 @@ Renewal is split so the orchestrator authorizes the refresh but never touches no
 4. The contract proves the shared root lineage is still live, emits `N_root_authority` for the
    previous authority note, mints a fresh `RootAuthorityNote`, and mints a fresh linked passport
    credential lineage under the same `root_commitment`.
-5. Linked Instagram/social credentials keep their `root_commitment` and become usable again once
-   the new authority note is supplied.
+5. Contract-level linked credential lineages that already share the root can use the refreshed
+   authority note. The shipped Instagram V2 adapter is rootless and is not affected by this step.
 
 `refresh_root_authority(...)` remains available as the single-call variant for flows where the
 caller already holds the notes.

@@ -3,10 +3,16 @@ import {
   type Query,
   type QueryResult,
   type QueryResultErrors,
+  NullifierType,
   ZKPassport,
 } from "@zkpassport/sdk";
+import {
+  PASSPORT_A2_OPRF_KEY_ID,
+} from "@magna/passport-wrapper-proof/safe";
+import { normalizeSharedBrowserG1Cache } from "@magna/passport-wrapper-proof/browser-bb";
 import type { GhostDerivationVersion } from "@magna/wallet";
-import type { PassportA2RegistryContext } from "@magna/passport-wrapper-proof";
+import type { PassportA2RegistryContext } from "@magna/passport-wrapper-proof/safe";
+import type { PassportA2ProofProfile } from "@magna/passport-wrapper-proof/safe";
 
 type ZkPassportProofMode = "compressed";
 
@@ -17,6 +23,7 @@ export type ZkPassportLifecycleEvent =
   | { type: "generating_proof" }
   | { type: "proof_generated"; proofCount: number; proofTotal?: number }
   | { type: "query_result_received" }
+  | { type: "sdk_verification_prepared"; srsSize: number }
   | { type: "result_received"; verified: boolean };
 
 export type ZkPassportCompletion =
@@ -27,6 +34,7 @@ export type ZkPassportCompletion =
       queryResult: QueryResult;
       originalQuery: Query;
       queryResultErrors?: Partial<QueryResultErrors>;
+      proofProfile: PassportA2ProofProfile;
     }
   | { status: "rejected" };
 
@@ -79,13 +87,6 @@ export type VerifyAndRefreshRootAuthorityA2Payload = PassportA2ProofPayload & {
   ghostOwner: string;
 };
 
-export type VerifyRootRecoveryPreflightA2Payload = PassportA2ProofPayload & {
-  targetOwner: string;
-  expectedGhostOwner: string;
-  expectedRootCommitment: string;
-  ghostDerivationVersion?: GhostDerivationVersion;
-};
-
 export type VerifyAndRefreshRootAuthorityResponse = {
   renewalAuthorizationTxHash: string;
   ghostOwner: string;
@@ -100,24 +101,12 @@ export type VerifyAndRefreshRootAuthorityResponse = {
   };
 };
 
-export type VerifyRootRecoveryPreflightResponse = {
-  expectedGhostOwner: string;
-  derivedGhostOwner: string;
-  expectedRootCommitment: string;
-  derivedRootCommitment: string;
-  ghostDerivationVersion: GhostDerivationVersion;
-  matchesExpectedGhostOwner: true;
-  matchesExpectedRootCommitment: true;
-  verificationSummary: {
-    verified: true;
-    passportA2: true;
-    piiBlind: true;
-  };
-};
-
 export type VerifyAndIssueInstagramPayload = {
-  emlBase64: string;
-  claimedHandle: string;
+  schema: "instagram-v2";
+  proof: {
+    proof: number[];
+    publicInputs: string[];
+  };
   activeOwner: string;
 };
 
@@ -130,16 +119,11 @@ export type VerifyAndIssueInstagramResponse = {
   orchestratorAddress: string;
   verificationSummary: {
     verified: true;
+    piiBlind: true;
     dkimPubkeyHash: string;
     emailNullifier: string;
   };
-  normalizedClaims: {
-    instagramHandle: string;
-    handleHash: string;
-    handleLen: number;
-    handlePacked: string;
-    expiryTs: string;
-  };
+  expiryTs: string;
 };
 
 type ZkPassportInternalMessage = {
@@ -150,6 +134,18 @@ type ZkPassportInternalMessage = {
 type ZkPassportMessageHookTarget = {
   handleEncryptedMessage?: (topic: string, message: ZkPassportInternalMessage) => Promise<void>;
 };
+
+// @zkpassport/sdk 0.16.1 delegates local proof verification to bb.js 5.0.0
+// without an explicit srsSize. bb.js therefore requests 2^19 points in a
+// desktop browser (2^18 on iOS). The cache is origin-wide and can contain the
+// 2^20 points required by Magna's recursive wrapper, so normalize it before
+// the SDK reads it. bb.js 5.0.0 otherwise passes the complete larger buffer to
+// SrsInitSrs, which rejects it as 128 bytes per requested point.
+function zkPassportSdkBrowserSrsSize(): number {
+  return typeof navigator !== "undefined" && /iPad|iPhone/.test(navigator.userAgent)
+    ? 2 ** 18
+    : 2 ** 19;
+}
 
 let singleton: ZKPassport | null = null;
 
@@ -225,20 +221,33 @@ export async function startPassportZkRequest(options: {
   devMode?: boolean;
   onEvent?: (event: ZkPassportLifecycleEvent) => void;
 }): Promise<ActiveZkPassportRequest> {
-  const queryBuilder = await zkPassport().request({
+  const requestMetadata = {
     name: options.metadata.name,
     logo: options.metadata.logo,
     purpose: options.metadata.purpose,
     scope: options.metadata.scope,
     mode: options.proofMode,
     devMode: options.devMode,
-  });
+  };
+  const queryBuilder = options.devMode === true
+    ? await zkPassport().request({
+        ...requestMetadata,
+        // The official ZKR developer passport produces NON_SALTED_MOCK = 2.
+        // Do not send an OPRF key: doing so makes SDK 0.16.1 force SALTED.
+        uniqueIdentifierType: NullifierType.NON_SALTED,
+      })
+    : await zkPassport().request({
+        ...requestMetadata,
+        uniqueIdentifierType: NullifierType.SALTED,
+        oprfKeyId: PASSPORT_A2_OPRF_KEY_ID,
+      });
 
   let query = queryBuilder
     .gte("age", options.ageThreshold)
     .disclose("document_type")
     .disclose("nationality")
-    .disclose("expiry_date");
+    .disclose("expiry_date")
+    .facematch(options.devMode === true ? "regular" : "strict");
   if (options.a2BindCustomData) {
     const bind = (query as { bind?: (key: "custom_data", value: string) => typeof query }).bind;
     if (typeof bind !== "function") {
@@ -255,6 +264,7 @@ export async function startPassportZkRequest(options: {
   const sdk = zkPassport() as unknown as ZkPassportMessageHookTarget;
   const originalHandleEncryptedMessage = sdk.handleEncryptedMessage?.bind(sdk);
   let hookedHandleEncryptedMessage: ZkPassportMessageHookTarget["handleEncryptedMessage"];
+  let sdkCrsPrepared = false;
 
   const cleanupMessageHook = () => {
     if (hookedHandleEncryptedMessage && sdk.handleEncryptedMessage === hookedHandleEncryptedMessage) {
@@ -269,6 +279,18 @@ export async function startPassportZkRequest(options: {
           options.onEvent?.({ type: "query_result_received" });
         }
         try {
+          // Either message can be the one that completes the SDK's proof/result
+          // pair and synchronously starts local verification.
+          if (
+            !sdkCrsPrepared &&
+            topic === built.requestId &&
+            (message.method === "proof" || message.method === "done")
+          ) {
+            const srsSize = zkPassportSdkBrowserSrsSize();
+            await normalizeSharedBrowserG1Cache(srsSize);
+            sdkCrsPrepared = true;
+            options.onEvent?.({ type: "sdk_verification_prepared", srsSize });
+          }
           await originalHandleEncryptedMessage(topic, message);
         } catch (error) {
           if (settled) {
@@ -321,6 +343,7 @@ export async function startPassportZkRequest(options: {
         queryResult: response.result,
         originalQuery: built.query,
         queryResultErrors: response.queryResultErrors,
+        proofProfile: options.devMode === true ? "development" : "production",
       });
     });
   });
@@ -354,17 +377,6 @@ export async function verifyAndRefreshRootAuthorityThroughBackend(
   return await postVerificationApi<VerifyAndRefreshRootAuthorityResponse>(
     verificationApiUrl,
     "/zkpassport/verify-and-refresh-root-authority",
-    payload,
-  );
-}
-
-export async function verifyRootRecoveryPreflightThroughBackend(
-  verificationApiUrl: string,
-  payload: VerifyRootRecoveryPreflightA2Payload,
-): Promise<VerifyRootRecoveryPreflightResponse> {
-  return await postVerificationApi<VerifyRootRecoveryPreflightResponse>(
-    verificationApiUrl,
-    "/zkpassport/verify-for-root-recovery",
     payload,
   );
 }

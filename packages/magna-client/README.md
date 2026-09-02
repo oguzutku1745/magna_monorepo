@@ -1,41 +1,50 @@
 # `@magna/client`
 
-TypeScript SDK for Magna v1 lifecycle management.
+Thin TypeScript connector for relying-party applications using Login with Magna.
 
-## Flows
+The package intentionally contains no Aztec wallet, PXE, contract-binding, passkey, note-discovery,
+issuance, or recovery implementation. Those responsibilities stay inside the Magna wallet origin,
+currently served by `apps/magna-management`.
 
-- `registerPassport()`:
-  - computes canonical `claims_hash`
-  - sends issuance request from orchestrator address
-- `registerInstagram()`:
-  - computes the Instagram ownership/handle `claims_hash`
-  - sends issuance request from orchestrator address
-- `loginWithMagna()`:
-  - normalizes policy constraints
-  - calls private `verify(...)`
-- `loginWithInstagram()`:
-  - normalizes policy constraints
-  - calls private `verify_instagram(...)`
-- `loginWithLinkedInstagram()` / `loginWithLinkedInstagramCompanySponsor()`:
-  - prove a root-linked Instagram credential, optionally through the company sponsor gateway
-- `recover()`:
-  - spends `RecoveryNote` as Ghost account and remints active state
-- `deriveGhost()`:
-  - derives deterministic Ghost seed from `Poseidon2(DS, uniqueIdentifier_field)`
-  - defaults to `MAGNA_GHOST_DS` (separate from revocation DS)
-  - `uniqueIdentifier` must be Field-compatible (`bigint` or decimal/hex string)
+## Popup login
 
-## Security notes
+```ts
+import {
+  CredentialType,
+  MagnaClient,
+  ageGteConstraint,
+  type Policy,
+} from "@magna/client";
 
-- Do not persist raw zkPassport `uniqueIdentifier`.
-- Instagram handle verification in Magna v1 is based on a hashed-handle witness aligned with the external
-  `zkPoke` attestation flow.
-- SDK default hasher is Poseidon2-with-separator (`@aztec/foundation`) to match Noir formulas.
-- Golden vector tests lock TS outputs against Noir vectors for claims hash, revocation nullifier, and ghost seed KDF.
+const magna = new MagnaClient({
+  clientId: "dapp_reference",
+  walletOrigin: "http://localhost:5174",
+  magnaPublicKeyJwk: JSON.parse(MAGNA_PUBLIC_KEY_JWK),
+});
 
-## Contract typing
+const policy: Policy = {
+  credentialType: CredentialType.Passport,
+  constraints: [ageGteConstraint(18)],
+};
 
-`@magna/client` accepts either:
+const result = await magna.login(policy);
+if (!result.verified) throw new Error("Magna policy was not satisfied");
+```
 
-- a generic Aztec contract-like object (`methods.*.send()`), or
-- generated bindings from `@magna/contracts-bindings` for stronger typing.
+Use `loginWithRequirements(...)` when a login request combines a policy with additional
+wallet-validated requirements, such as an Instagram handle requirement.
+
+## Redirect fallback
+
+`loginWithRedirect(...)` and `completeRedirectLogin(...)` provide the full-page fallback for
+popup-blocked or mobile contexts. The wallet returns a one-time code; the connector exchanges it
+and validates the signed session assertion against the original request context.
+
+## Security boundary
+
+Every successful result is validated against Magna's configured P-256 public key and bound to the
+request id, session challenge, policy hash, client id, relying-party origin, and expiry. Integrating
+dApps receive only the signed verification result and transaction receipt references. They do not
+receive credentials, private notes, witnesses, passport data, Instagram email data, or wallet keys.
+
+See `apps/reference-dapp` and `docs/integration-guide.md` for the current integration example.

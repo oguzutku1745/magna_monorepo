@@ -5,20 +5,35 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "browser": "./dist/browser.js",
+      "default": "./dist/browser.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "compile:circuit": "${NARGO_BIN:-/Users/ouyildiz/.nargo/bin/nargo} compile --program-dir circuit",
-    "test": "npm run build && node --test dist/**/*.spec.js",
+    "compile:circuit": "node ../../scripts/compile-instagram-circuit.mjs",
+    "test": "npm run build && node --test dist/*.spec.js",
+    "test:proof": "npm run build && node --test dist/prove.e2e.js",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@aztec/bb.js": "0.84.0",
-    "@noir-lang/noir_js": "1.0.0-beta.3",
-    "@noir-lang/types": "1.0.0-beta.3",
-    "@zk-email/zkemail-nr": "2.0.0"
+    "@noir-lang/noir_js": "1.0.0-beta.5",
+    "@noir-lang/types": "1.0.0-beta.5",
+    "@zk-email/zkemail-nr": "2.0.0",
+    "buffer": "^6.0.3"
   },
   "devDependencies": {
+    "@aztec/foundation": "5.1.0",
     "@types/node": "^22.5.5",
+    "@zk-email/helpers": "6.4.2",
     "typescript": "^5.9.3"
   }
 }

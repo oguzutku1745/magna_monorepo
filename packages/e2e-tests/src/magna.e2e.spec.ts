@@ -4,12 +4,13 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { getInitialTestAccountsData } from "@aztec/accounts/testing";
+import { deriveSecretKeyFromSigningKey } from "@aztec/accounts/utils";
 import { L1FeeJuicePortalManager } from "@aztec/aztec.js/ethereum";
 import { SetPublicAuthwitContractInteraction } from "@aztec/aztec.js/authorization";
 import { createAztecNodeClient } from "@aztec/aztec.js/node";
 import { AztecAddress, EthAddress } from "@aztec/aztec.js/addresses";
 import type { FeePaymentMethod } from "@aztec/aztec.js/fee";
-import { Fr } from "@aztec/aztec.js/fields";
+import { Fq, Fr } from "@aztec/aztec.js/fields";
 import { FeeJuiceContract, ProtocolContractAddress } from "@aztec/aztec.js/protocol";
 import { ExecutionPayload } from "@aztec/aztec.js/tx";
 import { AccountManager } from "@aztec/aztec.js/wallet";
@@ -21,7 +22,6 @@ import { Ecdsa } from "@aztec/foundation/crypto/ecdsa";
 import { retryUntil } from "@aztec/foundation/retry";
 import { poseidon2HashWithSeparator } from "@aztec/foundation/crypto/sync";
 import { TestDateProvider } from "@aztec/foundation/timer";
-import { siloNullifier } from "@aztec/stdlib/hash";
 import { getNonNullifiedL1ToL2MessageWitness } from "@aztec/stdlib/messaging";
 import { Gas, GasFees, GasSettings } from "@aztec/stdlib/gas";
 import { EmbeddedWallet } from "@aztec/wallets/embedded";
@@ -40,9 +40,9 @@ import {
   CredentialType,
   MagnaWebAuthnAccountContract,
   computeInstagramClaimsHash,
+  computeInstagramHandleCommitment,
   computeInstagramHandleHash,
   normalizeSToLow,
-  poseidon2FieldHasher,
   type WebAuthnAsserter,
   type WebAuthnRegistration,
 } from "@magna/wallet";
@@ -90,7 +90,6 @@ const INITIAL_L1_STABLE_SUPPLY = 1_000_000_000_000n;
 const MAGNA_CLAIMS_DS = 0x4d414743;
 const MAGNA_REVOCATION_DS = 0x4d415247;
 const MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS = 300n;
-const MAGNA_SPONSOR_RL_WINDOW_SECONDS = 86_400n;
 const MAX_CONSTRAINTS = 8;
 const TRANSIENT_LOCAL_NETWORK_TX_ERROR_MARKERS = [
   "Invalid tx: Invalid expiration timestamp",
@@ -104,9 +103,18 @@ type HintedCredential = Parameters<
 type HintedStatus = Parameters<
   (typeof MagnaIssuerContract)["prototype"]["methods"]["verify"]
 >[2];
-type HintedRecovery = Parameters<
-  (typeof MagnaIssuerContract)["prototype"]["methods"]["recover"]
->[0];
+// Rootless issuance still discovers its RecoveryNote for lifecycle/nullifier
+// assertions, but there is deliberately no callable generic recovery method
+// from which to derive this return shape.
+type HintedRecovery = {
+  note: {
+    revocation_secret: Fr;
+    claims_hash: Fr;
+    credential_type: bigint;
+    expiry_ts: bigint;
+  };
+  owner: AztecAddress;
+};
 type HintedRootStatus = Parameters<
   (typeof MagnaIssuerContract)["prototype"]["methods"]["verify_linked"]
 >[1];
@@ -119,9 +127,6 @@ type HintedLinkedCredential = Parameters<
 type HintedLinkedStatus = Parameters<
   (typeof MagnaIssuerContract)["prototype"]["methods"]["verify_linked"]
 >[4];
-type HintedRootRecovery = Parameters<
-  (typeof MagnaIssuerContract)["prototype"]["methods"]["recover_root"]
->[0];
 type FeeJuiceBridgeClaim = {
   claimAmount: bigint;
   claimSecret: Fr;
@@ -162,38 +167,6 @@ function buildCompanySponsorFeeOptions(companySponsor: AztecAddress) {
     estimateGas: true,
     estimatedGasPadding: 0.2,
   };
-}
-
-async function warpToNextSponsorRateLimitWindow(
-  label: string,
-  l2Advance?: {
-    l2NudgeToken: TokenContract;
-    orchestrator: AztecAddress;
-    wallet?: EmbeddedWallet;
-  },
-): Promise<void> {
-  const l1Client = createExtendedL1Client(L1_RPC_URLS, L1_MNEMONIC);
-  const currentTimestamp = BigInt((await l1Client.getBlock()).timestamp);
-  const nextWindowStart =
-    currentTimestamp - (currentTimestamp % MAGNA_SPONSOR_RL_WINDOW_SECONDS) + MAGNA_SPONSOR_RL_WINDOW_SECONDS + 1n;
-  const cheatCodes = new EthCheatCodes(
-    L1_RPC_URLS,
-    new TestDateProvider(),
-    createLogger("magna:e2e:time-warp"),
-  );
-  await cheatCodes.warp(nextWindowStart, { silent: true, resetBlockInterval: true });
-  console.info(
-    `[e2e] ${label} warped sponsor rate-limit window ` +
-      `(from_ts=${currentTimestamp.toString()} to_ts=${nextWindowStart.toString()})`,
-  );
-  if (l2Advance) {
-    await syncWalletPxeAfterWarp(label, l2Advance.wallet);
-    await mineTwoL2BlocksForBridgeIngestion(
-      l2Advance.l2NudgeToken,
-      l2Advance.orchestrator,
-      `${label} post-warp L2 advance`,
-    );
-  }
 }
 
 async function warpForwardSeconds(label: string, seconds: bigint, wallet?: EmbeddedWallet): Promise<void> {
@@ -393,10 +366,6 @@ function getTxReceipt(receipt: TxResultLike): TxReceiptLike {
     return (receipt as { receipt: TxReceiptLike }).receipt;
   }
   return receipt as TxReceiptLike;
-}
-
-function getTxHash(receipt: TxResultLike): any {
-  return getTxReceipt(receipt).txHash;
 }
 
 function logTxReceipt(label: string, receipt: TxResultLike): string {
@@ -608,9 +577,11 @@ async function createAndDeploySchnorrAccount(
   feePayer: AztecAddress,
   alias: string,
 ): Promise<{ address: AztecAddress; deployTx: TxResultLike }> {
+  const signingKey = Fq.random();
+  const secret = await deriveSecretKeyFromSigningKey(signingKey);
   const accountManager = await runStep(
     `wallet.createSchnorrAccount(${alias})`,
-    async () => await wallet.createSchnorrAccount(Fr.random(), Fr.random(), undefined, alias),
+    async () => await wallet.createSchnorrAccount(secret, Fr.random(), signingKey, alias),
   );
   const deployMethod = await runStep(
     `getDeployMethod(${alias})`,
@@ -801,7 +772,7 @@ async function mineTwoL2BlocksForBridgeIngestion(
   orchestrator: AztecAddress,
   label = "bridge ingestion",
 ): Promise<void> {
-  const nudgeRecipient = AztecAddress.fromBigInt(Fr.random().toBigInt());
+  const nudgeRecipient = await AztecAddress.random();
   await runRetriedStep(`${label} L2 nudge #1`, async () => {
     return await l2NudgeToken.methods.mint_to_public(nudgeRecipient, 1n).send({
       from: orchestrator,
@@ -1729,24 +1700,6 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
     );
   }, 120_000);
 
-  it("rejects recover when called by wrong caller", async () => {
-    const ready = requireHintedContext(ctx);
-    await expect(
-      runStep(
-        "recover wrong caller (active owner)",
-        async () =>
-          await ready.issuer.methods
-            .recover(ready.hintedRecovery, ready.newActiveOwner, true)
-            .send({ from: ready.activeOwner }),
-      ),
-    ).rejects.toBeDefined();
-    ready.txHashesByPhase.adversarial_wrong_recover_caller = [];
-    logTrace(
-      "passed.rejects recover when called by wrong caller.tx_ids",
-      ready.txHashesByPhase.adversarial_wrong_recover_caller,
-    );
-  }, 90_000);
-
   it("rejects verify when called by wrong caller", async () => {
     const ready = requireHintedContext(ctx);
     await expect(
@@ -1771,152 +1724,6 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
       ready.txHashesByPhase.adversarial_wrong_verify_caller,
     );
   }, 90_000);
-
-  it("recovers and invalidates old status note", async () => {
-    const ready = requireHintedContext(ctx);
-    const expectedKillSwitchInner = computeRevocationNullifier(
-      ready.hintedRecovery.note.revocation_secret,
-      ready.hintedRecovery.note.credential_type,
-      ready.hintedRecovery.note.claims_hash,
-    );
-    const expectedKillSwitchSiloed = (
-      await runStep("silo expected kill-switch nullifier", async () =>
-        await siloNullifier(ready.issuer.address, new Fr(expectedKillSwitchInner)),
-      )
-    ).toBigInt();
-
-    const recoverTx = await runStep(
-      "recover",
-      async () =>
-        await ready.issuer.methods
-          .recover(ready.hintedRecovery, ready.newActiveOwner, true)
-          .send({ from: ready.ghostOwner }),
-    );
-    const recoverTxHash = logTxReceipt("recover", recoverTx);
-    const recoverTxEffect = await runStep(
-      "node.getTxEffect(recover)",
-      async () => await ready.node.getTxEffect(getTxHash(recoverTx)),
-    );
-    expect(recoverTxEffect).toBeDefined();
-
-    const emittedNullifiers = (recoverTxEffect?.data.nullifiers ?? []).map(value =>
-      value.toBigInt(),
-    );
-    logTrace("recover_tx_effect.nullifiers", {
-      expected_inner_kill_switch_nullifier: expectedKillSwitchInner,
-      expected_siloed_kill_switch_nullifier: expectedKillSwitchSiloed,
-      emitted_nullifiers: emittedNullifiers,
-    });
-    expect(emittedNullifiers).toContain(expectedKillSwitchSiloed);
-
-    const killSwitchWitness = await runStep(
-      "node.getNullifierMembershipWitness(expected siloed kill-switch)",
-      async () =>
-        await ready.node.getNullifierMembershipWitness("latest", new Fr(expectedKillSwitchSiloed)),
-    );
-    expect(killSwitchWitness).toBeDefined();
-
-    const recoveredCredential = (await runStep(
-      "get_recovered_credential_hinted",
-      async () =>
-        await ready.issuer.methods
-          .get_credential_hinted(ready.newActiveOwner, ready.claimsHash)
-          .simulate({ from: ready.newActiveOwner }),
-    )) as HintedCredential;
-    const recoveredStatus = (await runStep(
-      "get_recovered_status_hinted",
-      async () =>
-        await ready.issuer.methods
-          .get_status_hinted(ready.newActiveOwner, ready.claimsHash)
-          .simulate({ from: ready.newActiveOwner }),
-    )) as HintedStatus;
-    // Contract keeps recovery ownership at ghost owner after rotation.
-    const rotatedRecovery = (await runStep(
-      "get_rotated_recovery_hinted",
-      async () =>
-        await ready.issuer.methods
-          .get_recovery_hinted(ready.ghostOwner, ready.claimsHash)
-          .simulate({ from: ready.ghostOwner }),
-    )) as HintedRecovery;
-
-    const recoveredStatusNullifier = computeRevocationNullifier(
-      recoveredStatus.note.revocation_secret,
-      recoveredStatus.note.credential_type,
-      recoveredStatus.note.claims_hash,
-    );
-    logTrace("recovered_notes_and_calculated_nullifier", {
-      recovered_credential_note: recoveredCredential.note,
-      recovered_status_note: recoveredStatus.note,
-      rotated_recovery_note: rotatedRecovery.note,
-      calculated_nullifier: {
-        recovered_status_revocation_nullifier: recoveredStatusNullifier,
-        expected_recovery_kill_switch_inner: expectedKillSwitchInner,
-        expected_recovery_kill_switch_siloed: expectedKillSwitchSiloed,
-      },
-    });
-
-    await expect(
-      ready.issuer.methods
-        .verify(
-          { credential_type: ready.credentialType, constraints: ready.constraints },
-          ready.hintedCredential,
-          ready.hintedStatus,
-          ready.minAgeProven,
-          ready.nationalityPacked,
-          0,
-        )
-        .simulate({ from: ready.activeOwner }),
-    ).rejects.toBeDefined();
-
-    ready.txHashesByPhase.recover_and_invalidate = [recoverTxHash];
-    logTrace(
-      "passed.recovers and invalidates old status note.tx_ids",
-      ready.txHashesByPhase.recover_and_invalidate,
-    );
-  }, 120_000);
-
-  it("rejects replay of old hinted status after recovery", async () => {
-    const ready = requireHintedContext(ctx);
-    await expect(
-      runStep(
-        "verify old hinted status after recovery",
-        async () =>
-          await ready.issuer.methods
-            .verify(
-              { credential_type: ready.credentialType, constraints: ready.constraints },
-              ready.hintedCredential,
-              ready.hintedStatus,
-              ready.minAgeProven,
-              ready.nationalityPacked,
-              0,
-            )
-            .send({ from: ready.activeOwner }),
-      ),
-    ).rejects.toBeDefined();
-    ready.txHashesByPhase.adversarial_replay_old_status = [];
-    logTrace(
-      "passed.rejects replay of old hinted status after recovery.tx_ids",
-      ready.txHashesByPhase.adversarial_replay_old_status,
-    );
-  }, 90_000);
-
-  it("rejects double-recover attempt with consumed recovery note", async () => {
-    const ready = requireHintedContext(ctx);
-    await expect(
-      runStep(
-        "recover replay",
-        async () =>
-          await ready.issuer.methods
-            .recover(ready.hintedRecovery, ready.newActiveOwner, true)
-            .send({ from: ready.ghostOwner }),
-      ),
-    ).rejects.toBeDefined();
-    ready.txHashesByPhase.adversarial_double_recover = [];
-    logTrace(
-      "passed.rejects double-recover attempt with consumed recovery note.tx_ids",
-      ready.txHashesByPhase.adversarial_double_recover,
-    );
-  }, 120_000);
 
   it("rejects verify when credential scope is already expired", async () => {
     const ready = requireContext(ctx);
@@ -2070,275 +1877,27 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
     );
   }, 180_000);
 
-  it("supports linked root verify and disables it after root recovery", async () => {
+  it("exposes Recovery V3 without either legacy root-authorization entrypoint", () => {
     const ready = requireContext(ctx);
-    const rootCommitment = 999n;
-    const linkedMinAge = 27;
-    const linkedNationality = packAlpha3("FRA");
-    const linkedExpiryTs = 2_093_456_000n;
-    const linkedClaimsHash = computeClaimsHash(
-      1n,
-      ready.credentialType,
-      linkedNationality,
-      linkedMinAge,
-      linkedExpiryTs,
-    );
-
-    const registerRootTx = await runStep("register_rooted_passport(linked root scope)", async () => {
-      return await ready.issuer.methods
-        .register_rooted_passport(
-          ready.activeOwner,
-          ready.ghostOwner,
-          rootCommitment,
-          linkedClaimsHash,
-          linkedExpiryTs,
-        )
-        .send({ from: ready.orchestrator });
-    });
-    const registerRootTxHash = logTxReceipt("register_rooted_passport_linked_scope", registerRootTx);
-
-    const hintedRootStatus = (await runStep("get_root_status_hinted(linked root scope)", async () => {
-      return await ready.issuer.methods
-        .get_root_status_hinted(ready.activeOwner, rootCommitment)
-        .simulate({ from: ready.activeOwner });
-    })) as HintedRootStatus;
-    const hintedRootAuthority = (await runStep("get_root_authority_hinted(linked root scope)", async () => {
-      return await ready.issuer.methods
-        .get_root_authority_hinted(ready.activeOwner, rootCommitment, linkedClaimsHash)
-        .simulate({ from: ready.activeOwner });
-    })) as HintedRootAuthority;
-    const hintedRootRecovery = (await runStep("get_root_recovery_hinted(linked root scope)", async () => {
-      return await ready.issuer.methods
-        .get_root_recovery_hinted(ready.ghostOwner, rootCommitment)
-        .simulate({ from: ready.ghostOwner });
-    })) as HintedRootRecovery;
-    const hintedLinkedCredential = (await runStep(
-      "get_linked_credential_hinted(linked root scope)",
-      async () => {
-        return await ready.issuer.methods
-          .get_linked_credential_hinted(ready.activeOwner, rootCommitment, linkedClaimsHash)
-          .simulate({ from: ready.activeOwner });
-      },
-    )) as HintedLinkedCredential;
-    const hintedLinkedStatus = (await runStep("get_linked_status_hinted(linked root scope)", async () => {
-      return await ready.issuer.methods
-        .get_linked_status_hinted(ready.activeOwner, rootCommitment, linkedClaimsHash)
-        .simulate({ from: ready.activeOwner });
-    })) as HintedLinkedStatus;
-
-    const linkedVerifyTx = await runStep("verify_linked(linked root scope)", async () => {
-      return await ready.issuer.methods
-        .verify_linked(
-          { credential_type: ready.credentialType, constraints: buildConstraints() },
-          hintedRootStatus,
-          hintedRootAuthority,
-          hintedLinkedCredential,
-          hintedLinkedStatus,
-          linkedMinAge,
-          linkedNationality,
-          0,
-        )
-        .send({ from: ready.activeOwner });
-    });
-    const linkedVerifyTxHash = logTxReceipt("verify_linked_root_scope", linkedVerifyTx);
-
-    const rootRecoverTx = await runStep("recover_root(linked root scope)", async () => {
-      return await ready.issuer.methods
-        .recover_root(hintedRootRecovery, ready.newActiveOwner)
-        .send({ from: ready.ghostOwner });
-    });
-    const rootRecoverTxHash = logTxReceipt("recover_root_linked_scope", rootRecoverTx);
-
-    const rotatedRootStatus = (await runStep("get_root_status_hinted(rotated linked root scope)", async () => {
-      return await ready.issuer.methods
-        .get_root_status_hinted(ready.newActiveOwner, rootCommitment)
-        .simulate({ from: ready.newActiveOwner });
-    })) as HintedRootStatus;
-    expect(toBigIntValue(rotatedRootStatus.note.root_commitment)).toEqual(rootCommitment);
-
-    await expect(
-      runStep("verify_linked(linked root scope) [should fail after root recovery]", async () => {
-        return await ready.issuer.methods
-          .verify_linked(
-            { credential_type: ready.credentialType, constraints: buildConstraints() },
-            hintedRootStatus,
-            hintedRootAuthority,
-            hintedLinkedCredential,
-            hintedLinkedStatus,
-            linkedMinAge,
-            linkedNationality,
-            0,
-          )
-          .send({ from: ready.activeOwner });
-      }),
-    ).rejects.toBeDefined();
-
-    ready.txHashesByPhase.root_linked = [
-      registerRootTxHash,
-      linkedVerifyTxHash,
-      rootRecoverTxHash,
-    ];
-    logTrace(
-      "passed.supports linked root verify and disables it after root recovery.tx_ids",
-      ready.txHashesByPhase.root_linked,
-    );
-  }, 240_000);
-
-  it("allows rooted lineage to be re-issued after root recovery using fresh hints", async () => {
-    const ready = requireContext(ctx);
-    const rootCommitment = 1_010_101n;
-    const initialExpiryTs = 2_193_456_000n;
-    const initialClaimsHash = computeClaimsHash(
-      1n,
-      ready.credentialType,
-      packAlpha3("FRA"),
-      27,
-      initialExpiryTs,
-    );
-    const reissuedMinAge = 29;
-    const reissuedNationality = packAlpha3("DEU");
-    const reissuedExpiryTs = 2_293_456_000n;
-    const reissuedClaimsHash = computeClaimsHash(
-      1n,
-      ready.credentialType,
-      reissuedNationality,
-      reissuedMinAge,
-      reissuedExpiryTs,
-    );
-
-    const registerRootedTx = await runStep("register_rooted_passport(root recovery reissue scope)", async () => {
-      return await ready.issuer.methods
-        .register_rooted_passport(
-          ready.activeOwner,
-          ready.ghostOwner,
-          rootCommitment,
-          initialClaimsHash,
-          initialExpiryTs,
-        )
-        .send({ from: ready.orchestrator });
-    });
-    const registerRootedTxHash = logTxReceipt("register_rooted_passport_root_recovery_reissue_scope", registerRootedTx);
-
-    const hintedRootRecovery = (await runStep("get_root_recovery_hinted(root recovery reissue scope)", async () => {
-      return await ready.issuer.methods
-        .get_root_recovery_hinted(ready.ghostOwner, rootCommitment)
-        .simulate({ from: ready.ghostOwner });
-    })) as HintedRootRecovery;
-
-    const rootRecoverTx = await runStep("recover_root(root recovery reissue scope)", async () => {
-      return await ready.issuer.methods
-        .recover_root(hintedRootRecovery, ready.newActiveOwner)
-        .send({ from: ready.ghostOwner });
-    });
-    const rootRecoverTxHash = logTxReceipt("recover_root_root_recovery_reissue_scope", rootRecoverTx);
-
-    const rotatedRootStatus = (await runStep("get_root_status_hinted(rotated root recovery reissue scope)", async () => {
-      return await ready.issuer.methods
-        .get_root_status_hinted(ready.newActiveOwner, rootCommitment)
-        .simulate({ from: ready.newActiveOwner });
-    })) as HintedRootStatus;
-    const rotatedRootRecovery = (await runStep("get_root_recovery_hinted(rotated root recovery reissue scope)", async () => {
-      return await ready.issuer.methods
-        .get_root_recovery_hinted(ready.ghostOwner, rootCommitment)
-        .simulate({ from: ready.ghostOwner });
-    })) as HintedRootRecovery;
-    expect(toBigIntValue(rotatedRootStatus.note.root_commitment)).toEqual(rootCommitment);
-    expect(toBigIntValue(rotatedRootRecovery.note.root_commitment)).toEqual(rootCommitment);
-
-    await expect(
-      runStep("get_root_authority_hinted(rotated root recovery reissue scope) [should fail pre-reissue]", async () => {
-        return await ready.issuer.methods
-          .get_root_authority_hinted(ready.newActiveOwner, rootCommitment, initialClaimsHash)
-          .simulate({ from: ready.newActiveOwner });
-      }),
-    ).rejects.toBeDefined();
-
-    const reissueAuthorityTx = await runStep("register_root_authority(root recovery reissue scope)", async () => {
-      return await ready.issuer.methods
-        .register_root_authority(ready.newActiveOwner, rootCommitment, reissuedClaimsHash, reissuedExpiryTs)
-        .send({ from: ready.orchestrator });
-    });
-    const reissueAuthorityTxHash = logTxReceipt(
-      "register_root_authority_root_recovery_reissue_scope",
-      reissueAuthorityTx,
-    );
-
-    const reissueLinkedTx = await runStep("register_linked_credential(root recovery reissue scope)", async () => {
-      return await ready.issuer.methods
-        .register_linked_credential(
-          ready.newActiveOwner,
-          ready.ghostOwner,
-          rootCommitment,
-          reissuedClaimsHash,
-          ready.credentialType,
-          reissuedExpiryTs,
-        )
-        .send({ from: ready.orchestrator });
-    });
-    const reissueLinkedTxHash = logTxReceipt("register_linked_credential_root_recovery_reissue_scope", reissueLinkedTx);
-
-    const reissuedRootAuthority = (await runStep(
-      "get_root_authority_hinted(reissued root recovery reissue scope)",
-      async () =>
-        await ready.issuer.methods
-          .get_root_authority_hinted(ready.newActiveOwner, rootCommitment, reissuedClaimsHash)
-          .simulate({ from: ready.newActiveOwner }),
-    )) as HintedRootAuthority;
-    const reissuedLinkedCredential = (await runStep(
-      "get_linked_credential_hinted(reissued root recovery reissue scope)",
-      async () =>
-        await ready.issuer.methods
-          .get_linked_credential_hinted(ready.newActiveOwner, rootCommitment, reissuedClaimsHash)
-          .simulate({ from: ready.newActiveOwner }),
-    )) as HintedLinkedCredential;
-    const reissuedLinkedStatus = (await runStep(
-      "get_linked_status_hinted(reissued root recovery reissue scope)",
-      async () =>
-        await ready.issuer.methods
-          .get_linked_status_hinted(ready.newActiveOwner, rootCommitment, reissuedClaimsHash)
-          .simulate({ from: ready.newActiveOwner }),
-    )) as HintedLinkedStatus;
-
-    await runStep("verify_linked(root recovery reissue scope after reissue)", async () => {
-      await ready.issuer.methods
-        .verify_linked(
-          { credential_type: ready.credentialType, constraints: buildConstraints() },
-          rotatedRootStatus,
-          reissuedRootAuthority,
-          reissuedLinkedCredential,
-          reissuedLinkedStatus,
-          reissuedMinAge,
-          reissuedNationality,
-          0,
-        )
-        .simulate({ from: ready.newActiveOwner });
-    });
-
-    ready.txHashesByPhase.root_linked_reissue_after_recovery = [
-      registerRootedTxHash,
-      rootRecoverTxHash,
-      reissueAuthorityTxHash,
-      reissueLinkedTxHash,
-    ];
-    logTrace(
-      "passed.allows rooted lineage to be re-issued after root recovery using fresh hints.tx_ids",
-      ready.txHashesByPhase.root_linked_reissue_after_recovery,
-    );
-  }, 240_000);
+    expect(ready.issuer.methods).toHaveProperty("recover_root_v3");
+    expect(ready.issuer.methods).not.toHaveProperty("authorize_root_recovery");
+    expect(ready.issuer.methods).not.toHaveProperty("recover_root");
+    expect(ready.issuer.methods).not.toHaveProperty("recover");
+  });
 
   it("supports linked company sponsor gateway verify path for instagram ownership", async () => {
     const ready = requireContext(ctx);
     const instagramCredentialType = 3;
     const instagramHandleHash = computeInstagramHandleHash("denemedeneme581");
+    const instagramHandleBlind = 111_222_333n;
     const instagramExpiryTs = 2_393_456_000n;
     const instagramClaimsHash = computeInstagramClaimsHash(
       {
-        schemaVersion: 1,
+        schemaVersion: 2,
         credentialType: CredentialType.Instagram,
-        handleHash: instagramHandleHash,
+        handleCommitment: computeInstagramHandleCommitment(instagramHandleHash, instagramHandleBlind),
         expiryTs: instagramExpiryTs,
       },
-      poseidon2FieldHasher,
     );
     const rootCommitment = 555_555n;
     const authorityClaimsHash = computeClaimsHash(
@@ -2445,7 +2004,7 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
           hintedRootAuthority,
           hintedLinkedCredential,
           hintedLinkedStatus,
-          instagramHandleHash,
+          { handle_hash: instagramHandleHash, handle_blind: instagramHandleBlind },
           0,
         )
         .send({
@@ -2495,15 +2054,15 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
     );
     const instagramCredentialType = 3;
     const instagramHandleHash = computeInstagramHandleHash("expiredauthority581");
+    const instagramHandleBlind = 222_333_444n;
     const instagramExpiryTs = 2_393_456_000n;
     const instagramClaimsHash = computeInstagramClaimsHash(
       {
-        schemaVersion: 1,
+        schemaVersion: 2,
         credentialType: CredentialType.Instagram,
-        handleHash: instagramHandleHash,
+        handleCommitment: computeInstagramHandleCommitment(instagramHandleHash, instagramHandleBlind),
         expiryTs: instagramExpiryTs,
       },
-      poseidon2FieldHasher,
     );
     const rootCommitment = 666_666n;
     const expiredAuthorityExpiryTs = 1n;
@@ -2594,7 +2153,7 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
             hintedRootAuthority,
             hintedLinkedCredential,
             hintedLinkedStatus,
-            instagramHandleHash,
+            { handle_hash: instagramHandleHash, handle_blind: instagramHandleBlind },
             0,
           )
           .send({ from: expiredAuthorityOwner });
@@ -2619,16 +2178,16 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
     const recoveryOwner = ready.newActiveOwner;
     const instagramCredentialType = 3;
     const instagramHandleHash = computeInstagramHandleHash("renewauthority581");
+    const instagramHandleBlind = 333_444_555n;
     const instagramExpiryTs = 2_393_456_000n;
     const refreshedAuthorityExpiryTs = 2_493_456_000n;
     const instagramClaimsHash = computeInstagramClaimsHash(
       {
-        schemaVersion: 1,
+        schemaVersion: 2,
         credentialType: CredentialType.Instagram,
-        handleHash: instagramHandleHash,
+        handleCommitment: computeInstagramHandleCommitment(instagramHandleHash, instagramHandleBlind),
         expiryTs: instagramExpiryTs,
       },
-      poseidon2FieldHasher,
     );
     const rootCommitment = 777_777n;
     const initialAuthorityClaimsHash = computeClaimsHash(
@@ -2724,7 +2283,7 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
           hintedRootAuthority,
           hintedLinkedCredential,
           hintedLinkedStatus,
-          instagramHandleHash,
+          { handle_hash: instagramHandleHash, handle_blind: instagramHandleBlind },
           0,
         )
         .send({ from: rootOwner });
@@ -2763,7 +2322,7 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
           refreshedRootAuthority,
           hintedLinkedCredential,
           hintedLinkedStatus,
-          instagramHandleHash,
+          { handle_hash: instagramHandleHash, handle_blind: instagramHandleBlind },
           0,
         )
         .send({ from: rootOwner });

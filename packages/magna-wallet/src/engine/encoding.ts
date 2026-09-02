@@ -1,4 +1,4 @@
-import { poseidon2HashWithSeparator } from "@aztec/foundation/crypto/sync";
+import { pedersenHash, poseidon2HashWithSeparator } from "@aztec/foundation/crypto/sync";
 import { CredentialType } from "@magna/core";
 import type {
   Hasher,
@@ -14,6 +14,7 @@ export const MAGNA_REVOCATION_DS = 0x4d415247n; // "MARG"
 export const MAGNA_ROOT_AUTHORITY_REVOCATION_DS = 0x4d415241n; // "MARA"
 export const MAGNA_GHOST_DS = 0x4d414748n; // "MAGH"
 export const MAGNA_INSTAGRAM_HANDLE_DS = 0x4d414948n; // "MAIH"
+export const MAGNA_INSTAGRAM_HANDLE_COMMITMENT_DS = 0x4d414943n; // "MAIC"
 export const MAGNA_ROOT_DS = 0x4d414749n; // "MAGI"
 export const MAGNA_PASSPORT_NATIONALITY_COMMITMENT_DS = 0x4d414e43n; // "MANC"
 export const MAGNA_PASSPORT_EXPIRY_COMMITMENT_DS = 0x4d414558n; // "MAEX"
@@ -128,25 +129,33 @@ export function computeInstagramHandleHash(handle: string): bigint {
   for (const byte of bytes) {
     packed = (packed << 8n) | BigInt(byte);
   }
-  return poseidon2FieldHasher(MAGNA_INSTAGRAM_HANDLE_DS, [
-    BigInt(bytes.length),
-    packed,
-  ]);
+  return pedersenHash([MAGNA_INSTAGRAM_HANDLE_DS, BigInt(bytes.length), packed]).toBigInt();
+}
+
+export function computeInstagramHandleCommitment(handleHash: bigint, handleBlind: bigint): bigint {
+  if (handleBlind <= 0n) {
+    throw new Error("instagram handle blind must be non-zero");
+  }
+  return pedersenHash([
+    MAGNA_INSTAGRAM_HANDLE_COMMITMENT_DS,
+    handleHash,
+    handleBlind,
+  ]).toBigInt();
 }
 
 export function computeInstagramClaimsHash(
   claims: InstagramCanonicalClaims,
-  hasher: Hasher,
 ): bigint {
   if (claims.credentialType !== CredentialType.Instagram) {
     throw new Error("instagram claims hash expects CredentialType.Instagram");
   }
-  return hasher(MAGNA_CLAIMS_DS, [
+  return pedersenHash([
+    MAGNA_CLAIMS_DS,
     BigInt(claims.schemaVersion),
     BigInt(claims.credentialType),
-    claims.handleHash,
+    claims.handleCommitment,
     claims.expiryTs,
-  ]);
+  ]).toBigInt();
 }
 
 export function computeRevocationNullifier(

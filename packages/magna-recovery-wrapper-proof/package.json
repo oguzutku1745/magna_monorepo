@@ -1,0 +1,41 @@
+{
+  "name": "@magna/recovery-wrapper-proof",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./safe": {
+      "types": "./dist/safe.d.ts",
+      "import": "./dist/safe.js"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "import": "./dist/browser.js"
+    }
+  },
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json",
+    "compile:circuit": "${AZTEC_NARGO_BIN:-aztec-nargo} compile --program-dir circuit-dev && node ../../scripts/sync-recovery-wrapper-artifact.mjs",
+    "generate:solidity-verifier": "npm run build && node ../../scripts/generate-recovery-wrapper-solidity-verifier.mjs",
+    "test": "npm run build && node ../../scripts/node-test-runner.mjs 'dist/**/*.spec.js'",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aztec/bb.js": "5.0.0",
+    "@magna/passport-wrapper-proof": "0.1.0",
+    "@magna/recovery-v3": "0.1.0",
+    "@noir-lang/noir_js": "1.0.0-beta.22",
+    "@noir-lang/types": "1.0.0-beta.22",
+    "@zkpassport/utils": "0.37.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.5",
+    "typescript": "^5.9.3"
+  }
+}

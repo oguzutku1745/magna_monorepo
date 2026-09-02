@@ -3,11 +3,14 @@ import assert from "node:assert/strict";
 import {
   getEmbeddedPxeDatabaseName,
   isAztecWorldStateAnchorError,
+  getEmbeddedWalletDatabaseName,
 } from "../browser/pxe-cache.js";
 import {
   loadStoredWebAuthnAccounts,
   parseWebAuthnPublicKeyRecoveryBundle,
+  rememberWebAuthnWalletSessionAccount,
   saveStoredWebAuthnAccount,
+  selectStoredWebAuthnAccount,
   serializeWebAuthnPublicKeyRecoveryBundle,
   storedWebAuthnAccountFromRegistration,
   webAuthnPrfOutputsToAccountMaterial,
@@ -15,10 +18,15 @@ import {
 import type { WebAuthnRegistration } from "../webauthn/ceremony.js";
 
 test("PRF-backed stored WebAuthn accounts do not persist raw wallet material", () => {
-  const stored = storedWebAuthnAccountFromRegistration(registrationFixture(), "0xabc");
+  const stored = storedWebAuthnAccountFromRegistration(
+    registrationFixture(),
+    "0xabc",
+    "Magna wallet · 2026-08-27 17:04:12",
+  );
   const serialized = JSON.stringify(stored);
 
   assert.equal(stored.walletMaterialSource, "webauthn-prf");
+  assert.equal(stored.displayName, "Magna wallet · 2026-08-27 17:04:12");
   assert.equal("secretKey" in stored, false);
   assert.equal("salt" in stored, false);
   assert.equal(serialized.includes("secretKey"), false);
@@ -89,7 +97,7 @@ test("PRF outputs convert to deterministic Aztec account material", () => {
   assert.equal(first.salt.toString(), second.salt.toString());
 });
 
-test("saving a fresh WebAuthn account replaces the reusable account for the same wallet origin", () => {
+test("saving WebAuthn accounts retains distinct named passkeys for the same wallet origin", () => {
   const storage = memoryStorage();
   const stale = storedWebAuthnAccountFromRegistration(registrationFixture(), "0xstale");
   const fresh = storedWebAuthnAccountFromRegistration(
@@ -103,7 +111,72 @@ test("saving a fresh WebAuthn account replaces the reusable account for the same
   saveStoredWebAuthnAccount(storage, stale);
   saveStoredWebAuthnAccount(storage, fresh);
 
-  assert.deepEqual(loadStoredWebAuthnAccounts(storage), [fresh]);
+  assert.deepEqual(loadStoredWebAuthnAccounts(storage), [stale, fresh]);
+});
+
+test("saving an updated WebAuthn account replaces only the same credential/address", () => {
+  const storage = memoryStorage();
+  const original = storedWebAuthnAccountFromRegistration(registrationFixture(), "0xwallet", "Old name");
+  const updated = { ...original, displayName: "New name" };
+
+  saveStoredWebAuthnAccount(storage, original);
+  saveStoredWebAuthnAccount(storage, updated);
+
+  assert.deepEqual(loadStoredWebAuthnAccounts(storage), [updated]);
+});
+
+test("an authenticated passkey session can restore an overwritten browser lookup record", async () => {
+  const storage = memoryStorage();
+  const remembered = await rememberWebAuthnWalletSessionAccount(
+    {
+      kind: "passkey",
+      label: "WebAuthn source",
+      wallet: {} as never,
+      accounts: [{ alias: "source", address: "0xsource" }],
+      activeAccount: { alias: "source", address: "0xsource" },
+      disconnect: async () => undefined,
+      metadata: {
+        credentialId: "source-credential",
+        passkeyName: "Magna wallet · source",
+        publicKeyRecoveryBundle: `04${"01".repeat(32)}${"02".repeat(32)}`,
+      },
+    },
+    {
+      rpId: "wallet.example",
+      origin: "https://wallet.example",
+      storage,
+    },
+  );
+
+  assert.equal(remembered.address, "0xsource");
+  assert.equal(remembered.displayName, "Magna wallet · source");
+  assert.equal(remembered.credentialId, "source-credential");
+  assert.deepEqual(loadStoredWebAuthnAccounts(storage), [remembered]);
+});
+
+test("stored passkey selection uses the exact named credential instead of the first account", () => {
+  const first = storedWebAuthnAccountFromRegistration(registrationFixture(), "0xold", "Magna wallet · old");
+  const recovered = storedWebAuthnAccountFromRegistration(
+    { ...registrationFixture(), credentialId: new Uint8Array([9, 8, 7, 6]) },
+    "0xrecovered",
+    "Magna recovery · new",
+  );
+
+  assert.equal(
+    selectStoredWebAuthnAccount([first, recovered], {
+      rpId: "wallet.example",
+      origin: "https://wallet.example",
+      credentialId: recovered.credentialId,
+    }),
+    recovered,
+  );
+  assert.throws(
+    () => selectStoredWebAuthnAccount([first, recovered], {
+      rpId: "wallet.example",
+      origin: "https://wallet.example",
+    }),
+    /Multiple Magna passkeys/,
+  );
 });
 
 test("Aztec world-state anchor errors are recognized without matching unrelated block errors", () => {
@@ -122,10 +195,11 @@ test("Aztec world-state anchor errors are recognized without matching unrelated 
   assert.equal(isAztecWorldStateAnchorError(new Error("Invalid tx: Block header not found")), false);
 });
 
-test("embedded PXE cache reset targets only the PXE IndexedDB database", () => {
+test("embedded wallet store names match the Aztec 5.1 SQLite-OPFS identity layout", () => {
   const rollupAddress = "0x322813fd9a801c5507c9de605d63cea4f2ce6c44";
 
-  assert.equal(getEmbeddedPxeDatabaseName(rollupAddress), "pxe_data_0x322813fd9a801c5507c9de605d63cea4f2ce6c44/pxe_data");
+  assert.equal(getEmbeddedPxeDatabaseName(31337, rollupAddress), "pxe_data_31337-0x322813fd9a801c5507c9de605d63cea4f2ce6c44-v13");
+  assert.equal(getEmbeddedWalletDatabaseName(31337, rollupAddress), "wallet_data_31337-0x322813fd9a801c5507c9de605d63cea4f2ce6c44-v1");
 });
 
 function registrationFixture(): WebAuthnRegistration {
@@ -138,6 +212,7 @@ function registrationFixture(): WebAuthnRegistration {
     rpId: "wallet.example",
     rpIdHash: new Uint8Array(32).fill(3),
     origin: "https://wallet.example",
+    transports: ["internal", "hybrid"],
   };
 }
 

@@ -84,7 +84,7 @@ function unwrapSimulationResult<T>(value: T | { result: T }): T {
 }
 
 function toAztecAddress(value: string): AztecAddress {
-  return AztecAddress.fromString(value);
+  return AztecAddress.fromStringUnsafe(value);
 }
 
 function toField(value: bigint | string): Fr {
@@ -110,6 +110,13 @@ function toContractPassportCommittedClaimsWitness(witness: VerifyPassportV2Input
     nationality_blind: witness.nationalityBlind,
     expiry_ts: witness.expiryTs,
     expiry_blind: witness.expiryBlind,
+  };
+}
+
+function toContractInstagramCommittedClaimsWitness(witness: VerifyInstagramInput["claimsWitness"]) {
+  return {
+    handle_hash: witness.handleHash,
+    handle_blind: witness.handleBlind,
   };
 }
 
@@ -283,7 +290,7 @@ export class MagnaVerificationEngine {
       ? [sponsorAddress, issuerAddress]
       : [sponsorAddress];
     return {
-      from: AztecAddress.fromString(from),
+      from: AztecAddress.fromStringUnsafe(from),
       fee,
       // Sponsored private calls enter through the sponsor but prove issuer-owned notes.
       additionalScopes,
@@ -504,7 +511,7 @@ export class MagnaVerificationEngine {
   }
 
   async registerInstagram(input: RegisterInstagramInput) {
-    const claimsHash = computeInstagramClaimsHash(input.claims, this.hasher);
+    const claimsHash = computeInstagramClaimsHash(input.claims);
     return this.issuerContract.methods
       .register_credential(
         input.activeOwner,
@@ -566,7 +573,7 @@ export class MagnaVerificationEngine {
   }
 
   async registerLinkedInstagram(input: RegisterLinkedInstagramInput) {
-    const claimsHash = computeInstagramClaimsHash(input.claims, this.hasher);
+    const claimsHash = computeInstagramClaimsHash(input.claims);
     return this.issuerContract.methods
       .register_linked_credential(
         input.activeOwner,
@@ -600,7 +607,7 @@ export class MagnaVerificationEngine {
         policy,
         input.hintedCredentialNote,
         input.hintedStatusNote,
-        input.claimsWitness.handleHash,
+        toContractInstagramCommittedClaimsWitness(input.claimsWitness),
         input.sponsorSlot ?? 0,
       )
       .send({ from });
@@ -659,7 +666,7 @@ export class MagnaVerificationEngine {
         input.hintedRootAuthorityNote,
         input.hintedCredentialNote,
         input.hintedStatusNote,
-        input.claimsWitness.handleHash,
+        toContractInstagramCommittedClaimsWitness(input.claimsWitness),
         input.sponsorSlot ?? 0,
       )
       .send({ from });
@@ -702,7 +709,7 @@ export class MagnaVerificationEngine {
         policy,
         input.hintedCredentialNote,
         input.hintedStatusNote,
-        input.claimsWitness.handleHash,
+        toContractInstagramCommittedClaimsWitness(input.claimsWitness),
         input.sponsorSlot ?? 0,
       )
       .send(await this.buildCompanySponsorSendOptions(from, sponsorContract));
@@ -759,7 +766,7 @@ export class MagnaVerificationEngine {
         input.hintedRootAuthorityNote,
         input.hintedCredentialNote,
         input.hintedStatusNote,
-        input.claimsWitness.handleHash,
+        toContractInstagramCommittedClaimsWitness(input.claimsWitness),
         input.sponsorSlot ?? 0,
       )
       .send(await this.buildCompanySponsorSendOptions(from, sponsorContract));
@@ -779,14 +786,24 @@ export class MagnaVerificationEngine {
   }
 
   async recover(input: RecoverInput, ghostAddress: string) {
-    return this.issuerContract.methods
-      .recover(input.hintedRecoveryNote, input.newActiveOwner, input.remintCredential)
-      .send({ from: ghostAddress });
+    void input;
+    void ghostAddress;
+    throw new Error(
+      "Generic Ghost-only recovery is retired. Use rooted recovery with a fresh proof-bound authorization.",
+    );
   }
 
   async recoverRoot(input: RecoverRootInput, ghostAddress: string) {
     return this.issuerContract.methods
-      .recover_root(input.hintedRootRecoveryNote, input.newActiveOwner)
+      .recover_root_v3(
+        input.hintedRootRecoveryNote,
+        input.destination,
+        toField(input.authorizationNonce),
+        toField(input.claimsHash),
+        BigInt(input.credentialValidUntil),
+        toField(input.messageSecret),
+        toField(input.messageLeafIndex),
+      )
       .send({ from: ghostAddress });
   }
 

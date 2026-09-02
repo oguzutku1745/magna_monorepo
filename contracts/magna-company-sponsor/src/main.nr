@@ -25,7 +25,7 @@ pub contract MagnaCompanySponsor {
         },
     };
     use magna_company_rights_registry::MagnaCompanyRightsRegistry;
-    use magna_lib::{PassportCommittedClaimsWitness, Policy};
+    use magna_lib::{InstagramCommittedClaimsWitness, PassportCommittedClaimsWitness, Policy};
 
     #[storage]
     struct Storage<Context> {
@@ -163,7 +163,7 @@ pub contract MagnaCompanySponsor {
         policy: Policy,
         hinted_credential: HintedNote<CredentialNote>,
         hinted_status: HintedNote<StatusNote>,
-        handle_hash: Field,
+        claims_witness: InstagramCommittedClaimsWitness,
         sponsor_slot: u8,
     ) {
         let caller = self.msg_sender();
@@ -178,7 +178,7 @@ pub contract MagnaCompanySponsor {
                 policy,
                 hinted_credential,
                 hinted_status,
-                handle_hash,
+                claims_witness,
                 sponsor_slot,
             )
             .call(self.context);
@@ -271,7 +271,7 @@ pub contract MagnaCompanySponsor {
         hinted_root_authority: HintedNote<RootAuthorityNote>,
         hinted_credential: HintedNote<LinkedCredentialNote>,
         hinted_status: HintedNote<LinkedStatusNote>,
-        handle_hash: Field,
+        claims_witness: InstagramCommittedClaimsWitness,
         sponsor_slot: u8,
     ) {
         let caller = self.msg_sender();
@@ -288,7 +288,7 @@ pub contract MagnaCompanySponsor {
                 hinted_root_authority,
                 hinted_credential,
                 hinted_status,
-                handle_hash,
+                claims_witness,
                 sponsor_slot,
             )
             .call(self.context);

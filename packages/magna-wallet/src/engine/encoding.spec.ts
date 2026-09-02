@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   buildPassportCommittedClaimsWitness,
   computeInstagramClaimsHash,
+  computeInstagramHandleCommitment,
   computeInstagramHandleHash,
   computePassportClaimsHash,
   computePassportCommittedClaimsHash,
@@ -132,31 +133,36 @@ describe("passport v2 hidden claims hashing", () => {
 });
 
 describe("instagram hashing", () => {
-  it("matches zkPoke username hashing for deterministic handle binding", () => {
+  it("matches the Instagram V2 Pedersen handle hash vector", () => {
     assert.equal(
       computeInstagramHandleHash("denemedeneme581"),
-      21800137438672550822996462157901125537325126536773334526859055600762133677092n,
+      21710982740772592462772415426283474571878360236385617837382410903805865382682n,
     );
   });
 
   it("changes claims hash when the handle hash changes", () => {
+    const blind = 987654321n;
     const first = computeInstagramClaimsHash(
       {
-        schemaVersion: 1,
+        schemaVersion: 2,
         credentialType: CredentialType.Instagram,
-        handleHash: computeInstagramHandleHash("denemedeneme581"),
+        handleCommitment: computeInstagramHandleCommitment(
+          computeInstagramHandleHash("denemedeneme581"),
+          blind,
+        ),
         expiryTs: 1_893_456_000n,
       },
-      poseidon2FieldHasher,
     );
     const second = computeInstagramClaimsHash(
       {
-        schemaVersion: 1,
+        schemaVersion: 2,
         credentialType: CredentialType.Instagram,
-        handleHash: computeInstagramHandleHash("denemedeneme582"),
+        handleCommitment: computeInstagramHandleCommitment(
+          computeInstagramHandleHash("denemedeneme582"),
+          blind,
+        ),
         expiryTs: 1_893_456_000n,
       },
-      poseidon2FieldHasher,
     );
 
     assert.notEqual(first, second);

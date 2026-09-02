@@ -1,7 +1,7 @@
 use crate::MagnaIssuer;
 use crate::internal::constants::MAGNA_SPONSOR_GATEWAY_DELAY_SECONDS;
 use aztec::{
-    protocol::address::AztecAddress,
+    protocol::address::{AztecAddress, EthAddress},
     test::helpers::test_environment::TestEnvironment,
 };
 use magna_verify_meter_hook::MagnaVerifyMeterHook;
@@ -16,6 +16,10 @@ pub unconstrained fn setup(
 
     let initializer = MagnaIssuer::interface().constructor(orchestrator, AztecAddress::zero());
     let contract_address = env.deploy("MagnaIssuer").with_public_initializer(orchestrator, initializer);
+    env.call_public(
+        orchestrator,
+        MagnaIssuer::at(contract_address).initialize_recovery_portal(EthAddress::from_field(0xdead)),
+    );
     env.call_public(
         orchestrator,
         MagnaIssuer::at(contract_address).add_company_sponsor_gateway(attacker),
@@ -45,6 +49,10 @@ pub unconstrained fn setup_sponsored(
     let issuer_address = env
         .deploy("MagnaIssuer")
         .with_public_initializer(orchestrator, issuer_initializer);
+    env.call_public(
+        orchestrator,
+        MagnaIssuer::at(issuer_address).initialize_recovery_portal(EthAddress::from_field(0xdead)),
+    );
     env.call_public(
         orchestrator,
         MagnaIssuer::at(issuer_address).add_company_sponsor_gateway(attacker),

@@ -34,8 +34,9 @@ export function deriveGhostKeyMaterial(input: GhostDerivationInput): GhostKeyMat
     derivationVersion,
     domainSeparator,
     seedField,
-    // Keep both fields identical for compatibility with current call-sites.
+    // The seed is the Grumpkin signing scalar and the deterministic account salt.
+    // Aztec 5.1 derives the separate privacy secret from the signing scalar.
     saltHex: seedHex,
-    secretHex: seedHex,
+    signingKeyHex: seedHex,
   };
 }

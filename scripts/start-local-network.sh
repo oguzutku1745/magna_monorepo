@@ -2,23 +2,39 @@
 #
 # Thin wrapper around `aztec start --local-network`.
 #
-# IMPORTANT — what this does NOT do
-# ---------------------------------
-# It does NOT fix the "Tx dropped by P2P node" clock-drift problem. That drift is
-# driven by the local-network's TestDateProvider (aztec/dest/local-network/
-# local-network.js), which bumps its clock offset forward during block production
-# and epoch settlement, unbounded and much faster than real time. AZTEC_SLOT_DURATION
-# does not control it (an earlier attempt to "fix" drift via slot durations was
-# wrong and is intentionally NOT present here). Once the chain clock runs far enough
-# ahead of wall-clock, valid txs that simulate fine still get dropped at inclusion,
-# and the only recovery is a restart (anvil timestamps are monotonic, so a drifted
-# chain cannot be realigned in place).
+# Aztec 5.1's AutomineSequencer places each rapidly-built local checkpoint on a
+# fresh Aztec slot. Its debug warp methods do the same. With Aztec's production
+# defaults (72s Aztec / 12s Ethereum), a test suite can therefore manufacture an
+# hour of future chain time in only a few recovery/funding attempts.
 #
-# Practical workflow:
-#   * Run `npm run localnet:drift` before/after a session to see how far the chain
-#     clock has run ahead. When it is large, restart the network before testing.
-#   * Restart = re-run this + re-bootstrap contracts.
+# This project pins a local-only fast timing profile that was booted against the
+# actual 5.1.0 local network and exercised through its real L1 deployment and L2
+# setup blocks. Recovery/Fee-Juice checkpoint helpers additionally wait for wall
+# time before requesting the next slot, so repeated Inbox tests cannot accumulate
+# unbounded future drift. These values affect only the disposable chain-31337
+# developer network; testnet/mainnet timing is not changed.
 
 set -euo pipefail
+
+readonly expected_eth_slot=4
+readonly expected_aztec_slot=8
+readonly expected_block_ms=1000
+
+function require_local_timing_value() {
+  local name="$1"
+  local expected="$2"
+  local existing="${!name:-}"
+  if [[ -n "$existing" && "$existing" != "$expected" ]]; then
+    echo "Refusing conflicting $name=$existing; Magna local profile requires $expected." >&2
+    exit 1
+  fi
+  export "$name=$expected"
+}
+
+require_local_timing_value ETHEREUM_SLOT_DURATION "$expected_eth_slot"
+require_local_timing_value AZTEC_SLOT_DURATION "$expected_aztec_slot"
+require_local_timing_value SEQ_BLOCK_DURATION_MS "$expected_block_ms"
+
+echo "[magna-localnet] timing profile: Ethereum ${expected_eth_slot}s / Aztec ${expected_aztec_slot}s / block ${expected_block_ms}ms"
 
 exec aztec start --local-network "$@"

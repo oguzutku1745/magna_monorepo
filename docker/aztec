@@ -1,0 +1,2 @@
+#!/bin/sh
+exec node --no-warnings /usr/src/yarn-project/aztec/dest/bin/index.js "$@"

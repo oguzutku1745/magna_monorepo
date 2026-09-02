@@ -1,11 +1,22 @@
 import { existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ProofData } from "@aztec/bb.js";
 import { Noir, type CompiledCircuit } from "@noir-lang/noir_js";
 import { createUltraHonkBackend } from "./bb.js";
-import { generateInstagramCircuitInputs } from "./inputs.js";
-import type { InstagramProofInputMetadata, InstagramProofPublicOutputs } from "./types.js";
+import {
+  generateInstagramCircuitInputs,
+  generateInstagramCircuitInputsFromVerifiedDkim,
+  type InstagramVerifiedDkim,
+} from "./inputs.js";
+import { parseInstagramPublicInputs } from "./public-inputs.js";
+import {
+  INSTAGRAM_V2_ACIR_SHA256,
+  type InstagramIssuanceContext,
+  type InstagramProofInputMetadata,
+  type InstagramProofPublicOutputs,
+} from "./types.js";
 
 export type InstagramProofArtifact = {
   proof: ProofData;
@@ -29,30 +40,30 @@ export function loadInstagramCircuitArtifact(path = defaultCircuitArtifactPath()
         "Run npm run instagram-proof:prepare from the repository root, then restart the verification API.",
     );
   }
-  return JSON.parse(readFileSync(path, "utf8")) as CompiledCircuit;
-}
-
-export function parseInstagramPublicInputs(publicInputs: string[]): InstagramProofPublicOutputs {
-  if (publicInputs.length < 4) {
-    throw new Error("Instagram proof must expose at least four public inputs.");
+  const circuit = JSON.parse(readFileSync(path, "utf8")) as CompiledCircuit;
+  if (typeof circuit.bytecode !== "string" || circuit.bytecode.length === 0) {
+    throw new Error("Instagram V2 circuit artifact does not contain ACIR bytecode.");
   }
-  return {
-    dkimPubkeyHash: publicInputs[0],
-    emailNullifier: publicInputs[1],
-    handleLen: Number(publicInputs[2]),
-    handlePacked: publicInputs[3],
-  };
+  const digest = createHash("sha256").update(Buffer.from(circuit.bytecode, "base64")).digest("hex");
+  if (digest !== INSTAGRAM_V2_ACIR_SHA256) {
+    throw new Error(`Instagram V2 circuit ACIR hash mismatch: expected ${INSTAGRAM_V2_ACIR_SHA256}, received ${digest}.`);
+  }
+  return circuit;
 }
 
 export async function proveInstagramEmail(
   rawEmail: Buffer | string,
   claimedHandle: string,
+  issuance: InstagramIssuanceContext,
   options: {
     circuit?: CompiledCircuit;
+    verifiedDkim?: InstagramVerifiedDkim;
   } = {},
 ): Promise<InstagramProofArtifact> {
   const circuit = options.circuit ?? loadInstagramCircuitArtifact();
-  const { inputs, metadata } = await generateInstagramCircuitInputs(rawEmail, claimedHandle);
+  const { inputs, metadata } = options.verifiedDkim
+    ? generateInstagramCircuitInputsFromVerifiedDkim(options.verifiedDkim, claimedHandle, issuance)
+    : await generateInstagramCircuitInputs(rawEmail, claimedHandle, issuance);
   const noir = new Noir(circuit);
   const backend = createUltraHonkBackend(circuit.bytecode);
   const { witness } = await noir.execute(inputs);

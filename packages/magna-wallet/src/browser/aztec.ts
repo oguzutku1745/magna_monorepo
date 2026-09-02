@@ -10,7 +10,7 @@ export function getAztecNode(nodeUrl: string): AztecNode {
 }
 
 export function toAddress(value: string): AztecAddress {
-  return AztecAddress.fromString(value);
+  return AztecAddress.fromStringUnsafe(value);
 }
 
 export function bindIssuerContract(wallet: Wallet, issuerAddress: string) {

@@ -1,4 +1,5 @@
 use aztec::protocol::hash::poseidon2_hash_with_separator;
+use std::hash::pedersen_hash;
 
 pub fn compute_passport_claims_hash(
     schema_version: u8,
@@ -71,17 +72,28 @@ pub fn compute_passport_claims_hash_v2(
 pub fn compute_instagram_claims_hash(
     schema_version: u8,
     credential_type: u8,
-    handle_hash: Field,
+    handle_commitment: Field,
     expiry_ts: u64,
     claims_domain_separator: u32,
 ) -> Field {
-    poseidon2_hash_with_separator(
-        [
-            schema_version as Field,
-            credential_type as Field,
-            handle_hash,
-            expiry_ts as Field,
-        ],
-        claims_domain_separator,
-    )
+    pedersen_hash([
+        claims_domain_separator as Field,
+        schema_version as Field,
+        credential_type as Field,
+        handle_commitment,
+        expiry_ts as Field,
+    ])
+}
+
+pub fn compute_instagram_handle_commitment(
+    handle_hash: Field,
+    handle_blind: Field,
+    commitment_domain_separator: u32,
+) -> Field {
+    assert(handle_blind != 0, "instagram handle blind must be non-zero");
+    pedersen_hash([
+        commitment_domain_separator as Field,
+        handle_hash,
+        handle_blind,
+    ])
 }

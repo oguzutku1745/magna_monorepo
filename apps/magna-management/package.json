@@ -4,24 +4,30 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --port 5174",
+    "predev": "node ../../scripts/check-instagram-runtime-versions.mjs",
+    "dev": "vite --force --port 5174",
+    "prebuild": "node ../../scripts/check-instagram-runtime-versions.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 4174",
-    "test": "vitest run",
+    "test": "vitest run && node ../../scripts/test-management-noir-wasm-routing.mjs",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@aztec/aztec.js": "5.0.0-rc.1",
-    "@magna/client": "0.2.0",
+    "@aztec/aztec.js": "5.1.0",
+    "@aztec/stdlib": "5.1.0",
     "@magna/core": "0.1.0",
+    "@magna/instagram-proof": "0.1.0",
     "@magna/passport-wrapper-proof": "0.1.0",
+    "@magna/recovery-v3": "0.1.0",
+    "@magna/recovery-wrapper-proof": "0.1.0",
     "@magna/wallet": "0.1.0",
     "@zkpassport/sdk": "0.16.1",
     "buffer": "^6.0.3",
     "ogl": "^1.0.11",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "react-qr-code": "latest"
+    "react-qr-code": "latest",
+    "viem": "^2.53.1"
   },
   "devDependencies": {
     "@types/react": "^19.2.14",

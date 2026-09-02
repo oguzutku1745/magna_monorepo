@@ -159,7 +159,7 @@ async function runRetriedStep<T>(label: string, work: () => Promise<T>): Promise
 }
 
 async function mineTwoL2Blocks(ctx: BridgeContext): Promise<void> {
-  const nudgeRecipient = AztecAddress.fromBigInt(Fr.random().toBigInt());
+  const nudgeRecipient = await AztecAddress.random();
   await runRetriedStep("mineTwoL2Blocks nudge #1", async () => {
     return await ctx.l2NudgeToken.methods.mint_to_public(nudgeRecipient, 1n).send({ from: ctx.orchestrator });
   });
@@ -434,7 +434,7 @@ suite("Magna rights local-network L1->L2 bridge flow", () => {
     if (!ctx) throw new Error("bridge context missing");
     const bridgeCtx = ctx;
 
-    const sponsorB = AztecAddress.fromBigInt(Fr.random().toBigInt());
+    const sponsorB = await AztecAddress.random();
     const rightsAmount = 4n;
     const packageIdField = Fr.random();
     const packageId = packageIdField.toString() as `0x${string}`;

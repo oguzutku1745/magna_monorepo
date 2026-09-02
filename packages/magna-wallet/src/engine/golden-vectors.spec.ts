@@ -55,7 +55,7 @@ describe("Noir↔TS golden vectors", () => {
 
     assert.equal(ghost.seedField, GOLDEN_OUTPUTS.ghostSeed);
     assert.equal(
-      ghost.secretHex,
+      ghost.signingKeyHex,
       GOLDEN_OUTPUTS.ghostSeed.toString(16).padStart(64, "0"),
     );
   });

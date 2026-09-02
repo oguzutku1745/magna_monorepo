@@ -37,8 +37,8 @@ describe("getManagementEnv", () => {
     expect(() => getManagementEnv({ VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "a1" })).toThrow("must be a2");
   });
 
-  it("defaults production passport issuance to A2 with dev-only paths disabled", () => {
-    const env = getManagementEnv({ PROD: true });
+  it("uses an explicit production profile rather than Vite's optimized-build flag", () => {
+    const env = getManagementEnv({ VITE_MAGNA_DEPLOYMENT_PROFILE: "production" });
 
     expect(env.zkPassportIssuanceKind).toBe("a2");
     expect(env.zkPassportDevMode).toBe(false);
@@ -46,12 +46,40 @@ describe("getManagementEnv", () => {
     expect(env.enableLocalTestBootstrap).toBe(false);
   });
 
-  it("rejects non-A2 selection and dev flags in production builds", () => {
-    expect(() => getManagementEnv({ PROD: true, VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "legacy" })).toThrow("must be a2");
-    expect(getManagementEnv({ PROD: true, VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "a2" }).zkPassportIssuanceKind).toBe("a2");
-    expect(() => getManagementEnv({ PROD: true, VITE_MAGNA_ZKPASSPORT_DEV_MODE: "true" })).toThrow(
+  it("rejects non-A2 selection and dev flags in the explicit production profile", () => {
+    const production = { VITE_MAGNA_DEPLOYMENT_PROFILE: "production" };
+    expect(() => getManagementEnv({ ...production, VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "legacy" })).toThrow("must be a2");
+    expect(getManagementEnv({ ...production, VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND: "a2" }).zkPassportIssuanceKind).toBe("a2");
+    expect(() => getManagementEnv({ ...production, VITE_MAGNA_ZKPASSPORT_DEV_MODE: "true" })).toThrow(
       "VITE_MAGNA_ZKPASSPORT_DEV_MODE must be disabled in production",
     );
+    expect(() =>
+      getManagementEnv({
+        ...production,
+        VITE_MAGNA_LOCAL_FAUCET_PRIVATE_KEY: `0x${"01".repeat(32)}`,
+      }),
+    ).toThrow("VITE_MAGNA_LOCAL_FAUCET_PRIVATE_KEY must not be configured in production");
+  });
+
+  it("allows the local faucet in an optimized development bundle", () => {
+    const key = `0x${"01".repeat(32)}`;
+    const env = getManagementEnv({
+      PROD: true,
+      VITE_MAGNA_DEPLOYMENT_PROFILE: "development",
+      VITE_MAGNA_ZKPASSPORT_DEV_MODE: "true",
+      VITE_MAGNA_LOCAL_FAUCET_PRIVATE_KEY: key,
+    });
+
+    expect(env.deploymentProfile).toBe("development");
+    expect(env.zkPassportDevMode).toBe(true);
+    expect(env.localFaucetPrivateKey).toBe(key);
+  });
+
+  it("uses the disposable recovery relayer key as the local faucet default", () => {
+    const key = `0x${"01".repeat(32)}`;
+    const env = getManagementEnv({ VITE_MAGNA_RECOVERY_V3_RELAYER_PRIVATE_KEY: key });
+
+    expect(env.localFaucetPrivateKey).toBe(key);
   });
 
   it("rejects unknown passport issuance modes", () => {

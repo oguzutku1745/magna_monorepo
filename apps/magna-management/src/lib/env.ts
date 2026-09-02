@@ -8,11 +8,27 @@ export type SponsorCatalogEntry = {
 export type ManagementEnv = {
   aztecNodeUrl: string;
   appId: string;
+  deploymentProfile: "development" | "production";
+  deploymentInstanceId?: string;
   verificationApiUrl?: string;
   l1RpcUrl?: string;
   l1RightsPortalAddress?: string;
   l1PaymentTokenAddress?: string;
-  l1BuyerPrivateKey?: string;
+  recoveryV3RelayerPrivateKey?: string;
+  localFaucetPrivateKey?: string;
+  recoveryV3?: {
+    ethereumChainId: bigint;
+    aztecChainId: bigint;
+    aztecProtocolVersion: bigint;
+    rootRegistryAddress: `0x${string}`;
+    certificateRegistryAddress: `0x${string}`;
+    circuitRegistryAddress: `0x${string}`;
+    wrapperVerifierAddress: `0x${string}`;
+    portalAddress: `0x${string}`;
+    trustContext: bigint;
+    domain: string;
+    scope: string;
+  };
   zkPassportRequestName: string;
   zkPassportRequestLogo: string;
   zkPassportRequestPurpose: string;
@@ -54,6 +70,20 @@ type LocalDeployment = {
       orchestratorAddress?: string;
     };
   };
+  recoveryV3?: {
+    profile?: string;
+    ethereumChainId?: string;
+    aztecChainId?: string;
+    aztecProtocolVersion?: string;
+    rootRegistryAddress?: string;
+    certificateRegistryAddress?: string;
+    circuitRegistryAddress?: string;
+    wrapperVerifierAddress?: string;
+    portalAddress?: string;
+    trustContext?: string;
+    domain?: string;
+    scope?: string;
+  };
 };
 
 const deployment = localDeployment as LocalDeployment;
@@ -78,6 +108,44 @@ function parseOptionalString(value: string | boolean | number | undefined): stri
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function parseDeploymentProfile(value: string | boolean | number | undefined): "development" | "production" {
+  const profile = parseOptionalString(value)?.toLowerCase();
+  if (!profile || profile === "development") return "development";
+  if (profile === "production") return "production";
+  throw new Error("VITE_MAGNA_DEPLOYMENT_PROFILE must be development or production.");
+}
+
+function localRecoveryV3(): ManagementEnv["recoveryV3"] {
+  const value = deployment.recoveryV3;
+  if (!value) return undefined;
+  const addresses = [
+    value.rootRegistryAddress,
+    value.certificateRegistryAddress,
+    value.circuitRegistryAddress,
+    value.wrapperVerifierAddress,
+    value.portalAddress,
+  ];
+  if (value.profile !== "development" || addresses.some(address => !/^0x[0-9a-fA-F]{40}$/.test(address ?? ""))) {
+    throw new Error("deployments/local.json contains an incomplete Recovery V3 developer deployment.");
+  }
+  if (!value.ethereumChainId || !value.aztecChainId || !value.aztecProtocolVersion || !value.trustContext) {
+    throw new Error("deployments/local.json is missing Recovery V3 network commitments.");
+  }
+  return {
+    ethereumChainId: BigInt(value.ethereumChainId),
+    aztecChainId: BigInt(value.aztecChainId),
+    aztecProtocolVersion: BigInt(value.aztecProtocolVersion),
+    rootRegistryAddress: value.rootRegistryAddress as `0x${string}`,
+    certificateRegistryAddress: value.certificateRegistryAddress as `0x${string}`,
+    circuitRegistryAddress: value.circuitRegistryAddress as `0x${string}`,
+    wrapperVerifierAddress: value.wrapperVerifierAddress as `0x${string}`,
+    portalAddress: value.portalAddress as `0x${string}`,
+    trustContext: BigInt(value.trustContext),
+    domain: value.domain ?? "localhost",
+    scope: value.scope ?? "magna-passport-onboarding",
+  };
 }
 
 function parseStringList(value: string | boolean | number | undefined): string[] {
@@ -119,7 +187,11 @@ function parseGhostVersion(value: string | boolean | number | undefined): "v2_sc
 }
 
 export function getManagementEnv(source: EnvSource = import.meta.env): ManagementEnv {
-  const isProduction = parseBoolean(source.PROD, false);
+  // Vite's PROD flag only means `vite build`; Docker intentionally serves an
+  // optimized bundle for the local developer network. Security policy must be
+  // selected explicitly instead of being inferred from bundle optimization.
+  const deploymentProfile = parseDeploymentProfile(source.VITE_MAGNA_DEPLOYMENT_PROFILE);
+  const isProduction = deploymentProfile === "production";
   const legacySponsor = parseOptionalString(source.VITE_MAGNA_COMPANY_SPONSOR_ADDRESS);
   const manifestSponsors =
     deployment.l2?.companySponsorAddresses ??
@@ -140,17 +212,28 @@ export function getManagementEnv(source: EnvSource = import.meta.env): Managemen
   const zkPassportDevMode = parseBoolean(source.VITE_MAGNA_ZKPASSPORT_DEV_MODE, false);
   const enableDevOrchestrator = parseBoolean(source.VITE_MAGNA_ENABLE_DEV_ORCHESTRATOR, !isProduction);
   const enableLocalTestBootstrap = parseBoolean(source.VITE_MAGNA_ENABLE_LOCAL_TEST_BOOTSTRAP, !isProduction);
+  const recoveryV3RelayerPrivateKey = parseOptionalString(source.VITE_MAGNA_RECOVERY_V3_RELAYER_PRIVATE_KEY);
+  const configuredLocalFaucetPrivateKey = parseOptionalString(source.VITE_MAGNA_LOCAL_FAUCET_PRIVATE_KEY);
+  if (isProduction && configuredLocalFaucetPrivateKey) {
+    throw new Error("VITE_MAGNA_LOCAL_FAUCET_PRIVATE_KEY must not be configured in production.");
+  }
 
   return {
     aztecNodeUrl: parseOptionalString(source.VITE_AZTEC_NODE_URL) ?? "http://localhost:8080",
     appId: parseOptionalString(source.VITE_MAGNA_APP_ID) ?? "magna-management",
+    deploymentProfile,
+    deploymentInstanceId: parseOptionalString(source.VITE_MAGNA_DEPLOYMENT_INSTANCE_ID),
     verificationApiUrl: parseOptionalString(source.VITE_MAGNA_VERIFICATION_API_URL) ?? "http://localhost:4310",
     l1RpcUrl: parseOptionalString(source.VITE_MAGNA_L1_RPC_URL) ?? parseOptionalString(source.VITE_L1_RPC_URL),
     l1RightsPortalAddress:
       parseOptionalString(source.VITE_MAGNA_L1_RIGHTS_PORTAL_ADDRESS) ?? deployment.l1?.portalAddress,
     l1PaymentTokenAddress:
       parseOptionalString(source.VITE_MAGNA_L1_PAYMENT_TOKEN_ADDRESS) ?? deployment.l1?.paymentTokenAddress,
-    l1BuyerPrivateKey: parseOptionalString(source.VITE_MAGNA_L1_BUYER_PRIVATE_KEY),
+    recoveryV3RelayerPrivateKey,
+    localFaucetPrivateKey: isProduction
+      ? undefined
+      : configuredLocalFaucetPrivateKey ?? recoveryV3RelayerPrivateKey,
+    recoveryV3: localRecoveryV3(),
     zkPassportRequestName: parseOptionalString(source.VITE_MAGNA_ZKPASSPORT_REQUEST_NAME) ?? "Magna",
     zkPassportRequestLogo:
       parseOptionalString(source.VITE_MAGNA_ZKPASSPORT_REQUEST_LOGO) ?? "https://magna.identity/logo.png",

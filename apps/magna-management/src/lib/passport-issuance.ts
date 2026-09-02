@@ -1,14 +1,17 @@
 import { getSchnorrAccountContractAddress } from "@aztec/accounts/schnorr";
-import { Fr } from "@aztec/aztec.js/fields";
+import { Fq, Fr } from "@aztec/aztec.js/fields";
 import { CredentialType } from "@magna/core";
 import type {
   PassportA2Action,
   PassportWrapperLocalWitness,
   PassportWrapperProofArtifact,
   ZkPassportCompressedProof,
-} from "@magna/passport-wrapper-proof";
+} from "@magna/passport-wrapper-proof/safe";
+import {
+  PASSPORT_A2_INNER_NAME,
+} from "@magna/passport-wrapper-proof/safe";
 import { deriveGhostKeyMaterial } from "../../../../packages/magna-wallet/src/engine/ghost";
-import type { GhostDerivationVersion, GhostKeyMaterial } from "../../../../packages/magna-wallet/src/engine/types";
+import type { GhostDerivationVersion } from "../../../../packages/magna-wallet/src/engine/types";
 import type {
   PassportA2ProofPayload,
   VerifyAndIssuePassportA2Payload,
@@ -30,6 +33,14 @@ const FIELD_MODULUS =
 
 type PassportMode = "passport" | "rooted";
 
+type FacematchCommittedInputs = {
+  rootKeyLeaf: string;
+  environment: "development" | "production";
+  appIdHash: string;
+  integrityPubkeyHash: string;
+  mode: "regular" | "strict";
+};
+
 type PassportIssuanceInput = {
   issuanceKind: PassportIssuanceKind;
   verificationApiUrl: string;
@@ -46,8 +57,6 @@ type PassportIssuanceInput = {
 
 type GhostPreview = {
   address: string;
-  uniqueIdentifier: string;
-  material: GhostKeyMaterial;
 };
 
 type DeriveGhostAccountPreview = (input: {
@@ -111,7 +120,7 @@ function requireString(value: unknown, fieldName: string): string {
   return value.trim();
 }
 
-function localDisclosures(completion: VerifiedPassportCompletion, ageThreshold: number): {
+export function localDisclosures(completion: VerifiedPassportCompletion, ageThreshold: number): {
   nationalityAlpha3: string;
   expiryTs: bigint;
   minAgeProven: number;
@@ -144,7 +153,7 @@ function localDisclosures(completion: VerifiedPassportCompletion, ageThreshold: 
   return { nationalityAlpha3, expiryTs, minAgeProven: ageThreshold };
 }
 
-function secureRandomField(): bigint {
+export function secureRandomField(): bigint {
   const bytes = new Uint8Array(32);
   for (;;) {
     globalThis.crypto.getRandomValues(bytes);
@@ -168,14 +177,14 @@ async function deriveGhostPreview(input: {
 }): Promise<GhostPreview> {
   const material = deriveGhostKeyMaterial(input);
   const address = await getSchnorrAccountContractAddress(
-    fieldFromHexString(material.secretHex, "Ghost secret"),
+    Fq.fromHexString(`0x${material.signingKeyHex}`),
     fieldFromHexString(material.saltHex, "Ghost salt"),
   );
-  return { address: address.toString(), uniqueIdentifier: input.uniqueIdentifier, material };
+  return { address: address.toString() };
 }
 
-function compressedOuterProof(completion: VerifiedPassportCompletion): ZkPassportCompressedProof {
-  const proof = completion.proofs.find(candidate => candidate.name === "outer_count_6");
+export function compressedOuterProof(completion: VerifiedPassportCompletion): ZkPassportCompressedProof {
+  const proof = completion.proofs.find(candidate => candidate.name === PASSPORT_A2_INNER_NAME);
   if (
     !proof ||
     typeof proof.proof !== "string" ||
@@ -183,7 +192,7 @@ function compressedOuterProof(completion: VerifiedPassportCompletion): ZkPasspor
     typeof proof.version !== "string" ||
     typeof proof.vkeyHash !== "string"
   ) {
-    throw new Error("zkPassport did not return the required outer_count_6 compressed proof.");
+    throw new Error(`zkPassport did not return the required ${PASSPORT_A2_INNER_NAME} compressed proof.`);
   }
   return {
     proof: proof.proof,
@@ -193,6 +202,35 @@ function compressedOuterProof(completion: VerifiedPassportCompletion): ZkPasspor
     index: proof.index,
     total: proof.total,
   };
+}
+
+export function profileFacematch(
+  completion: VerifiedPassportCompletion,
+): FacematchCommittedInputs & { environment: "production" } {
+  if (completion.proofProfile !== "development" && completion.proofProfile !== "production") {
+    throw new Error("zkPassport proof profile must be explicitly development or production.");
+  }
+  // In compressed mode zkPassport folds the disclosure proofs into one
+  // outer_count_* proof and merges each disclosure's committed inputs onto it.
+  // FaceMatch is therefore identified by the committed-input key, not by the
+  // outer proof's circuit name.
+  const facematchContainers = completion.proofs.filter(
+    candidate => candidate.committedInputs?.facematch !== undefined,
+  );
+  if (facematchContainers.length !== 1) {
+    throw new Error(
+      `zkPassport must return exactly one authenticated facematch committed-input set; received ${facematchContainers.length}.`,
+    );
+  }
+  const committedInputs = facematchContainers[0].committedInputs!
+    .facematch as FacematchCommittedInputs;
+  const expectedMode = completion.proofProfile === "development" ? "regular" : "strict";
+  if (committedInputs.environment !== "production" || committedInputs.mode !== expectedMode) {
+    throw new Error(
+      `zkPassport facematch must use the production environment in ${expectedMode} mode for the ${completion.proofProfile} profile.`,
+    );
+  }
+  return { ...committedInputs, environment: "production" };
 }
 
 function proofForJson(artifact: PassportWrapperProofArtifact): unknown {
@@ -282,13 +320,22 @@ export async function buildPassportA2ProofMaterial(
       ? nowSeconds + BigInt(VALIDITY_WINDOW_SECONDS)
       : disclosures.expiryTs;
   const randomField = dependencies.randomField ?? secureRandomField;
+  const facematch = profileFacematch(input.completion);
   const witness: PassportWrapperLocalWitness = {
+    profile: input.completion.proofProfile,
     zkPassportOuterProof: compressedOuterProof(input.completion),
     nationalityAlpha3: disclosures.nationalityAlpha3,
     expiryTs: disclosures.expiryTs,
     minAgeProven: disclosures.minAgeProven,
     agePredicate: { minAge: disclosures.minAgeProven, maxAge: 0 },
     bind: { customData: input.a2BindCustomData },
+    facematch: {
+      rootKeyLeaf: facematch.rootKeyLeaf,
+      environment: facematch.environment,
+      appIdHash: facematch.appIdHash,
+      integrityPublicKeyHash: facematch.integrityPubkeyHash,
+      mode: facematch.mode,
+    },
     credentialValidUntil,
     nationalityBlind: randomField(),
     expiryBlind: randomField(),

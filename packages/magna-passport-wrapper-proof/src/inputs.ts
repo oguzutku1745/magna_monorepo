@@ -13,9 +13,17 @@ import {
   getAgeParameterCommitment,
   getBindParameterCommitment,
   getDiscloseParameterCommitment,
+  getFacematchParameterCommitment,
   getParamCommitmentsFromOuterProof,
 } from "@zkpassport/utils";
-import { PASSPORT_A2_INNER_VKEY_HASH } from "./types.js";
+import {
+  PASSPORT_A2_INNER_NAME,
+  PASSPORT_A2_INNER_VKEY_HASH,
+  PASSPORT_A2_DEVELOPMENT_NULLIFIER_TYPE,
+  PASSPORT_A2_DEVELOPMENT_OPRF_PUBLIC_KEY_HASH,
+  PASSPORT_A2_OPRF_PUBLIC_KEY_HASH,
+  PASSPORT_A2_PRODUCTION_NULLIFIER_TYPE,
+} from "./types.js";
 import type {
   BigintLike,
   BuildPassportWrapperInputsOptions,
@@ -45,6 +53,21 @@ const LAYOUTS: Record<ZkPassportMrzLayout, { nationality: number; expiry: number
 };
 const ACTION_FIELDS: Record<PassportA2Action, bigint> = { issue: 1n, renew: 2n, recover: 3n };
 const MODE_FIELDS: Record<PassportA2CredentialMode, bigint> = { rooted: 1n, passport: 2n };
+const FACEMATCH_PRODUCTION = 1n;
+const FACEMATCH_REGULAR = 1n;
+const FACEMATCH_STRICT = 2n;
+const APPLE_APP_ATTEST_ROOT_KEY_HASH =
+  0x2532418a107c5306fa8308c22255792cf77e4a290cbce8a840a642a3e591340bn;
+const GOOGLE_APP_ATTEST_RSA_ROOT_KEY_HASH =
+  0x16700a2d9168a194fc85f237af5829b5a2be05b8ae8ac4879ada34cf54a9c211n;
+const GOOGLE_APP_ATTEST_ECDSA_P384_ROOT_KEY_HASH =
+  0x0e1889bec6c1d686abcf08360ff404f803ab345881ea8cba6aad33b7f7f7ffe0n;
+const ZKPASSPORT_IOS_APP_ID_HASH =
+  0x1fa73686cf510f8f85757b0602de0dd72a13e68ae2092462be8b72662e7f179bn;
+const ZKPASSPORT_ANDROID_APP_ID_HASH =
+  0x24d9929b248be7eeecaa98e105c034a50539610f3fdd4cb9c8983ef4100d615dn;
+const GOOGLE_PLAY_INTEGRITY_PUBLIC_KEY_HASH =
+  8544227306600425492560068004835614964118871262589609739238120993689090208159n;
 const encoder = new TextEncoder();
 
 function bigintFrom(value: BigintLike, label: string): bigint {
@@ -186,6 +209,7 @@ export function computePassportA2RequestContextHash(input: {
   certificateRegistryRoot: BigintLike;
   circuitRegistryRoot: BigintLike;
   nullifierType: BigintLike;
+  oprfPublicKeyHash: BigintLike;
 }): bigint {
   return poseidon2FieldHasher(MAGNA_PASSPORT_A2_CONTEXT_DS, [
     ACTION_FIELDS[input.action],
@@ -198,6 +222,7 @@ export function computePassportA2RequestContextHash(input: {
     bigintFrom(input.certificateRegistryRoot, "certificateRegistryRoot"),
     bigintFrom(input.circuitRegistryRoot, "circuitRegistryRoot"),
     bigintFrom(input.nullifierType, "nullifierType"),
+    bigintFrom(input.oprfPublicKeyHash, "oprfPublicKeyHash"),
     bigintFrom(input.serviceScope, "serviceScope"),
     bigintFrom(input.serviceSubscope, "serviceSubscope"),
     bigintFrom(input.bindCommitment, "bindCommitment"),
@@ -208,6 +233,18 @@ export async function buildPassportWrapperInputs(
   witness: PassportWrapperLocalWitness,
   options: BuildPassportWrapperInputsOptions = {},
 ): Promise<BuildPassportWrapperInputsResult> {
+  if (witness.profile !== "development" && witness.profile !== "production") {
+    throw new Error("Passport A2 proof profile must be explicitly development or production.");
+  }
+  const isDevelopment = witness.profile === "development";
+  const expectedFacematchMode = isDevelopment ? "regular" : "strict";
+  const expectedFacematchModeField = isDevelopment ? FACEMATCH_REGULAR : FACEMATCH_STRICT;
+  const expectedNullifierType: PassportA2NullifierType = isDevelopment
+    ? PASSPORT_A2_DEVELOPMENT_NULLIFIER_TYPE
+    : PASSPORT_A2_PRODUCTION_NULLIFIER_TYPE;
+  const expectedOprfPublicKeyHash = isDevelopment
+    ? PASSPORT_A2_DEVELOPMENT_OPRF_PUBLIC_KEY_HASH
+    : PASSPORT_A2_OPRF_PUBLIC_KEY_HASH;
   if (!/^[A-Z]{3}$/.test(witness.nationalityAlpha3)) {
     throw new Error("nationalityAlpha3 must be an uppercase ISO alpha-3 code.");
   }
@@ -272,7 +309,67 @@ export async function buildPassportWrapperInputs(
     throw new Error("Bind data does not match the authenticated zkPassport proof.");
   }
 
-  const scopedNullifier = BigInt(recursive.publicInputs[9]);
+  const facematchRootKeyLeaf = bigintFrom(witness.facematch.rootKeyLeaf, "facematch.rootKeyLeaf");
+  if (
+    facematchRootKeyLeaf !== APPLE_APP_ATTEST_ROOT_KEY_HASH &&
+    facematchRootKeyLeaf !== GOOGLE_APP_ATTEST_RSA_ROOT_KEY_HASH &&
+    facematchRootKeyLeaf !== GOOGLE_APP_ATTEST_ECDSA_P384_ROOT_KEY_HASH
+  ) {
+    throw new Error("Facematch root key is not an official Apple or Google attestation root.");
+  }
+  const facematchAppIdHash = bigintFrom(witness.facematch.appIdHash, "facematch.appIdHash");
+  if (
+    facematchAppIdHash !== ZKPASSPORT_IOS_APP_ID_HASH &&
+    facematchAppIdHash !== ZKPASSPORT_ANDROID_APP_ID_HASH
+  ) {
+    throw new Error("Facematch app ID is not the official zkPassport app.");
+  }
+  const facematchIntegrityPublicKeyHash = bigintFrom(
+    witness.facematch.integrityPublicKeyHash,
+    "facematch.integrityPublicKeyHash",
+  );
+  const expectedIntegrityPublicKeyHash =
+    facematchAppIdHash === ZKPASSPORT_ANDROID_APP_ID_HASH
+      ? GOOGLE_PLAY_INTEGRITY_PUBLIC_KEY_HASH
+      : 0n;
+  if (facematchIntegrityPublicKeyHash !== expectedIntegrityPublicKeyHash) {
+    throw new Error("Facematch integrity public key does not match the official app platform.");
+  }
+  if (
+    witness.facematch.environment !== "production" ||
+    witness.facematch.mode !== expectedFacematchMode
+  ) {
+    throw new Error(
+      `Facematch must use the production environment in ${expectedFacematchMode} mode for the ${witness.profile} profile.`,
+    );
+  }
+  const facematchCommitment = await getFacematchParameterCommitment(
+    facematchRootKeyLeaf,
+    FACEMATCH_PRODUCTION,
+    facematchAppIdHash,
+    expectedFacematchModeField,
+  );
+  if (!outerCommitments.has(facematchCommitment.toString())) {
+    throw new Error("Facematch parameters do not match the authenticated zkPassport proof.");
+  }
+
+  const nullifierType = nullifierTypeFrom(recursive.publicInputs[9]);
+  if (nullifierType !== expectedNullifierType) {
+    throw new Error(
+      isDevelopment
+        ? "Passport A2 development requires the official non-salted-mock zkPassport nullifier."
+        : "Passport A2 production requires a production salted zkPassport nullifier.",
+    );
+  }
+  if (BigInt(recursive.publicInputs[11]) !== BigInt(expectedOprfPublicKeyHash)) {
+    throw new Error(
+      isDevelopment
+        ? "Passport A2 development requires a zero OPRF public-key hash."
+        : "zkPassport outer proof uses an unpinned OPRF public key.",
+    );
+  }
+
+  const scopedNullifier = BigInt(recursive.publicInputs[10]);
   const rootCommitment = deriveRootCommitment({
     uniqueIdentifier: scopedNullifier,
     domainSeparator: MAGNA_ROOT_DS,
@@ -302,10 +399,10 @@ export async function buildPassportWrapperInputs(
     bindCommitment,
     certificateRegistryRoot: recursive.publicInputs[0],
     circuitRegistryRoot: recursive.publicInputs[1],
-    nullifierType: recursive.publicInputs[8],
+    nullifierType: recursive.publicInputs[9],
+    oprfPublicKeyHash: recursive.publicInputs[11],
   });
   const proofCurrentDate = BigInt(recursive.publicInputs[2]);
-  const nullifierType = nullifierTypeFrom(recursive.publicInputs[8]);
   const outputs: PassportWrapperPublicOutputs = {
     claimsHash: claimsHash.toString(),
     nationalityCommitment: nationalityCommitment.toString(),
@@ -334,6 +431,11 @@ export async function buildPassportWrapperInputs(
       age_min_bound: String(minAge),
       age_max_bound: String(maxAge),
       bind_data: bindData.map(String),
+      facematch_root_key_leaf: facematchRootKeyLeaf.toString(),
+      facematch_environment: FACEMATCH_PRODUCTION.toString(),
+      facematch_app_id_hash: facematchAppIdHash.toString(),
+      facematch_integrity_public_key_hash: facematchIntegrityPublicKeyHash.toString(),
+      facematch_mode: expectedFacematchModeField.toString(),
       credential_valid_until: credentialValidUntil.toString(),
       action: ACTION_FIELDS[witness.requestContext.action].toString(),
       issuer: bigintFrom(witness.requestContext.issuer, "issuer").toString(),
@@ -353,7 +455,7 @@ export async function buildPassportWrapperInputs(
     ],
     outputs,
     metadata: {
-      innerProofName: "outer_count_6",
+      innerProofName: PASSPORT_A2_INNER_NAME,
       innerProofVersion: "0.20.0",
       innerVkeyHash: PASSPORT_A2_INNER_VKEY_HASH,
       mrzLayout: disclosureMatch.layout,
@@ -370,6 +472,7 @@ export async function buildPassportWrapperInputs(
         certificateRegistryRoot: recursive.publicInputs[0],
         circuitRegistryRoot: recursive.publicInputs[1],
         nullifierType,
+        oprfPublicKeyHash: recursive.publicInputs[11],
       },
     },
   };

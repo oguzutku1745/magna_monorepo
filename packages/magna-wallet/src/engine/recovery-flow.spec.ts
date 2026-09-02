@@ -34,7 +34,7 @@ function pseudoAddressFromSecret(secretHex: string): string {
 }
 
 describe("ghost recovery flow", () => {
-  it("derives ghost deterministically and applies kill-switch nullifier during recovery", async () => {
+  it("derives ghost deterministically but rejects the retired Ghost-only recovery path", async () => {
     const orchestratorAddress = "0x1111111111111111111111111111111111111111";
     const activeOwner = "0x2222222222222222222222222222222222222222";
     const uniqueIdentifier = 0x0123456789abcdefn;
@@ -51,7 +51,7 @@ describe("ghost recovery flow", () => {
       derivationVersion: LEGACY_GHOST_DERIVATION_VERSION,
       domainSeparator: MAGNA_GHOST_DS,
     });
-    const ghostAddressA = pseudoAddressFromSecret(ghostA.secretHex);
+    const ghostAddressA = pseudoAddressFromSecret(ghostA.signingKeyHex);
 
     const claims: PassportCanonicalClaims = {
       schemaVersion: 1,
@@ -150,7 +150,7 @@ describe("ghost recovery flow", () => {
       derivationVersion: LEGACY_GHOST_DERIVATION_VERSION,
       domainSeparator: MAGNA_GHOST_DS,
     });
-    const ghostAddressB = pseudoAddressFromSecret(ghostB.secretHex);
+    const ghostAddressB = pseudoAddressFromSecret(ghostB.signingKeyHex);
     assert.equal(ghostAddressB, ghostAddressA, "ghost wallet re-derivation must be stable");
 
     const hintedRecovery: HintedRecoveryLike = {
@@ -162,13 +162,16 @@ describe("ghost recovery flow", () => {
       metadata: { stage: 2, maybe_note_nonce: 1n },
     };
 
-    await clientB.recover(
-      {
-        hintedRecoveryNote: hintedRecovery,
-        newActiveOwner: "0x3333333333333333333333333333333333333333",
-        remintCredential: true,
-      },
-      ghostAddressB,
+    await assert.rejects(
+      clientB.recover(
+        {
+          hintedRecoveryNote: hintedRecovery,
+          newActiveOwner: "0x3333333333333333333333333333333333333333",
+          remintCredential: true,
+        },
+        ghostAddressB,
+      ),
+      /Generic Ghost-only recovery is retired/,
     );
 
     const expectedNullifier = computeRevocationNullifier(
@@ -179,8 +182,8 @@ describe("ghost recovery flow", () => {
     );
     assert.equal(
       killSwitchNullifiers.has(expectedNullifier.toString(16)),
-      true,
-      "recovery must emit kill-switch nullifier",
+      false,
+      "retired recovery must not emit a kill-switch nullifier",
     );
   });
 });

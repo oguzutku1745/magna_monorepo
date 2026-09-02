@@ -82,7 +82,7 @@ function Landing(props: { onLaunch: () => void }) {
   );
 }
 
-function AppGate(props: {
+export function AppGate(props: {
   login: LoginState;
   handle: string;
   setHandle: (value: string) => void;
@@ -112,7 +112,7 @@ function AppGate(props: {
   );
 }
 
-function Result(props: { login: LoginState }) {
+export function Result(props: { login: LoginState }) {
   if (props.login.status !== "verified") {
     return (
       <main className="gate">

@@ -51,6 +51,12 @@ pub struct InstagramClaims {
     pub expiry_ts: u64,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct InstagramCommittedClaimsWitness {
+    pub handle_hash: Field,
+    pub handle_blind: Field,
+}
+
 fn compare_field(lhs: Field, op: u8, rhs: Field) -> bool {
     if op == OP_EQ {
         lhs == rhs

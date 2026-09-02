@@ -47,6 +47,8 @@ gap was critical rather than cosmetic.
   `RootStatusNote` / `RootRecoveryNote`
 - `nationality_blind` and `expiry_blind` — device-local; losing them bricks the credential,
   leaking them de-anonymizes `claims_hash`
+- Instagram `handle_hash` and `handle_blind` — device-local; the random blind prevents backend
+  dictionary attacks against the otherwise low-entropy handle, and losing either bricks login
 - `claims_hash` (a commitment, but a stable per-credential correlator)
 - `root_commitment` — opaque cross-credential linkage handle
 - zkPassport `uniqueIdentifier` and the Ghost seeds derived from it
@@ -65,10 +67,13 @@ passport *flow versions*, not to threats.
 **Risk:** an attacker calls the issuance entrypoint directly and mints credentials.
 
 **Mitigation:** immutable acceptance rule in the issuer contract —
-`assert(msg_sender == ORCHESTRATOR_ADDRESS)`. Signer policy rotates inside the orchestrator account
-contract so the address can stay stable for note discovery.
+`assert(msg_sender == ORCHESTRATOR_ADDRESS)`. The address should stay stable for note discovery,
+but the pinned `SchnorrInitializerlessAccount` binds its signing public key into the immutable
+account instance and does not expose signer rotation.
 
-**Status:** enforced.
+**Status:** caller enforcement is implemented. Local development intentionally uses an Aztec
+initial test account. Production custody and a stable-address rotation/emergency design are not
+implemented and block non-local deployment, not local-testnet development.
 
 ### T2. Unauthorized issuance (right caller, forged claims)
 
@@ -84,6 +89,32 @@ that produce `claims_hash`. Scope, domain, registry roots, and proof freshness a
 **Status:** enforced under A2. This was previously the highest-severity open item; see §7.1 for the
 history and the specific constraints that close it. Note the related uniqueness gap in T11/§6.1,
 which is a different property and still open.
+
+### T2a. Instagram plaintext exposure or handle substitution
+
+**Risk:** sending the signed `.eml` or claimed handle to Magna reveals the social identity; exposing
+only an unsalted handle hash still permits inexpensive dictionary recovery. A detached proof could
+also be replayed for another wallet or deployment.
+
+**Mitigation:** Instagram V2 verifies DKIM and proves the signed handle entirely in the wallet
+browser. The circuit commits `handle_hash` with a fresh non-zero field blind, binds the resulting
+`claims_hash` to expiry, owner, issuer, and L1 chain, and exposes no handle-derived value other than
+that blinded commitment. The API accepts only `{schema, activeOwner, proof}`, verifies the exact
+proof/public-input pair, checks the governed DKIM key and all context fields, and rejects legacy
+plaintext fields. Aztec login privately recomputes the commitment from the locally retained
+`{handle_hash, handle_blind}` witness before applying handle policy.
+
+**Status:** production-live adapter implementation. It is covered by real-DKIM proof generation,
+API substitution/privacy and governed-key tests, issuer witness-mismatch tests, and adversarial
+execution mutations over the exact signed-header, RSA, REDC-commitment, partial-hash, and signed-body
+boundaries. The pinned compiler still emits five conservative Brillig diagnostics. Magna's compile
+command accepts only those exact source-hash-pinned locations after a source-level manual-constraint
+audit and fails closed on any diagnostic or dependency-source drift. The audit and exact hashes are
+recorded in `docs/evidence/instagram-proof-portability-2026-08-30.md`.
+
+Residual: code executing in the trusted wallet origin can access the local handle witness. The
+adapter proves possession of an authentic DKIM-signed Instagram recovery email naming the handle;
+it does not claim one-person/one-handle uniqueness or continuous control after issuance.
 
 ### T3. Linkability via public registries
 
@@ -119,11 +150,18 @@ visible to verifiers.
 
 **Risk:** a leaked `uniqueIdentifier` lets an attacker derive the Ghost key and hijack recovery.
 
-**Mitigation:** treat `uniqueIdentifier` as a secret — never logged, stored server-side, or
-transmitted. Derivation is scoped (`magna_recovery::<credential_type>`). A2 removes it from the
-issuance request entirely, and `uniqueIdentifier` is an explicitly forbidden request key.
+**Mitigation:** the production SDK query requires the salted OPRF nullifier and strict production
+FaceMatch. Its wrapper pins the OPRF key hash, keeps the identifier off the API request, and binds
+the scoped nullifier into the root. The isolated developer profile uses an official non-salted
+mock identifier and therefore provides no production identifier-privacy assurance. Most
+importantly, rooted recovery requires a fresh passport proof bound to the destination and deployment.
+The Ethereum portal validates that proof against zkPassport's authoritative registries and sends a
+one-use authorization through the canonical Aztec Inbox; Ghost possession by itself no longer
+authorizes `recover_root_v3(...)`.
 
-**Status:** enforced for the A2 path. The legacy path still sends it to the API.
+**Status:** enforced for the rooted A2 launch path. The generic rootless `recover(...)` entrypoint
+was removed because there is no deployed compatibility requirement.
+The frozen OPRF dependency and same-document continuity boundary are recorded in §6.3.
 
 ### T7. Root linkage leakage
 
@@ -154,11 +192,15 @@ entrypoint and note type.
 
 **Risk:** an attacker with the orchestrator signing key mints arbitrary credentials.
 
-**Mitigation:** stable address with rotatable signing policy in the account contract, plus optional
-pause controls and an incident runbook.
+**Mitigation:** local development is limited to a disposable testnet. A non-local deployment must
+use reviewed signer custody, backup ownership, and an incident runbook, and must fail closed if the
+known initial-test-account import path is selected.
 
-**Status:** partially mitigated. Compromise remains a total issuance break — there is no second
-factor on issuance and no onchain rate limit. Rotation limits duration, not blast radius.
+**Status:** production mitigation is not implemented and remains a release blocker. The pinned
+initializerless Schnorr account commits its signer into its immutable account hash and exposes no
+rotation entrypoint, so the previous stable-address rotation claim must not be relied on. A signer
+compromise would remain a total issuance break and would let the attacker publish arbitrary
+recovery-authorization hashes, though it would not reveal or spend Ghost notes by itself.
 
 ### T10. Fee sponsorship draining
 
@@ -179,7 +221,8 @@ public revert surfaces.
 **Mitigation:** A2 derives `root_commitment` in-circuit from the proof-bound `scoped_nullifier`,
 giving a stable per-passport value that makes uniqueness enforceable — but nothing records it.
 
-**Status:** **not implemented.** See §6.1. This is the largest remaining soundness gap.
+**Status:** **not implemented and not claimed.** See §6.1. This is a missing Sybil-resistance
+feature, not a way to forge the policy claims inside an otherwise valid credential.
 
 ### T12. Malicious dApp against the wallet
 
@@ -224,7 +267,8 @@ No used-nullifier set is persisted by the API, and `register_rooted_passport_v2`
 `root_commitment != 0`, not uniqueness. One passport can mint unlimited credentials, so there is no
 Sybil-resistance guarantee.
 
-This is the largest remaining soundness gap. A2 makes it tractable: `root_commitment` is a
+Magna therefore must not market one-person/one-credential uniqueness. A2 makes such a future
+feature tractable: `root_commitment` is a
 deterministic function of the proof-bound scoped nullifier, so it is a stable per-passport value
 that can be emitted as an issuance nullifier. Placing that check in the contract rather than the API
 preserves the guarantee even if the API is compromised.
@@ -234,6 +278,43 @@ preserves the guarantee even if the API is compromised.
 `MagnaIssuer.verify` updates `verify_meter_count` but emits no receipt event. A relying party
 receives only the verification transaction hash through the signed session assertion. Typed private
 receipt metadata, and the atomicity properties that would go with it, are not implemented.
+
+### 6.3 Frozen OPRF dependency
+
+The implementation pins documented zkPassport OPRF key ID `1` and its current public-key hash.
+On 2026-08-23, Magna recorded the zkPassport team's response that no change to the current
+integration is planned. V3 therefore freezes SDK `0.16.1`, production `SALTED`, key ID `1`, its
+published public key/hash, and the authenticated outer-proof layout. A different SDK, key, circuit,
+or layout requires a new recovery protocol version and migration review; it must never be adopted
+silently.
+
+The continuity guarantee is deliberately document-scoped: the same supported physical document
+and identical Magna domain/scope/subscope are expected to reproduce the V3 identifier. Magna does
+not claim that a renewed or replacement passport is the same zkPassport ID. OPRF or zkPassport
+service downtime temporarily blocks fresh recovery authorization and is an accepted availability
+dependency. Neither boundary weakens the separate destination-bound proof requirement.
+
+### 6.4 Production Login with Magna assertion authority
+
+The current local profile signs relying-party session assertions with
+`VITE_MAGNA_SESSION_SIGNING_KEY`. It is a Magna development key embedded in the management Vite
+bundle, not the user's passkey or Aztec account key. Anyone who loads that bundle can extract it and
+forge a development assertion, although it cannot spend the user's Aztec notes.
+
+Moving the same key to a backend KMS would hide it but would make that backend the login authority
+and availability dependency. The preferred production design is a user-passkey signature over the
+session challenge and policy result, cryptographically bound to the Aztec account that submitted the
+successful verification transaction (or to a chain-verifiable opaque receipt commitment). That
+design requires its own protocol spec and reviewer tests. Until then, the current session assertion
+lane is local-development only.
+
+### 6.5 Gate B-production
+
+The production `SALTED = 1` Passport A2/Recovery V3 artifacts still require an empirical run with a
+supported physical document through the unmodified official zkPassport application and the pinned
+production wrapper/EVM verifier. The developer Gate B proof cannot establish production OPRF or
+strict-FaceMatch behavior. This does not require cloning zkPassport's app; cloning/local TACEO nodes
+was only a discarded workaround for the developer mock-passport OPRF mismatch.
 
 ---
 
@@ -268,10 +349,10 @@ with an age predicate of 99, an expiry in 2100, and placeholder disclosure commi
   authenticated MRZ bytes, with `credential_valid_until <= authenticated_expiry_ts`;
 - computes every public output — no `expected_*` parameters remain.
 
-Scope, domain, registry roots, and nullifier type are bound through `request_context_hash`, which
+Scope, domain, registry roots, salted nullifier type, and OPRF public-key hash are bound through `request_context_hash`, which
 the API recomputes and requires to match exactly. Proof freshness is enforced by
 `validatePassportA2TimeBounds`, and registry roots are validated against the onchain zkPassport
-registry with mock nullifier types rejected outside development mode. The outer proof is no longer
+registry. The outer proof is no longer
 sent to the server at all.
 
 The A1 attack shape is not merely rejected under A2 but unrepresentable: the `expected_*` parameters
@@ -282,8 +363,9 @@ it depended on no longer exist in the circuit ABI.
 Both were client-supplied and accepted with only format validation. `root_commitment` is now
 computed in-circuit as `H(MAGNA_ROOT_DS, scoped_nullifier)` from a verified outer public input, and
 `ghost_owner` is bound into `request_context_hash`, which the server independently recomputes.
-Control of the locally derived Ghost account and its recovery note remains the authorization
-boundary for the recovery transaction itself.
+The locally derived Ghost still owns the recovery note, but it is only one half of rooted recovery:
+the contract also consumes a fresh, destination-bound authorization commitment emitted by the EVM
+recovery portal after proof and registry verification.
 
 ### 7.3 Renewal note hints sent to the API
 
@@ -314,3 +396,6 @@ circuit ABI.
 - Upstream breaking changes across Aztec devnet versions.
 - `claims_hash` as a stable per-credential correlator.
 - Orchestrator compromise remains a full issuance break (T9).
+- JavaScript cannot promise deterministic zeroization of immutable identifier strings; the browser
+  minimizes references, never persists/transmits the identifier, and disposes transient Ghost
+  sessions, but a dedicated production recovery realm without third-party scripts is still required.

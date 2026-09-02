@@ -6,7 +6,26 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const failures = [];
-const expectedArtifactHash = "562cc3ad7b512e6b0ad966313c43e2c497bb80747a0df822f07b87520ae7e91f";
+const artifactProfiles = [
+  {
+    name: "production",
+    path: "packages/magna-passport-wrapper-proof/circuit/bundle/magna_passport_wrapper_proof.json",
+    hash: "a7093ad57c0a5cfcb073134d7ed0907067e9b253b11f929fd84b4a321179cea7",
+  },
+  {
+    name: "development",
+    path: "packages/magna-passport-wrapper-proof/circuit-dev/bundle/magna_passport_wrapper_proof_dev.json",
+    hash: "b952eb6435ac847e6dc87e5400b5e81703c2537629b56bab1a550a4561eca4c4",
+  },
+];
+const productionCircuitPath = resolve(
+  root,
+  "packages/magna-passport-wrapper-proof/circuit/src/main.nr",
+);
+const developmentCircuitPath = resolve(
+  root,
+  "packages/magna-passport-wrapper-proof/circuit-dev/src/main.nr",
+);
 
 function parseEnvFile(path) {
   if (!existsSync(path)) return {};
@@ -42,27 +61,69 @@ if (issuanceKind && issuanceKind !== "a2") {
   failures.push("VITE_MAGNA_ZKPASSPORT_ISSUANCE_KIND must be a2 when set.");
 }
 
-const artifactPath = resolve(
-  root,
-  "packages/magna-passport-wrapper-proof/circuit/bundle/magna_passport_wrapper_proof.json",
-);
-if (!existsSync(artifactPath)) {
-  failures.push(`Missing committed Passport A2 wrapper artifact: ${artifactPath}`);
-} else {
-  const bytes = readFileSync(artifactPath);
-  const digest = createHash("sha256").update(bytes).digest("hex");
-  if (digest !== expectedArtifactHash) {
-    failures.push(`Passport A2 wrapper artifact hash mismatch: ${digest}`);
+for (const profile of artifactProfiles) {
+  const artifactPath = resolve(root, profile.path);
+  if (!existsSync(artifactPath)) {
+    failures.push(`Missing committed Passport A2 ${profile.name} wrapper artifact: ${artifactPath}`);
+  } else {
+    const bytes = readFileSync(artifactPath);
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    if (digest !== profile.hash) {
+      failures.push(`Passport A2 ${profile.name} wrapper artifact hash mismatch: ${digest}`);
+    }
+    const artifact = JSON.parse(bytes.toString("utf8"));
+    const returnType = artifact.abi?.return_type;
+    if (
+      returnType?.visibility !== "public" ||
+      returnType?.abi_type?.kind !== "array" ||
+      returnType?.abi_type?.length !== 8 ||
+      returnType?.abi_type?.type?.kind !== "field"
+    ) {
+      failures.push(
+        `Passport A2 ${profile.name} wrapper artifact must expose exactly eight public Field outputs.`,
+      );
+    }
   }
-  const artifact = JSON.parse(bytes.toString("utf8"));
-  const returnType = artifact.abi?.return_type;
-  if (
-    returnType?.visibility !== "public" ||
-    returnType?.abi_type?.kind !== "array" ||
-    returnType?.abi_type?.length !== 8 ||
-    returnType?.abi_type?.type?.kind !== "field"
-  ) {
-    failures.push("Passport A2 wrapper artifact must expose exactly eight public Field outputs.");
+}
+
+if (existsSync(productionCircuitPath) && existsSync(developmentCircuitPath)) {
+  const expectedDevelopmentCircuit = readFileSync(productionCircuitPath, "utf8")
+    .replace(
+      "global ZKPASSPORT_SALTED_NULLIFIER_TYPE: Field = 1;",
+      "global ZKPASSPORT_NON_SALTED_MOCK_NULLIFIER_TYPE: Field = 2;",
+    )
+    .replace(
+      "global ZKPASSPORT_OPRF_PUBLIC_KEY_HASH: Field =\n    1178201404428554206520802247552222388413553631367032661928167491793274360628;",
+      "global ZKPASSPORT_NO_OPRF_PUBLIC_KEY_HASH: Field = 0;",
+    )
+    .replace("global FACEMATCH_MODE_STRICT: u8 = 2;", "global FACEMATCH_MODE_REGULAR: u8 = 1;")
+    .replace(
+      "facematch_mode == FACEMATCH_MODE_STRICT",
+      "facematch_mode == FACEMATCH_MODE_REGULAR",
+    )
+    .replace("Facematch must use strict mode", "Developer facematch must use regular mode")
+    .replace(
+      "zkpassport_outer_public_inputs[9] == ZKPASSPORT_SALTED_NULLIFIER_TYPE",
+      "zkpassport_outer_public_inputs[9] == ZKPASSPORT_NON_SALTED_MOCK_NULLIFIER_TYPE",
+    )
+    .replace(
+      "zkPassport nullifier is not production salted",
+      "zkPassport nullifier is not official non-salted mock",
+    )
+    .replace(
+      "zkpassport_outer_public_inputs[11] == ZKPASSPORT_OPRF_PUBLIC_KEY_HASH",
+      "zkpassport_outer_public_inputs[11] == ZKPASSPORT_NO_OPRF_PUBLIC_KEY_HASH",
+    )
+    .replace(
+      "zkPassport OPRF public key is not pinned",
+      "Non-salted zkPassport proof must not carry an OPRF public key",
+    )
+    .trimEnd();
+  const actualDevelopmentCircuit = readFileSync(developmentCircuitPath, "utf8").trimEnd();
+  if (actualDevelopmentCircuit !== expectedDevelopmentCircuit) {
+    failures.push(
+      "Passport A2 developer circuit differs from production beyond the approved profile constraints.",
+    );
   }
 }
 

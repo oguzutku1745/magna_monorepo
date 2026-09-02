@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   computePassportA2RequestContextHash,
+  PASSPORT_A2_DEVELOPMENT_OPRF_PUBLIC_KEY_HASH,
+  PASSPORT_A2_OPRF_PUBLIC_KEY_HASH,
   type PassportA2Action,
+  type PassportA2RegistryContext,
   type PassportWrapperPublicOutputs,
 } from "@magna/passport-wrapper-proof";
 import {
@@ -17,14 +20,16 @@ import {
   dispatchVerifyAndIssuePassportRequest,
   isPassportA2Request,
   loadVerificationApiConfigFromEnv,
+  normalizeInstagramDkimPubkeyHash,
+  parseInstagramDkimPubkeyHashes,
   PASSPORT_A2_SCHEMA,
   resolveGhostDerivationVersion,
   resolveVerificationMode,
   selectVerifyAndIssuePassportHandler,
   validatePassportA2Request,
   verifyAndIssuePassportA2,
+  verifyAndIssueInstagram,
   verifyAndRefreshRootAuthorityA2,
-  verifyRootRecoveryPreflightA2,
   type VerificationApiConfig,
 } from "./service.js";
 import { clearSessionCodesForTest, createSessionCode, exchangeSessionCode } from "./session-code-store.js";
@@ -38,8 +43,11 @@ const VALID_UNTIL = NOW_SECONDS + 30n * 24n * 60n * 60n;
 const REGISTRY_CONTEXT = {
   certificateRegistryRoot: "11",
   circuitRegistryRoot: "22",
-  nullifierType: 0 as const,
+  nullifierType: 1 as const,
+  oprfPublicKeyHash: PASSPORT_A2_OPRF_PUBLIC_KEY_HASH,
 };
+const TRUSTED_INSTAGRAM_DKIM_HASH =
+  "0x2f98bb0fd5d8e691af9dd90027c769678ac017a689173593d6edc98faa01c952";
 
 const config: VerificationApiConfig = {
   port: 4310,
@@ -51,6 +59,7 @@ const config: VerificationApiConfig = {
   aztecNodeUrl: "http://localhost:8080",
   issuerAddress: ISSUER,
   localTestAccountIndex: 0,
+  instagramDkimPubkeyHashes: [TRUSTED_INSTAGRAM_DKIM_HASH],
 };
 
 async function publicOutputs(input: {
@@ -59,27 +68,27 @@ async function publicOutputs(input: {
   ghostOwner?: string;
   mode?: "rooted" | "passport";
   rootCommitment?: string;
-}): Promise<PassportWrapperPublicOutputs> {
+}, targetConfig: VerificationApiConfig = config, registryContext: PassportA2RegistryContext = REGISTRY_CONTEXT): Promise<PassportWrapperPublicOutputs> {
   const ghostOwner = input.ghostOwner ?? GHOST;
   const mode = input.mode ?? "rooted";
   const rootCommitment = input.rootCommitment ?? "456";
   const bindCommitment = await getBindParameterCommitment(
     formatBoundData({
-      custom_data: `magna-passport-a2:${input.action}:${config.zkPassportScope}:${input.owner.toLowerCase()}`,
+      custom_data: `magna-passport-a2:${input.action}:${targetConfig.zkPassportScope}:${input.owner.toLowerCase()}`,
     }),
   );
   const requestContextHash = computePassportA2RequestContextHash({
     action: input.action,
-    issuer: config.issuerAddress,
+    issuer: targetConfig.issuerAddress,
     owner: input.owner,
     ghostOwner,
     credentialMode: mode,
     rootCommitment,
     credentialValidUntil: VALID_UNTIL,
-    serviceScope: getServiceScopeHash(config.zkPassportDomain),
-    serviceSubscope: getServiceSubscopeHash(config.zkPassportScope),
+    serviceScope: getServiceScopeHash(targetConfig.zkPassportDomain),
+    serviceSubscope: getServiceSubscopeHash(targetConfig.zkPassportScope),
     bindCommitment,
-    ...REGISTRY_CONTEXT,
+    ...registryContext,
   });
   return {
     claimsHash: "123",
@@ -106,8 +115,11 @@ function toPublicInputs(outputs: PassportWrapperPublicOutputs): string[] {
   ];
 }
 
-async function issuePayload() {
-  const outputs = await publicOutputs({ action: "issue", owner: ACTIVE });
+async function issuePayload(
+  targetConfig: VerificationApiConfig = config,
+  registryContext: PassportA2RegistryContext = REGISTRY_CONTEXT,
+) {
+  const outputs = await publicOutputs({ action: "issue", owner: ACTIVE }, targetConfig, registryContext);
   const wrapperPublicInputs = toPublicInputs(outputs);
   return {
     schema: PASSPORT_A2_SCHEMA,
@@ -116,7 +128,7 @@ async function issuePayload() {
     credentialValidUntil: outputs.credentialValidUntil,
     wrapperProof: { proof: "recursive-proof", publicInputs: wrapperPublicInputs },
     wrapperPublicInputs,
-    registryContext: { ...REGISTRY_CONTEXT },
+    registryContext: { ...registryContext },
     mode: "rooted" as const,
     ghostDerivationVersion: "v2_scoped" as const,
   };
@@ -128,6 +140,7 @@ function contextMock() {
   const registerRooted = vi.fn(() => ({ send: issueSend }));
   const registerPassport = vi.fn(() => ({ send: issueSend }));
   const authorizeRenewal = vi.fn(() => ({ send: authorizeSend }));
+  const registerInstagram = vi.fn(() => ({ send: issueSend }));
   return {
     context: {
       orchestratorAddress: { toString: () => "0xorchestrator" },
@@ -136,18 +149,21 @@ function contextMock() {
           register_rooted_passport_v2: registerRooted,
           register_credential_v2: registerPassport,
           authorize_root_authority_refresh: authorizeRenewal,
+          register_credential: registerInstagram,
         },
       },
     },
     registerRooted,
     registerPassport,
     authorizeRenewal,
+    registerInstagram,
   };
 }
 
 const verifierDependencies = {
   verifyWrapperProof: vi.fn(async () => true),
   nowMs: () => Number(NOW_SECONDS * 1000n),
+  networkTimestamp: vi.fn(async () => NOW_SECONDS),
   registryClient: {
     isCertificateRootValid: vi.fn(async () => true),
     isCircuitRootValid: vi.fn(async () => true),
@@ -230,7 +246,7 @@ describe("verifyAndIssuePassportA2", () => {
     ).rejects.toThrow("stale");
   });
 
-  it("rejects untrusted registry roots and production mock nullifiers", async () => {
+  it("rejects untrusted registry roots and the developer nullifier in production", async () => {
     const payload = await issuePayload();
     await expect(
       verifyAndIssuePassportA2(config, payload, vi.fn(), {
@@ -244,11 +260,55 @@ describe("verifyAndIssuePassportA2", () => {
 
     const mockNullifierPayload = {
       ...payload,
-      registryContext: { ...payload.registryContext, nullifierType: 2 as const },
+      registryContext: { ...payload.registryContext, nullifierType: 3 as const },
     };
     await expect(
       verifyAndIssuePassportA2(config, mockNullifierPayload, vi.fn(), verifierDependencies),
-    ).rejects.toThrow("Mock zkPassport nullifier types");
+    ).rejects.toThrow("production salted");
+  });
+
+  it("accepts only the official non-salted-mock nullifier without OPRF in the developer profile", async () => {
+    const developerConfig = { ...config, zkPassportDevMode: true };
+    const developerRegistryContext = {
+      ...REGISTRY_CONTEXT,
+      nullifierType: 2 as const,
+      oprfPublicKeyHash: PASSPORT_A2_DEVELOPMENT_OPRF_PUBLIC_KEY_HASH,
+    };
+    const payload = await issuePayload(developerConfig, developerRegistryContext);
+    const { context, registerRooted } = contextMock();
+    await expect(
+      verifyAndIssuePassportA2(
+        developerConfig,
+        payload,
+        async () => context as never,
+        verifierDependencies,
+      ),
+    ).resolves.toMatchObject({ verificationSummary: { verified: true, passportA2: true } });
+    expect(registerRooted).toHaveBeenCalledOnce();
+
+    await expect(
+      verifyAndIssuePassportA2(
+        developerConfig,
+        { ...payload, registryContext: { ...payload.registryContext, nullifierType: 1 as const } },
+        vi.fn(),
+        verifierDependencies,
+      ),
+    ).rejects.toThrow("official non-salted-mock");
+
+    await expect(
+      verifyAndIssuePassportA2(
+        developerConfig,
+        {
+          ...payload,
+          registryContext: {
+            ...payload.registryContext,
+            oprfPublicKeyHash: PASSPORT_A2_OPRF_PUBLIC_KEY_HASH,
+          },
+        },
+        vi.fn(),
+        verifierDependencies,
+      ),
+    ).rejects.toThrow("zero OPRF public-key hash");
   });
 
   it("rejects substitution of otherwise trusted registry context", async () => {
@@ -272,6 +332,116 @@ describe("verifyAndIssuePassportA2", () => {
     await expect(
       dispatchVerifyAndIssuePassportRequest(config, payload, async () => context as never),
     ).rejects.toThrow(/verification|proof/i);
+  });
+});
+
+describe("verifyAndIssueInstagram", () => {
+  const expiryTs = NOW_SECONDS + 365n * 24n * 60n * 60n;
+  const proof = {
+    proof: [1, 2, 3],
+    publicInputs: [
+      TRUSTED_INSTAGRAM_DKIM_HASH,
+      "0x1234",
+      "987654",
+      expiryTs.toString(),
+      BigInt(ACTIVE).toString(),
+      BigInt(ISSUER).toString(),
+      "31337",
+    ],
+  };
+  const payload = { schema: "instagram-v2" as const, proof, activeOwner: ACTIVE };
+  const dependencies = {
+    verifyProof: vi.fn(async () => true),
+    deriveGhostOwner: vi.fn(async () => GHOST),
+    networkChainId: vi.fn(async () => 31_337n),
+    nowMs: () => Number(NOW_SECONDS * 1000n),
+  };
+
+  it("issues from proof-bound public inputs without receiving the email or handle", async () => {
+    const { context, registerInstagram } = contextMock();
+    const result = await verifyAndIssueInstagram(
+      config,
+      payload,
+      async () => context as never,
+      dependencies,
+    );
+
+    expect(registerInstagram).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({
+      issuanceTxHash: "0xissue",
+      ghostOwner: GHOST,
+      verificationSummary: {
+        verified: true,
+        piiBlind: true,
+        dkimPubkeyHash: TRUSTED_INSTAGRAM_DKIM_HASH,
+      },
+      claimsHash: "987654",
+      expiryTs: expiryTs.toString(),
+    });
+  });
+
+  it("rejects missing and untrusted DKIM governance before touching the issuer", async () => {
+    const contextLoader = vi.fn();
+    await expect(
+      verifyAndIssueInstagram({ ...config, instagramDkimPubkeyHashes: [] }, payload, contextLoader, dependencies),
+    ).rejects.toThrow("issuance is disabled");
+    await expect(
+      verifyAndIssueInstagram(
+        { ...config, instagramDkimPubkeyHashes: [normalizeInstagramDkimPubkeyHash("1")] },
+        payload,
+        contextLoader,
+        dependencies,
+      ),
+    ).rejects.toThrow("untrusted DKIM public key");
+    expect(contextLoader).not.toHaveBeenCalled();
+  });
+
+  it("rejects legacy plaintext email and handle fields", async () => {
+    await expect(
+      verifyAndIssueInstagram(
+        config,
+        { ...payload, emlBase64: "forbidden", claimedHandle: "akinspur" } as never,
+        vi.fn(),
+        dependencies,
+      ),
+    ).rejects.toThrow("Unexpected Instagram V2 request field");
+  });
+
+  it.each([
+    ["active owner", 4, BigInt(GHOST).toString(), "different active owner"],
+    ["issuer", 5, BigInt(GHOST).toString(), "different issuer deployment"],
+    ["chain", 6, "11155111", "different L1 chain id"],
+    ["expired timestamp", 3, (NOW_SECONDS - 1n).toString(), "expiry is not in the future"],
+  ])("rejects a proof bound to a substituted %s", async (_label, index, value, expected) => {
+    const mutatedProof = { ...proof, publicInputs: [...proof.publicInputs] };
+    mutatedProof.publicInputs[index] = value;
+    await expect(
+      verifyAndIssueInstagram(
+        config,
+        { ...payload, proof: mutatedProof },
+        vi.fn(),
+        dependencies,
+      ),
+    ).rejects.toThrow(expected);
+  });
+
+  it("rejects a cryptographically invalid proof before loading the issuer", async () => {
+    const contextLoader = vi.fn();
+    await expect(
+      verifyAndIssueInstagram(config, payload, contextLoader, {
+        ...dependencies,
+        verifyProof: vi.fn(async () => false),
+      }),
+    ).rejects.toThrow("proof verification failed");
+    expect(contextLoader).not.toHaveBeenCalled();
+  });
+
+  it("normalizes comma-separated decimal and hexadecimal governed keys", () => {
+    expect(parseInstagramDkimPubkeyHashes(`1, 0x01 ${TRUSTED_INSTAGRAM_DKIM_HASH}`)).toEqual([
+      normalizeInstagramDkimPubkeyHash("1"),
+      TRUSTED_INSTAGRAM_DKIM_HASH,
+    ]);
+    expect(() => parseInstagramDkimPubkeyHashes("not-a-field")).toThrow("hexadecimal or decimal");
   });
 });
 
@@ -329,29 +499,6 @@ describe("A2 renewal and recovery", () => {
     }
   });
 
-  it("accepts recovery only when the proof-bound root matches stored lineage", async () => {
-    const outputs = await publicOutputs({ action: "recover", owner: TARGET });
-    const wrapperPublicInputs = toPublicInputs(outputs);
-    const payload = {
-      schema: PASSPORT_A2_SCHEMA,
-      targetOwner: TARGET,
-      expectedGhostOwner: GHOST,
-      expectedRootCommitment: outputs.rootCommitment,
-      ghostDerivationVersion: "v2_scoped" as const,
-      credentialValidUntil: outputs.credentialValidUntil,
-      wrapperProof: { proof: "recursive-proof", publicInputs: wrapperPublicInputs },
-      wrapperPublicInputs,
-      registryContext: { ...REGISTRY_CONTEXT },
-    };
-    await expect(verifyRootRecoveryPreflightA2(config, payload, verifierDependencies)).resolves.toMatchObject({
-      derivedRootCommitment: "456",
-      matchesExpectedRootCommitment: true,
-      verificationSummary: { passportA2: true, piiBlind: true },
-    });
-    await expect(
-      verifyRootRecoveryPreflightA2(config, { ...payload, expectedRootCommitment: "999" }, verifierDependencies),
-    ).rejects.toThrow("rooted passport lineage");
-  });
 });
 
 describe("unchanged API utilities", () => {
@@ -366,7 +513,7 @@ describe("unchanged API utilities", () => {
     const target: Record<string, string> = {};
     applyHydratedEnvEntries({ A: "new" }, target);
     expect(target.A).toBe("new");
-    expect(buildStaleIssuerDeploymentMessage("0xdead")).toContain("npm run web:bootstrap:local");
+    expect(buildStaleIssuerDeploymentMessage("0xdead")).toContain("npm run bootstrap:local");
   });
 
   it("retains rooted mode and scoped ghost defaults", () => {

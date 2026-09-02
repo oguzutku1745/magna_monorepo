@@ -5,22 +5,22 @@ import { getSchnorrAccountContractAddress } from "@aztec/accounts/schnorr";
 import { getInitialTestAccountsData, INITIAL_TEST_SIGNING_KEYS } from "@aztec/accounts/testing";
 import { AztecAddress } from "@aztec/aztec.js/addresses";
 import type { ContractArtifact } from "@aztec/aztec.js/abi";
-import { Fr } from "@aztec/aztec.js/fields";
+import { Fq, Fr } from "@aztec/aztec.js/fields";
 import { createAztecNodeClient, waitForNode, type AztecNode } from "@aztec/aztec.js/node";
 import type { Wallet } from "@aztec/aztec.js/wallet";
 import { contractInstanceWithAddressFromPlainObject } from "@aztec/stdlib/contract";
 import { EmbeddedWallet } from "@aztec/wallets/embedded";
 import {
-  computeInstagramClaimsHash,
-  computeInstagramHandleHash,
   CredentialType,
   deriveGhostKeyMaterial,
-  poseidon2FieldHasher,
   type GhostDerivationVersion,
-  type InstagramCanonicalClaims,
 } from "@magna/wallet";
 import {
   computePassportA2RequestContextHash,
+  PASSPORT_A2_DEVELOPMENT_NULLIFIER_TYPE,
+  PASSPORT_A2_DEVELOPMENT_OPRF_PUBLIC_KEY_HASH,
+  PASSPORT_A2_OPRF_PUBLIC_KEY_HASH,
+  PASSPORT_A2_PRODUCTION_NULLIFIER_TYPE,
   parsePassportWrapperPublicInputs,
   verifyPassportWrapperProof,
   type PassportA2RegistryContext,
@@ -34,12 +34,20 @@ import {
   getServiceSubscopeHash,
 } from "@zkpassport/utils";
 import { MagnaIssuerContract } from "@magna/contracts-bindings";
-import { proveInstagramEmail, type InstagramProofArtifact } from "@magna/instagram-proof";
+import {
+  INSTAGRAM_V2_SCHEMA,
+  INSTAGRAM_V2_VALIDITY_SECONDS,
+  normalizeInstagramProofData,
+  parseInstagramPublicInputs,
+  verifyInstagramProof,
+  type InstagramProofPublicOutputs,
+} from "@magna/instagram-proof";
 
 export type VerificationMode = "passport" | "rooted";
 
 export const PASSPORT_A2_MAX_VALIDITY_SECONDS = 30 * 24 * 60 * 60;
 export const PASSPORT_A2_SCHEMA = "passport-a2-v1" as const;
+export const ROOT_RECOVERY_AUTHORIZATION_TTL_SECONDS = 10 * 60;
 
 export type VerificationApiConfig = {
   port: number;
@@ -53,6 +61,7 @@ export type VerificationApiConfig = {
   issuerAddress: string;
   localTestAccountIndex: number;
   orchestratorAddress?: string;
+  instagramDkimPubkeyHashes: readonly string[];
 };
 
 export type VerifyAndIssuePassportA2Request = {
@@ -90,26 +99,19 @@ type VerifyAndIssuePassportA2Dependencies = {
     isCertificateRootValid(root: string, timestamp?: number): Promise<boolean>;
     isCircuitRootValid(root: string, timestamp?: number): Promise<boolean>;
   };
+  randomField?: () => Fr;
+  networkTimestamp?: () => Promise<bigint>;
 };
 
 export type VerifyAndIssueInstagramRequest = {
-  emlBase64: string;
-  claimedHandle: string;
+  schema: typeof INSTAGRAM_V2_SCHEMA;
+  proof: unknown;
   activeOwner: string;
-  expiryTs?: string | number | bigint;
-  ghostDerivationVersion?: GhostDerivationVersion;
 };
 
 export type VerifyAndRefreshRootAuthorityA2Request = PassportA2ProofRequest & {
   activeOwner: string;
   ghostOwner: string;
-};
-
-export type VerifyRootRecoveryPreflightA2Request = PassportA2ProofRequest & {
-  targetOwner: string;
-  expectedGhostOwner: string;
-  expectedRootCommitment: string;
-  ghostDerivationVersion?: GhostDerivationVersion;
 };
 
 type VerifyAndIssuePassportA2Response = {
@@ -139,16 +141,11 @@ export type VerifyAndIssueInstagramResponse = {
   orchestratorAddress: string;
   verificationSummary: {
     verified: true;
+    piiBlind: true;
     dkimPubkeyHash: string;
     emailNullifier: string;
   };
-  normalizedClaims: {
-    instagramHandle: string;
-    handleHash: string;
-    handleLen: number;
-    handlePacked: string;
-    expiryTs: string;
-  };
+  expiryTs: string;
 };
 
 export type VerifyAndRefreshRootAuthorityResponse = {
@@ -158,21 +155,6 @@ export type VerifyAndRefreshRootAuthorityResponse = {
   claimsHash: string;
   issuerAddress: string;
   orchestratorAddress: string;
-  verificationSummary: {
-    verified: true;
-    passportA2: true;
-    piiBlind: true;
-  };
-};
-
-export type VerifyRootRecoveryPreflightResponse = {
-  expectedGhostOwner: string;
-  derivedGhostOwner: string;
-  expectedRootCommitment: string;
-  derivedRootCommitment: string;
-  ghostDerivationVersion: GhostDerivationVersion;
-  matchesExpectedGhostOwner: true;
-  matchesExpectedRootCommitment: true;
   verificationSummary: {
     verified: true;
     passportA2: true;
@@ -213,6 +195,41 @@ function parseOptionalString(value: string | undefined): string | undefined {
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   if (!value) return fallback;
   return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+}
+
+const NOIR_FIELD_MODULUS =
+  21888242871839275222246405745257275088548364400416034343698204186575808495617n;
+
+export function normalizeInstagramDkimPubkeyHash(value: string): string {
+  const trimmed = value.trim();
+  if (!/^(?:0x[0-9a-fA-F]+|[0-9]+)$/.test(trimmed)) {
+    throw new Error("Instagram DKIM public-key hashes must be hexadecimal or decimal Noir fields.");
+  }
+  const field = BigInt(trimmed);
+  if (field < 0n || field >= NOIR_FIELD_MODULUS) {
+    throw new Error("Instagram DKIM public-key hashes must be inside the Noir field modulus.");
+  }
+  return `0x${field.toString(16).padStart(64, "0")}`;
+}
+
+export function parseInstagramDkimPubkeyHashes(value: string | undefined): string[] {
+  if (!value?.trim()) return [];
+  return [...new Set(value.split(/[\s,]+/).filter(Boolean).map(normalizeInstagramDkimPubkeyHash))];
+}
+
+export function assertTrustedInstagramDkimPubkeyHash(
+  trustedHashes: readonly string[],
+  proofHash: string,
+): void {
+  if (trustedHashes.length === 0) {
+    throw new Error(
+      "Instagram issuance is disabled because MAGNA_INSTAGRAM_DKIM_PUBKEY_HASHES has no trusted keys.",
+    );
+  }
+  const normalizedProofHash = normalizeInstagramDkimPubkeyHash(proofHash);
+  if (!trustedHashes.includes(normalizedProofHash)) {
+    throw new Error(`Instagram proof used an untrusted DKIM public key (${normalizedProofHash}).`);
+  }
 }
 
 function readFirstEnv(names: string[]): string | undefined {
@@ -343,7 +360,7 @@ export function buildStaleIssuerDeploymentMessage(issuerAddress: string, causeMe
   return [
     `Configured Magna issuer ${issuerAddress} was deployed with a different contract class than the current artifact.`,
     "This usually means local Aztec chain state, deployment env, and compiled contracts drifted after a branch switch or contract rebuild.",
-    "Run `npm run web:bootstrap:local -- --skip-rights-deploy`, then restart `npm run verification-api:dev` and the frontend dev server.",
+    "Run `npm run bootstrap:local -- --skip-rights-deploy`, then restart `npm run verification-api:dev` and the frontend dev server.",
     causeMessage ? `Aztec details: ${causeMessage}` : undefined,
   ]
     .filter(Boolean)
@@ -362,8 +379,8 @@ export function applyHydratedEnvEntries(
 export function hydrateVerificationApiEnvFromFiles(): void {
   const repoRoot = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
   const candidatePaths = [
-    resolve(repoRoot, "apps/magna-web/.env"),
-    resolve(repoRoot, "apps/magna-web/.env.local"),
+    resolve(repoRoot, "apps/magna-management/.env"),
+    resolve(repoRoot, "apps/magna-management/.env.local"),
     resolve(repoRoot, "apps/magna-verification-api/.env"),
     resolve(repoRoot, "apps/magna-verification-api/.env.local"),
   ];
@@ -402,6 +419,9 @@ export function loadVerificationApiConfigFromEnv(): VerificationApiConfig {
     ),
     orchestratorAddress: parseOptionalString(
       readFirstEnv(["MAGNA_ORCHESTRATOR_ADDRESS", "VITE_MAGNA_ORCHESTRATOR_ADDRESS"]),
+    ),
+    instagramDkimPubkeyHashes: parseInstagramDkimPubkeyHashes(
+      readFirstEnv(["MAGNA_INSTAGRAM_DKIM_PUBKEY_HASHES"]),
     ),
   };
 }
@@ -447,7 +467,7 @@ export async function deriveCredentialGhostOwnerAddress(
     derivationVersion,
   });
   const address = await getSchnorrAccountContractAddress(
-    toFieldFromHex(material.secretHex, "Ghost secret"),
+    Fq.fromHexString(`0x${material.signingKeyHex}`),
     toFieldFromHex(material.saltHex, "Ghost salt"),
   );
   return address.toString();
@@ -522,7 +542,7 @@ async function registerContractArtifactAtAddress(
   contractAddress: string,
   artifact: ContractArtifact,
 ): Promise<void> {
-  const address = AztecAddress.fromString(contractAddress);
+  const address = AztecAddress.fromStringUnsafe(contractAddress);
   const existingMetadata = await wallet.getContractMetadata(address);
   if (existingMetadata.instance) {
     try {
@@ -566,7 +586,7 @@ async function createIssuanceContext(config: VerificationApiConfig): Promise<Iss
   }
 
   await registerContractArtifactAtAddress(wallet, config.aztecNodeUrl, config.issuerAddress, MagnaIssuerContract.artifact);
-  const issuer = await MagnaIssuerContract.at(AztecAddress.fromString(config.issuerAddress), wallet);
+  const issuer = await MagnaIssuerContract.at(AztecAddress.fromStringUnsafe(config.issuerAddress), wallet);
 
   return {
     wallet,
@@ -678,11 +698,11 @@ function assertNoPassportA2PrivateArtifacts(input: unknown): void {
   }
 }
 
-function assertExactRequestKeys(input: object, allowed: readonly string[]): void {
+function assertExactRequestKeys(input: object, allowed: readonly string[], requestName = "Passport A2"): void {
   const allowedSet = new Set(allowed);
   const unexpected = Object.keys(input).filter(key => !allowedSet.has(key));
   if (unexpected.length > 0) {
-    throw new Error(`Unexpected Passport A2 request field: ${unexpected[0]}`);
+    throw new Error(`Unexpected ${requestName} request field: ${unexpected[0]}`);
   }
 }
 
@@ -704,7 +724,12 @@ function requirePassportA2RegistryContext(value: unknown): PassportA2RegistryCon
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("registryContext must be an object.");
   }
-  assertExactRequestKeys(value, ["certificateRegistryRoot", "circuitRegistryRoot", "nullifierType"]);
+  assertExactRequestKeys(value, [
+    "certificateRegistryRoot",
+    "circuitRegistryRoot",
+    "nullifierType",
+    "oprfPublicKeyHash",
+  ]);
   const nullifierType = Reflect.get(value, "nullifierType");
   if (nullifierType !== 0 && nullifierType !== 1 && nullifierType !== 2 && nullifierType !== 3) {
     throw new Error("registryContext.nullifierType must be 0, 1, 2, or 3.");
@@ -719,6 +744,10 @@ function requirePassportA2RegistryContext(value: unknown): PassportA2RegistryCon
       "registryContext.circuitRegistryRoot",
     ),
     nullifierType,
+    oprfPublicKeyHash: requireDecimalString(
+      Reflect.get(value, "oprfPublicKeyHash"),
+      "registryContext.oprfPublicKeyHash",
+    ),
   };
 }
 
@@ -833,54 +862,68 @@ export function validatePassportA2Request(input: VerifyAndIssuePassportA2Request
   return input;
 }
 
-function defaultInstagramExpiryTs(): bigint {
-  return BigInt(Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60);
+function validateInstagramV2Request(input: VerifyAndIssueInstagramRequest): void {
+  assertExactRequestKeys(input, ["schema", "proof", "activeOwner"], "Instagram V2");
+  if (input.schema !== INSTAGRAM_V2_SCHEMA) {
+    throw new Error(`schema must be ${INSTAGRAM_V2_SCHEMA}.`);
+  }
+  requireString(input.activeOwner, "activeOwner");
+  if (input.proof === undefined || input.proof === null) {
+    throw new Error("proof is required.");
+  }
 }
 
-function parseOptionalExpiryTs(value: VerifyAndIssueInstagramRequest["expiryTs"]): bigint {
-  if (value === undefined || value === null || value === "") {
-    return defaultInstagramExpiryTs();
-  }
-  if (typeof value === "bigint") {
-    return value;
-  }
-  if (typeof value === "number") {
-    if (!Number.isSafeInteger(value) || value <= 0) {
-      throw new Error("expiryTs must be a positive safe integer.");
-    }
-    return BigInt(value);
-  }
-  const trimmed = value.trim();
-  if (!/^[0-9]+$/.test(trimmed)) {
-    throw new Error("expiryTs must be a unix timestamp string.");
-  }
-  return BigInt(trimmed);
-}
-
-function decodeBase64Email(value: unknown): Buffer {
-  const emlBase64 = requireString(value, "emlBase64");
+function requireInstagramField(value: string, fieldName: string): bigint {
+  let field: bigint;
   try {
-    const decoded = Buffer.from(emlBase64, "base64");
-    if (decoded.length === 0) {
-      throw new Error("empty");
-    }
-    return decoded;
+    field = BigInt(value);
   } catch {
-    throw new Error("emlBase64 must be a valid base64-encoded .eml file.");
+    throw new Error(`${fieldName} must be a decimal or 0x-prefixed field string.`);
   }
+  if (field < 0n || field >= NOIR_FIELD_MODULUS) {
+    throw new Error(`${fieldName} must be inside the Noir field modulus.`);
+  }
+  return field;
 }
 
-function assertInstagramProofMatchesMetadata(proof: InstagramProofArtifact): void {
-  if (proof.outputs.handleLen !== proof.metadata.handleLen) {
-    throw new Error("Instagram proof handle length output did not match generated metadata.");
+function assertInstagramV2Context(
+  config: VerificationApiConfig,
+  outputs: InstagramProofPublicOutputs,
+  activeOwner: string,
+  chainId: bigint,
+  nowMs: () => number,
+): { claimsHash: bigint; expiryTs: bigint } {
+  const claimsHash = requireInstagramField(outputs.claimsHash, "Instagram claims hash");
+  if (claimsHash === 0n) throw new Error("Instagram claims hash must be non-zero.");
+  const expiryTs = requireInstagramField(outputs.expiryTs, "Instagram expiry");
+  const proofOwner = requireInstagramField(outputs.activeOwner, "Instagram active owner");
+  const proofIssuer = requireInstagramField(outputs.issuerAddress, "Instagram issuer address");
+  const proofChainId = requireInstagramField(outputs.chainId, "Instagram chain id");
+  if (proofOwner !== BigInt(activeOwner)) {
+    throw new Error("Instagram proof is bound to a different active owner.");
   }
-  if (BigInt(proof.outputs.handlePacked) !== proof.metadata.handlePacked) {
-    throw new Error("Instagram proof handle output did not match generated metadata.");
+  if (proofIssuer !== BigInt(config.issuerAddress)) {
+    throw new Error("Instagram proof is bound to a different issuer deployment.");
   }
+  if (proofChainId !== chainId) {
+    throw new Error("Instagram proof is bound to a different L1 chain id.");
+  }
+  const nowSeconds = BigInt(Math.floor(nowMs() / 1000));
+  if (expiryTs <= nowSeconds) {
+    throw new Error("Instagram proof expiry is not in the future.");
+  }
+  const maximum = nowSeconds + BigInt(INSTAGRAM_V2_VALIDITY_SECONDS) + 5n * 60n;
+  if (expiryTs > maximum) {
+    throw new Error("Instagram proof expiry exceeds the one-year issuance policy.");
+  }
+  return { claimsHash, expiryTs };
 }
 
-async function defaultVerifyPassportWrapperProof(proof: unknown): Promise<PassportA2WrapperVerificationResult> {
-  return verifyPassportWrapperProof(proof as never);
+async function defaultVerifyPassportWrapperProof(
+  proof: unknown,
+  profile: "development" | "production",
+): Promise<PassportA2WrapperVerificationResult> {
+  return verifyPassportWrapperProof(proof as never, { profile });
 }
 
 function passportA2BindCustomData(input: {
@@ -946,6 +989,7 @@ async function assertPassportA2RequestContext(input: {
     certificateRegistryRoot: input.registryContext.certificateRegistryRoot,
     circuitRegistryRoot: input.registryContext.circuitRegistryRoot,
     nullifierType: input.registryContext.nullifierType,
+    oprfPublicKeyHash: input.registryContext.oprfPublicKeyHash,
   }).toString();
   if (expected !== input.outputs.requestContextHash) {
     throw new Error("Passport A2 request context does not match the proof-bound operation.");
@@ -958,8 +1002,25 @@ async function assertPassportA2RegistryTrust(input: {
   registryClient?: VerifyAndIssuePassportA2Dependencies["registryClient"];
   nowMs: () => number;
 }): Promise<void> {
-  if (!input.config.zkPassportDevMode && input.registryContext.nullifierType >= 2) {
-    throw new Error("Mock zkPassport nullifier types are forbidden outside development mode.");
+  const expectedNullifierType = input.config.zkPassportDevMode
+    ? PASSPORT_A2_DEVELOPMENT_NULLIFIER_TYPE
+    : PASSPORT_A2_PRODUCTION_NULLIFIER_TYPE;
+  const expectedOprfPublicKeyHash = input.config.zkPassportDevMode
+    ? PASSPORT_A2_DEVELOPMENT_OPRF_PUBLIC_KEY_HASH
+    : PASSPORT_A2_OPRF_PUBLIC_KEY_HASH;
+  if (input.registryContext.nullifierType !== expectedNullifierType) {
+    throw new Error(
+      input.config.zkPassportDevMode
+        ? "Passport A2 development requires the official non-salted-mock zkPassport nullifier."
+        : "Passport A2 production requires a production salted zkPassport nullifier.",
+    );
+  }
+  if (input.registryContext.oprfPublicKeyHash !== expectedOprfPublicKeyHash) {
+    throw new Error(
+      input.config.zkPassportDevMode
+        ? "Passport A2 development requires a zero OPRF public-key hash."
+        : "Passport A2 OPRF public key hash is not pinned to key ID 1.",
+    );
   }
   const registryClient = input.registryClient ?? new RegistryClient({
     chainId: input.config.zkPassportDevMode ? 11155111 : 1,
@@ -1002,8 +1063,8 @@ export async function verifyAndIssuePassportA2(
   });
   const ghostDerivationVersion = resolveGhostDerivationVersion(validated.ghostDerivationVersion, mode);
   const context = await contextLoader();
-  const activeOwnerAddress = AztecAddress.fromString(validated.activeOwner);
-  const ghostOwnerAddress = AztecAddress.fromString(validated.ghostOwner);
+  const activeOwnerAddress = AztecAddress.fromStringUnsafe(validated.activeOwner);
+  const ghostOwnerAddress = AztecAddress.fromStringUnsafe(validated.ghostOwner);
   const claimsHash = new Fr(BigInt(wrapperOutputs.claimsHash));
   const credentialValidUntil = BigInt(wrapperOutputs.credentialValidUntil);
 
@@ -1070,7 +1131,13 @@ async function verifyPassportA2Proof(
     assertPassportA2PayloadMatchesWrapperOutputs(validated, wrapperOutputs);
   }
 
-  const verifyWrapperProof = dependencies.verifyWrapperProof ?? defaultVerifyPassportWrapperProof;
+  const verifyWrapperProof =
+    dependencies.verifyWrapperProof ??
+    ((proof: unknown) =>
+      defaultVerifyPassportWrapperProof(
+        proof,
+        config.zkPassportDevMode ? "development" : "production",
+      ));
   const verification = normalizeWrapperVerificationResult(await verifyWrapperProof(validated.wrapperProof));
   if (!verification.verified) {
     throw new Error("Passport A2 recursive wrapper proof verification failed.");
@@ -1146,40 +1213,49 @@ export async function verifyAndIssueInstagram(
   input: VerifyAndIssueInstagramRequest,
   contextLoader: () => Promise<IssuanceContext>,
   dependencies?: {
-    proveEmail?: typeof proveInstagramEmail;
+    verifyProof?: typeof verifyInstagramProof;
     deriveGhostOwner?: typeof deriveCredentialGhostOwnerAddress;
+    networkChainId?: () => Promise<bigint>;
+    nowMs?: () => number;
   },
 ): Promise<VerifyAndIssueInstagramResponse> {
+  validateInstagramV2Request(input);
   const activeOwner = requireString(input.activeOwner, "activeOwner");
-  const rawEmail = decodeBase64Email(input.emlBase64);
-  const proveEmail = dependencies?.proveEmail ?? proveInstagramEmail;
+  // Parsing the proof object once makes these the exact public inputs sent to
+  // UltraHonk verification; there is no detached metadata for the API to trust.
+  const proof = normalizeInstagramProofData(input.proof);
+  const outputs = parseInstagramPublicInputs(proof.publicInputs);
+  assertTrustedInstagramDkimPubkeyHash(config.instagramDkimPubkeyHashes, outputs.dkimPubkeyHash);
+  const verified = await (dependencies?.verifyProof ?? verifyInstagramProof)(proof);
+  if (!verified) {
+    throw new Error("Instagram V2 proof verification failed.");
+  }
+  const networkChainId = dependencies?.networkChainId ?? (async () => {
+    const nodeInfo = await createAztecNodeClient(config.aztecNodeUrl).getNodeInfo();
+    return BigInt(nodeInfo.l1ChainId);
+  });
+  const { claimsHash, expiryTs } = assertInstagramV2Context(
+    config,
+    outputs,
+    activeOwner,
+    await networkChainId(),
+    dependencies?.nowMs ?? Date.now,
+  );
   const deriveGhostOwner = dependencies?.deriveGhostOwner ?? deriveCredentialGhostOwnerAddress;
-  const proof = await proveEmail(rawEmail, input.claimedHandle);
-  assertInstagramProofMatchesMetadata(proof);
-
-  const ghostDerivationVersion = input.ghostDerivationVersion ?? "v2_scoped";
+  const ghostDerivationVersion = "v2_scoped" as const;
   const ghostOwner = await deriveGhostOwner(
-    proof.outputs.emailNullifier,
+    outputs.emailNullifier,
     CredentialType.Instagram,
     ghostDerivationVersion,
   );
-  const expiryTs = parseOptionalExpiryTs(input.expiryTs);
-  const handleHash = computeInstagramHandleHash(proof.metadata.normalizedHandle);
-  const claims: InstagramCanonicalClaims = {
-    schemaVersion: 1,
-    credentialType: CredentialType.Instagram,
-    handleHash,
-    expiryTs,
-  };
-  const claimsHash = computeInstagramClaimsHash(claims, poseidon2FieldHasher);
   const context = await contextLoader();
   const receipt = await context.issuer.methods
     .register_credential(
-      AztecAddress.fromString(activeOwner),
-      AztecAddress.fromString(ghostOwner),
+      AztecAddress.fromStringUnsafe(activeOwner),
+      AztecAddress.fromStringUnsafe(ghostOwner),
       new Fr(claimsHash),
-      claims.credentialType,
-      claims.expiryTs,
+      CredentialType.Instagram,
+      expiryTs,
     )
     .send({ from: context.orchestratorAddress });
 
@@ -1192,16 +1268,11 @@ export async function verifyAndIssueInstagram(
     orchestratorAddress: context.orchestratorAddress.toString(),
     verificationSummary: {
       verified: true,
-      dkimPubkeyHash: proof.outputs.dkimPubkeyHash,
-      emailNullifier: proof.outputs.emailNullifier,
+      piiBlind: true,
+      dkimPubkeyHash: normalizeInstagramDkimPubkeyHash(outputs.dkimPubkeyHash),
+      emailNullifier: outputs.emailNullifier,
     },
-    normalizedClaims: {
-      instagramHandle: proof.metadata.normalizedHandle,
-      handleHash: handleHash.toString(),
-      handleLen: proof.outputs.handleLen,
-      handlePacked: proof.outputs.handlePacked,
-      expiryTs: expiryTs.toString(),
-    },
+    expiryTs: expiryTs.toString(),
   };
 }
 
@@ -1225,8 +1296,8 @@ export async function verifyAndRefreshRootAuthorityA2(
   const context = await contextLoader();
   const authorizationReceipt = await context.issuer.methods
     .authorize_root_authority_refresh(
-      AztecAddress.fromString(activeOwner),
-      AztecAddress.fromString(ghostOwner),
+      AztecAddress.fromStringUnsafe(activeOwner),
+      AztecAddress.fromStringUnsafe(ghostOwner),
       new Fr(BigInt(wrapperOutputs.rootCommitment)),
       new Fr(BigInt(wrapperOutputs.claimsHash)),
       BigInt(wrapperOutputs.credentialValidUntil),
@@ -1261,67 +1332,6 @@ export async function verifyAndRefreshRootAuthority(
     throw new Error("Passport renewal requires schema passport-a2-v1.");
   }
   return verifyAndRefreshRootAuthorityA2(config, input, contextLoader);
-}
-
-export async function verifyRootRecoveryPreflightA2(
-  config: VerificationApiConfig,
-  input: VerifyRootRecoveryPreflightA2Request,
-  dependencies: VerifyAndIssuePassportA2Dependencies = {},
-): Promise<VerifyRootRecoveryPreflightResponse> {
-  validatePassportA2ProofRequest(input, [
-    "targetOwner",
-    "expectedGhostOwner",
-    "expectedRootCommitment",
-    "ghostDerivationVersion",
-  ]);
-  const targetOwner = requireString(input.targetOwner, "targetOwner");
-  const expectedGhostOwner = requireString(input.expectedGhostOwner, "expectedGhostOwner");
-  const expectedRootCommitment = requireString(input.expectedRootCommitment, "expectedRootCommitment");
-  const ghostDerivationVersion = resolveRootRecoveryGhostDerivationVersion(input.ghostDerivationVersion);
-  const outputs = await verifyPassportA2Proof(config, input, {
-    ...dependencies,
-    action: "recover",
-    owner: targetOwner,
-    ghostOwner: expectedGhostOwner,
-    mode: "rooted",
-    allowedExtraKeys: [
-      "targetOwner",
-      "expectedGhostOwner",
-      "expectedRootCommitment",
-      "ghostDerivationVersion",
-    ],
-  });
-  if (outputs.rootCommitment !== BigInt(expectedRootCommitment).toString()) {
-    throw new Error(
-      `Fresh zkPassport proof does not match the rooted passport lineage. expectedRootCommitment=${expectedRootCommitment} derivedRootCommitment=${outputs.rootCommitment}`,
-    );
-  }
-
-  return {
-    expectedGhostOwner,
-    derivedGhostOwner: expectedGhostOwner,
-    expectedRootCommitment,
-    derivedRootCommitment: outputs.rootCommitment,
-    ghostDerivationVersion,
-    matchesExpectedGhostOwner: true,
-    matchesExpectedRootCommitment: true,
-    verificationSummary: {
-      verified: true,
-      passportA2: true,
-      piiBlind: true,
-    },
-  };
-}
-
-export async function verifyRootRecoveryPreflight(
-  config: VerificationApiConfig,
-  input: VerifyRootRecoveryPreflightA2Request,
-  dependencies?: VerifyAndIssuePassportA2Dependencies,
-): Promise<VerifyRootRecoveryPreflightResponse> {
-  if (!isPassportA2ProofRequest(input)) {
-    throw new Error("Passport recovery requires schema passport-a2-v1.");
-  }
-  return verifyRootRecoveryPreflightA2(config, input, dependencies);
 }
 
 export function createIssuanceContextLoader(config: VerificationApiConfig): () => Promise<IssuanceContext> {

@@ -19,6 +19,15 @@ describe("Passport A2 circuit artifact", () => {
     }
   });
 
+  it("loads a separately pinned developer bundle", () => {
+    const artifact = loadPassportWrapperCircuitArtifact(undefined, "development");
+    assert.equal(artifact.abi.return_type?.visibility, "public");
+    assert.notEqual(
+      defaultPassportWrapperCircuitArtifactPath("development"),
+      defaultPassportWrapperCircuitArtifactPath("production"),
+    );
+  });
+
   it("rejects a modified bundle before verification", () => {
     const directory = mkdtempSync(join(tmpdir(), "magna-a2-artifact-"));
     const path = join(directory, "wrapper.json");
@@ -31,6 +40,17 @@ describe("Passport A2 circuit artifact", () => {
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
+  });
+
+  it("does not accept the production bundle under the developer profile", () => {
+    assert.throws(
+      () =>
+        loadPassportWrapperCircuitArtifact(
+          defaultPassportWrapperCircuitArtifactPath("production"),
+          "development",
+        ),
+      /hash mismatch/,
+    );
   });
 });
 

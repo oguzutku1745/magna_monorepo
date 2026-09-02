@@ -320,6 +320,7 @@ test("runMagnaConsumerLogin routes instagram credentials through sponsored issue
       kind: "instagram",
       claimsHash: "456",
       handleHash: "123",
+      handleBlind: "789",
       instagramHandle: "akinspur",
     },
   });
@@ -328,7 +329,7 @@ test("runMagnaConsumerLogin routes instagram credentials through sponsored issue
   assert.deepEqual(verifyArgs?.slice(1), [
     hintedCredentialNote,
     hintedStatusNote,
-    123n,
+    { handle_hash: 123n, handle_blind: 789n },
     0,
   ]);
   assert.equal((await assertSponsorFeeOptions(sendOptions)).toString(), sponsorAddress);

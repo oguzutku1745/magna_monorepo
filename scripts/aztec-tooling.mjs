@@ -6,7 +6,15 @@ import { connect } from "node:net";
 import { resolve, join, basename } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
-const PINNED_AZTEC_VERSION = process.env.AZTEC_VERSION_PIN ?? "5.0.0-rc.1";
+const NODE_MAJOR = Number.parseInt(process.versions.node.split(".")[0] ?? "0", 10);
+if (NODE_MAJOR < 24) {
+  throw new Error(
+    `Magna's Aztec 5.1 tooling requires Node.js >=24; received ${process.versions.node}. ` +
+      "Older runtimes lack Set.prototype.intersection and make TXE note operations fail misleadingly.",
+  );
+}
+
+const PINNED_AZTEC_VERSION = process.env.AZTEC_VERSION_PIN ?? "5.1.0";
 const TXE_PORT = Number(process.env.AZTEC_TXE_PORT ?? "8081");
 const TXE_START_TIMEOUT_MS = Number(process.env.AZTEC_TXE_START_TIMEOUT_MS ?? "30000");
 const NARGO_TEST_THREADS = process.env.AZTEC_NARGO_TEST_THREADS ?? "1";

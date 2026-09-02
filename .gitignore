@@ -93,11 +93,20 @@ broadcast/
 **/broadcast/
 
 # Local agent, scratch, and generated working files.
-# docs/ is scratch by default; the three canonical documents are tracked.
+# docs/ is scratch by default; canonical protocol documents are tracked.
 docs/*
 !docs/protocol-spec.md
 !docs/threat-model.md
 !docs/integration-guide.md
+!docs/passport-recovery-v3-spec.md
+!docs/local-docker.md
+!docs/evidence/
+docs/evidence/*
+!docs/evidence/recovery-v3-gate-b-dev-2026-08-28.md
+!docs/evidence/recovery-v3-docker-bootstrap-2026-08-29.md
+!docs/evidence/instagram-proof-portability-2026-08-30.md
+!docs/evidence/m1-m5-status-2026-09-03.md
+!docs/evidence/reviewer-critical-tests-2026-09-03.md
 .codex/
 .claude/
 .cursor/

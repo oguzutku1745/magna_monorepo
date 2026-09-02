@@ -2,6 +2,7 @@ import type { ProofData } from "@aztec/bb.js";
 import type { CompiledCircuit } from "@noir-lang/noir_js";
 import { createUltraHonkBackend } from "./bb.js";
 import { loadPassportWrapperCircuitArtifact } from "./prove.js";
+import type { PassportA2ProofProfile } from "./types.js";
 
 function requireProofRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object") {
@@ -104,9 +105,11 @@ export async function verifyPassportWrapperProof(
   proof: unknown,
   options: {
     circuit?: CompiledCircuit;
+    profile?: PassportA2ProofProfile;
   } = {},
 ): Promise<boolean> {
-  const circuit = options.circuit ?? loadPassportWrapperCircuitArtifact();
+  const circuit =
+    options.circuit ?? loadPassportWrapperCircuitArtifact(undefined, options.profile ?? "production");
   const proofData = normalizePassportWrapperProofData(proof);
   const backend = await createUltraHonkBackend(circuit.bytecode);
   try {

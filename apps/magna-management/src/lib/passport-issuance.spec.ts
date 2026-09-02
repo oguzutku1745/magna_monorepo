@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { PassportWrapperLocalWitness } from "@magna/passport-wrapper-proof";
+import type { PassportWrapperLocalWitness } from "@magna/passport-wrapper-proof/safe";
 import {
   PASSPORT_A2_LOCAL_WITNESS_MISSING_MESSAGE,
   REDISCOVERED_PASSPORT_WITNESS_MISSING_MESSAGE,
@@ -13,15 +13,25 @@ import {
 
 const completion: VerifiedPassportCompletion = {
   status: "verified",
+  proofProfile: "production",
   uniqueIdentifier: "12345",
   proofs: [
     {
       proof: "0x1234",
-      name: "outer_count_6",
+      name: "outer_count_7",
       version: "0.20.0",
-      vkeyHash: "0x1235fce6de6e5d5f86af3509d1c043bf531b5b01ca97a97eec45ac48ab0cec2c",
+      vkeyHash: "0x19d93a8a69386b80903a8559d884bea729dc1ecc1db48afc6d3bb73d4ed3abbe",
       index: 1,
       total: 1,
+      committedInputs: {
+        facematch: {
+          rootKeyLeaf: "0x2532418a107c5306fa8308c22255792cf77e4a290cbce8a840a642a3e591340b",
+          environment: "production",
+          appIdHash: "0x1fa73686cf510f8f85757b0602de0dd72a13e68ae2092462be8b72662e7f179b",
+          integrityPubkeyHash: "0",
+          mode: "strict",
+        },
+      },
     },
   ] as never,
   originalQuery: { id: "query-1" } as never,
@@ -61,7 +71,8 @@ function wrapperArtifact() {
       registryContext: {
         certificateRegistryRoot: "11",
         circuitRegistryRoot: "22",
-        nullifierType: 0,
+        nullifierType: 1,
+        oprfPublicKeyHash: "1178201404428554206520802247552222388413553631367032661928167491793274360628",
       },
     },
   } as never;
@@ -121,8 +132,6 @@ describe("passport A2 management flow", () => {
         provePassportWrapper,
         deriveGhostAccountPreview: vi.fn(async () => ({
           address: "0xghost",
-          material: {} as never,
-          uniqueIdentifier: "12345",
         })),
         nowMs: () => Date.UTC(2026, 0, 1),
         randomField: vi.fn().mockReturnValueOnce(111n).mockReturnValueOnce(222n),
@@ -132,7 +141,9 @@ describe("passport A2 management flow", () => {
     expect(result.issuanceKind).toBe("a2");
     expect(provePassportWrapper).toHaveBeenCalledTimes(1);
     const witness = provePassportWrapper.mock.calls[0][0];
-    expect(witness.zkPassportOuterProof.name).toBe("outer_count_6");
+    expect(witness.profile).toBe("production");
+    expect(witness.zkPassportOuterProof.name).toBe("outer_count_7");
+    expect(witness.facematch).toMatchObject({ environment: "production", mode: "strict" });
     expect(witness.requestContext).toEqual({
       action: "issue",
       issuer: "0xissuer",
@@ -151,7 +162,8 @@ describe("passport A2 management flow", () => {
       registryContext: {
         certificateRegistryRoot: "11",
         circuitRegistryRoot: "22",
-        nullifierType: 0,
+        nullifierType: 1,
+        oprfPublicKeyHash: "1178201404428554206520802247552222388413553631367032661928167491793274360628",
       },
       mode: "rooted",
     });
@@ -178,6 +190,51 @@ describe("passport A2 management flow", () => {
     expect(serialized).not.toContain("2031-07-20");
     expect(result.localWitness.witness.nationalityBlind).toBe(111n);
     expect(result.localWitness.witness.expiryBlind).toBe(222n);
+  });
+
+  it("builds a developer witness only from regular official facematch inputs", async () => {
+    const developerCompletion: VerifiedPassportCompletion = {
+      ...completion,
+      proofProfile: "development",
+      proofs: completion.proofs.map(proof =>
+        proof.committedInputs?.facematch
+          ? {
+              ...proof,
+              committedInputs: {
+                facematch: {
+                  ...(proof.committedInputs?.facematch as object),
+                  mode: "regular",
+                },
+              },
+            }
+          : proof,
+      ) as never,
+    };
+    const provePassportWrapper = vi.fn(async (_witness: PassportWrapperLocalWitness) => wrapperArtifact());
+    await issuePassportThroughConfiguredBackend(
+      {
+        issuanceKind: "a2",
+        verificationApiUrl: "http://localhost:4310",
+        completion: developerCompletion,
+        activeOwner: "0xactive",
+        issuerAddress: "0xissuer",
+        ageThreshold: 21,
+        mode: "rooted",
+        ghostDerivationVersion: "v2_scoped",
+        a2BindCustomData: passportA2BindCustomData({ action: "issue", activeOwner: "0xactive" }),
+      },
+      {
+        verifyAndIssuePassportA2ThroughBackend: vi.fn().mockResolvedValue({}),
+        provePassportWrapper,
+        deriveGhostAccountPreview: vi.fn(async () => ({ address: "0xghost" })),
+        nowMs: () => Date.UTC(2026, 0, 1),
+        randomField: vi.fn().mockReturnValueOnce(111n).mockReturnValueOnce(222n),
+      },
+    );
+    expect(provePassportWrapper.mock.calls[0][0]).toMatchObject({
+      profile: "development",
+      facematch: { environment: "production", mode: "regular" },
+    });
   });
 
   it("rejects secret-bearing note and inner-proof keys recursively", () => {

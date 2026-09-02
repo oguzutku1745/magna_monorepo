@@ -38,6 +38,7 @@ export type MagnaInstagramConsumerLoginCredential = {
   kind?: "instagram";
   claimsHash: string;
   handleHash: string;
+  handleBlind: string;
   instagramHandle?: string;
 };
 
@@ -63,7 +64,7 @@ type MagnaConsumerLoginEnv = Pick<
   >;
 
 function toAddress(value: string): AztecAddress {
-  return AztecAddress.fromString(value);
+  return AztecAddress.fromStringUnsafe(value);
 }
 
 function instagramHandleHashFromPolicy(policy: Policy): bigint {
@@ -159,7 +160,9 @@ function assertConsumerCredential(
       typeof credential.claimsHash !== "string" ||
       !credential.claimsHash ||
       typeof (credential as Partial<MagnaInstagramConsumerLoginCredential>).handleHash !== "string" ||
-      !(credential as Partial<MagnaInstagramConsumerLoginCredential>).handleHash
+      !(credential as Partial<MagnaInstagramConsumerLoginCredential>).handleHash ||
+      typeof (credential as Partial<MagnaInstagramConsumerLoginCredential>).handleBlind !== "string" ||
+      !(credential as Partial<MagnaInstagramConsumerLoginCredential>).handleBlind
     ) {
       throw new Error("Stored Magna Instagram credential reference is incomplete.");
     }
@@ -270,6 +273,7 @@ export async function runMagnaConsumerLogin(input: {
           ...(await hintClient.fetchPassportHintsByClaimsHash(input.activeAddress, credential.claimsHash)),
           claimsWitness: {
             handleHash: BigInt((credential as MagnaInstagramConsumerLoginCredential).handleHash),
+            handleBlind: BigInt((credential as MagnaInstagramConsumerLoginCredential).handleBlind),
           },
         },
         input.activeAddress,

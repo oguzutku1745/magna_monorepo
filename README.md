@@ -14,7 +14,7 @@ Install these before anything else:
 | --- | --- | --- |
 | **Node.js** | `>= 24.12.0` | Enforced by `engines` in `package.json`. Use `nvm`/`fnm` to manage it. |
 | **npm** | bundled with Node | The repo uses **npm workspaces** (no pnpm/yarn). |
-| **Aztec toolchain** | `5.0.0-rc.1` | Provides `aztec` and `aztec-nargo`. Pinned in `.aztecrc`. |
+| **Aztec toolchain** | `5.1.0` | Provides `aztec` and `aztec-nargo`. Pinned in `.aztecrc`. |
 | **Docker** | latest | Required by the Aztec local network / sandbox. |
 | **Foundry** (`forge`) | latest | *Optional* — only needed to build the L1 Solidity contracts (`l1-contracts/`). Not required to run the two apps. |
 
@@ -25,10 +25,10 @@ Install the Aztec toolchain and pin the version this repo expects:
 bash -i <(curl -s https://install.aztec.network)
 
 # Pin to the version used by this repo
-aztec-up 5.0.0-rc.1
+aztec-up 5.1.0
 
 # Verify (this script forces the pinned version)
-npm run aztec:version    # expects 5.0.0-rc.1
+npm run aztec:version    # expects 5.1.0
 ```
 
 > If `aztec` is not on your PATH after install, follow the path hint printed by the installer, then re-open your shell.
@@ -36,6 +36,18 @@ npm run aztec:version    # expects 5.0.0-rc.1
 ---
 
 ## 2. Quick start (TL;DR)
+
+### Dockerized local stack
+
+After the manual Recovery V3 flow has been validated, the same pinned stack can be started from a clean clone with Docker Desktop and one command:
+
+```bash
+npm run docker:local
+```
+
+This builds against the immutable official Aztec `5.1.0` image, starts its single local network/Anvil, deploys the ordinary application stack followed by Recovery V3, and starts the API plus both frontends. Open **http://localhost:5174** for management. The official zkPassport mobile scan is still a real manual step; Compose does not substitute a fixture or synthetic proof. See [the local Docker guide](docs/local-docker.md) for lifecycle, reset, ports, and evidence requirements.
+
+### Host toolchain
 
 Five terminals. Run from the repo root unless noted.
 
@@ -58,7 +70,7 @@ cp apps/magna-verification-api/.env.example apps/magna-verification-api/.env
 npm run network:local
 
 # T2: deploy contracts + populate addresses into the .env files
-npm run web:bootstrap:local
+npm run bootstrap:local
 
 # T3: off-chain verification API on :4310
 npm run verification-api:dev
@@ -88,7 +100,7 @@ Installs every workspace under `packages/*` and `apps/*` in one pass (npm worksp
 ```bash
 npm run compile:contracts
 ```
-Compiles all Noir/Aztec contract crates in `contracts/` (issuer, company-sponsor, company-rights-registry, verify-meter-hook[-instant], consumer, rights-purchase-l2, webauthn-account) via `scripts/aztec-tooling.mjs`, which pins the toolchain to `5.0.0-rc.1`.
+Compiles all Noir/Aztec contract crates in `contracts/` (issuer, company-sponsor, company-rights-registry, verify-meter-hook[-instant], consumer, rights-purchase-l2, webauthn-account) via `scripts/aztec-tooling.mjs`, which pins the toolchain to `5.1.0`.
 
 ### 3.3 Generate TypeScript bindings
 ```bash
@@ -119,20 +131,63 @@ npm run network:local      # wraps `aztec start --local-network`, listens on :80
 ```
 Leave this running in its own terminal. It spins up the PXE, sequencer, and an anvil L1 fork.
 
-> ⚠️ **Clock drift:** the local network's clock runs ahead of wall-clock over time and eventually drops valid txs (`Tx dropped by P2P node`). Check it with `npm run localnet:drift`. The only fix is **restart the network and re-run the bootstrap** (§3.6). See `scripts/start-local-network.sh` for details.
+> ⚠️ **Clock profile:** always start the network through `npm run network:local`. Magna pins the empirically validated Aztec 5.1 local profile (4s Ethereum slots, 8s Aztec slots, 1s block cadence) because the default 72s Automine slots accumulate future L1 time during rapid testing. Recovery and Fee Juice helpers also pace each forced Inbox checkpoint against wall time. `npm run localnet:drift` verifies both the on-chain slot duration and current drift. A network created with the former 72s profile is monotonic and must be restarted once, followed by both local bootstraps.
 
 ### 3.6 Deploy + bootstrap local env
 ```bash
-npm run web:bootstrap:local
+npm run bootstrap:local
 ```
 With the local network running, this deploys the contracts and writes deployment addresses into:
 
-- `apps/magna-web/.env.local`
 - `apps/magna-management/.env`
 - `apps/reference-dapp/.env`
 - a deployment manifest under `deployments/*.json`
 
 Re-run it any time you restart the local network.
+
+### 3.6.1 Deploy the isolated Recovery V3 Gate B-dev stack
+
+After the ordinary bootstrap, and before starting the management app:
+
+```bash
+npm run recovery-v3:bootstrap:local
+```
+
+This command reads and content-validates the current certificate and circuit
+roots independently through zkPassport's official Sepolia registry client,
+deploys the hash-pinned generated EVM verifier and the unmodified official
+registry contracts to the shared Anvil instance, proves that unseeded and
+temporarily revoked roots are rejected, deploys the portal against Aztec's
+canonical Inbox, and writes the resulting addresses and evidence hash to
+`deployments/local.json`. It never learns roots from the proof under test.
+
+Set the local Anvil relayer key in `apps/magna-management/.env` (development
+only; account zero is the default bootstrap deployer):
+
+```dotenv
+VITE_MAGNA_L1_RPC_URL=http://127.0.0.1:8545
+VITE_MAGNA_LOCAL_FAUCET_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+VITE_MAGNA_RECOVERY_V3_RELAYER_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+```
+
+The faucet key is accepted only by the local development build, and the
+funding implementation independently rejects any L1/Aztec network other than
+chain `31337`. It is never a production user-funding mechanism.
+
+Restart the management app after every bootstrap. The live recovery action
+then requests a fresh proof through the unmodified zkPassport app, generates
+the dedicated wrapper locally, runs private-witness and EVM mutations, sends
+the authorization through the real portal and canonical Inbox, and verifies
+replay rejection. On chain `31337` only, it reads the canonical Inbox's actual
+`LAG()` and uses Aztec's official debug API to build a bounded number of empty
+checkpoints; polling alone cannot ingest an L1 message on the transaction-driven
+local network. It then requires actual leaf/index membership, reconstructs the
+authenticated Ghost locally, calls private `recover_root_v3(...)`, and checks
+that the destination received the complete rooted passport note set. The clean
+Gate B-dev run passed on 2026-08-28; its redacted proof, transaction, Inbox,
+mutation, issuer-execution, and chain-state evidence is retained in
+`docs/evidence/recovery-v3-gate-b-dev-2026-08-28.md`. A Docker run must reproduce
+this sequence and cannot replace its live official-mobile-proof requirement.
 
 ### 3.7 Run the services
 ```bash
@@ -151,15 +206,11 @@ npm run -w @magna/reference-dapp dev  # Reference dApp         → http://localh
 | **Reference dApp** | `@magna/reference-dapp` | `npm run -w @magna/reference-dapp dev` | http://localhost:5175 |
 | **Verification API** | `@magna/verification-api` | `npm run verification-api:dev` | http://localhost:4310 |
 | Aztec local network | — | `npm run network:local` | http://localhost:8080 |
-| Magna Web (compat console, optional) | `@magna/web` | `npm run -w @magna/web dev` | http://localhost:5173 |
-
-`apps/magna-web` is the read-only compatibility/method-reference console — not part of the core demo flow.
-
 ---
 
 ## 5. Environment configuration
 
-`npm run web:bootstrap:local` fills in all **contract addresses** automatically. Two things are **not** auto-generated and must be set by hand for local dev:
+`npm run bootstrap:local` fills in all **contract addresses** automatically. Two things are **not** auto-generated and must be set by hand for local dev:
 
 ### 5.1 Dev session signing keypair (Management ↔ Reference dApp)
 
@@ -192,17 +243,21 @@ MAGNA_ORCHESTRATOR_ADDRESS=<VITE_MAGNA_ORCHESTRATOR_ADDRESS from management .env
 
 The rest of `apps/magna-verification-api/.env.example` works as-is for local dev (`MAGNA_ZKPASSPORT_DEV_MODE=true` verifies mock-passport roots on Sepolia via the public RPC).
 
+The intended Dockerized passport flow also uses this official zkPassport developer profile. It must consume a real proof generated by the official mock-passport flow, not a fixture or verifier bypass. With `devMode=true`, Magna requests the SDK's non-salted identifier, regular FaceMatch, and a separate hash-pinned wrapper requiring `NON_SALTED_MOCK = 2` and `oprf_pk_hash = 0`; production retains an isolated `devMode=false`, strict-FaceMatch, mainnet, `SALTED = 1` wrapper pinned to OPRF key ID `1`. The developer app still requires FaceMatch against the selected official mock passport portrait, but regular mode removes the strict liveness requirement.
+
+The fast local-network target uses Anvil chain ID `31337`. The official SDK still performs its own read-only developer-root check against Sepolia while the Magna integration independently exercises the pinned official registry/verifier contracts on the shared local Anvil. This permits the combined local portal-to-Inbox test without deploying Magna to a public Aztec testnet. Generating a new official developer proof still needs the zkPassport application and its proof resources, but the non-salted developer request makes no TACEO OPRF authorization or evaluation request.
+
 > **Scope must match:** `MAGNA_ZKPASSPORT_SCOPE` (verification API) must equal `VITE_MAGNA_ZKPASSPORT_REQUEST_SCOPE` (management), or `verify()` returns `verified=false`. Both default to `magna-passport-onboarding`.
 
 ---
 
-## 6. Optional components
+## 6. Additional components
 
 These are **not** required to run the two apps:
 
-- **Instagram proof circuit** — `npm run instagram-proof:prepare` (builds `@magna/instagram-proof` and compiles its Noir circuit). Uses a standalone `nargo`.
+- **Instagram V2 production-live adapter** — `npm run instagram-proof:prepare` builds `@magna/instagram-proof` against `zkemail.nr` v2.0.0 and compiles it with exactly `nargo 1.0.0-beta.5`, matching upstream zkEmail CI. Its isolated Noir.js runtime is also beta.5 and its Barretenberg backend is `@aztec/bb.js 0.84.0`. The executable ACIR is pinned by SHA-256. The management browser reads the signed `.eml`, verifies DKIM, samples a private handle blind, and generates the proof locally; neither the email nor the handle/hash/blind is sent to Magna API. The API receives only the proof and its seven public outputs, checks the owner/issuer/chain/expiry bindings, and fails closed unless the proof-bound modulus+REDC commitment is governed by `MAGNA_INSTAGRAM_DKIM_PUBKEY_HASHES`. The compiler command force-builds the circuit, enables Brillig lookback, accepts exactly five source-hash-pinned diagnostics whose manual constraints were audited, and fails on diagnostic/source drift. Private Aztec login recomputes the blinded commitment from the locally retained witness. `npm run test:instagram-proof` uses a committed, independently DKIM-verified real Instagram email and rejects mutations across the audited header, RSA, and partial-body-hash boundaries. Exact scope and evidence are in `docs/evidence/instagram-proof-portability-2026-08-30.md`.
 - **L1 rights portal (Solidity/Foundry)** — `cd l1-contracts/magna-rights-portal && forge build`. Needed only for the L1→L2 rights-purchase rail.
-- **Fee juice funding** — `npm run fund:fee-juice` if accounts run out of fee juice on the local network.
+- **Fee Juice funding** — in the chain-31337 developer profile, use **Fund active wallet** in Settings or **Fund recovery target** on the Recovery page. Recovery funds its transient Ghost automatically. The browser performs the canonical L1→L2 bridge and claim directly; the Magna API is not involved. The CLI command remains an operator diagnostic, not a user step.
 - **Golden vectors sync** — `npm run vectors:sync` (regenerates shared TS/Noir constants; part of `test:ci`).
 
 ---
@@ -213,6 +268,7 @@ These are **not** required to run the two apps:
 npm run test:ci                       # pinned contract tests + core/wallet/client unit tests
 npm run test:contracts:issuer         # a single contract's Noir tests
 npm run -w @magna/client test         # one package's unit tests
+npm run test:instagram-proof:docker   # exact compiler + real DKIM proof and verification (~80s)
 AZTEC_E2E=1 npm run -w @magna/e2e-tests test   # aztec.js integration suite (needs local network)
 ```
 
@@ -222,11 +278,11 @@ AZTEC_E2E=1 npm run -w @magna/e2e-tests test   # aztec.js integration suite (nee
 
 | Symptom | Cause / fix |
 | --- | --- |
-| `Tx dropped by P2P node` | Local-network clock drift. Run `npm run localnet:drift` to confirm, then **restart `network:local` and re-run `web:bootstrap:local`**. |
-| App can't reach contracts / blank state | Bootstrap not run, or run before the network was ready. Restart network, wait until ready, re-run `web:bootstrap:local`. |
+| Fresh zkPassport proof reported stale / `Tx dropped by P2P node` | Run `npm run localnet:drift`. If it reports 72s slots or excessive drift, restart with `npm run network:local`, then rerun `bootstrap:local` and `recovery-v3:bootstrap:local`. The pinned short-slot profile plus clock-paced Inbox checkpoints prevents the former per-attempt accumulation. |
+| App can't reach contracts / blank state | Bootstrap not run, or run before the network was ready. Restart network, wait until ready, re-run `bootstrap:local`. |
 | `verify()` returns `verified=false` | `MAGNA_ZKPASSPORT_SCOPE` ≠ `VITE_MAGNA_ZKPASSPORT_REQUEST_SCOPE`, or the verification API is missing `MAGNA_ISSUER_ADDRESS` / `MAGNA_ORCHESTRATOR_ADDRESS`. |
 | Reference dApp rejects the login result | `VITE_MAGNA_PUBLIC_KEY_JWK` doesn't match the management app's `VITE_MAGNA_SESSION_SIGNING_KEY`. Regenerate the pair (§5.1). |
-| `aztec`/`aztec-nargo` not found | Re-run `aztec-up 5.0.0-rc.1` and confirm with `npm run aztec:version`. |
+| `aztec`/`aztec-nargo` not found | Re-run `aztec-up 5.1.0` and confirm with `npm run aztec:version`. |
 | Build errors about missing contract bindings | Run `npm run compile:contracts && npm run codegen:contracts` before `npm run build`. |
 
 ---
@@ -248,7 +304,7 @@ packages/
   magna-client/                  thin "Login with Magna" SDK for dApps
   magna-wallet/                  wallet engine (notes, proving, Aztec bindings)
   magna-passport-wrapper-proof/  PII-blind passport wrapper circuit + helpers
-  magna-instagram-proof/         Instagram handle proof circuit (experimental)
+  magna-instagram-proof/         production-live Instagram DKIM/handle proof adapter
   magna-lib/                     Noir policy primitives for dApps
   contracts-bindings/            generated TS contract bindings
   e2e-tests/                     aztec.js integration tests
@@ -256,7 +312,6 @@ apps/
   magna-management/              Management dApp (issuance, recovery, sponsor flows)
   reference-dapp/                Minimal "Login with Magna" integration demo
   magna-verification-api/        off-chain zkPassport verification + issuance service
-  magna-web/                     compatibility/method-reference console (read-only)
 docs/                            protocol spec, threat model, integration guide
 Diagrams/                        product & flow diagrams
 scripts/                         tooling: contract compile/codegen, bootstrap, local network
@@ -268,27 +323,36 @@ scripts/                         tooling: contract compile/codegen, bootstrap, l
 
 | Command | What it does |
 | --- | --- |
-| `npm run aztec:version` | Verify the pinned Aztec CLI version (`5.0.0-rc.1`). |
+| `npm run aztec:version` | Verify the pinned Aztec CLI version (`5.1.0`). |
 | `npm run compile:contracts` | Compile all Noir/Aztec contract crates. |
 | `npm run codegen:contracts` | Generate TS bindings → `packages/contracts-bindings/src`. |
 | `npm run build` | Build all workspace packages + apps (`npm run -ws build`). |
 | `npm run network:local` | Start the local Aztec network on `:8080`. |
 | `npm run localnet:drift` | Report how far the local-network clock has drifted. |
-| `npm run web:bootstrap:local` | Deploy contracts and populate the app `.env` files. |
+| `npm run bootstrap:local` | Deploy contracts and populate the app `.env` files. |
+| `npm run docker:local` | Delete the previous Magna chain/runtime/image/cache, rebuild without cache, and perform a fresh ordered deployment. |
+| `npm run docker:local:resume` | Deliberately resume/rebuild against the current disposable Compose chain and volumes. |
+| `npm run docker:local:down` | Remove the disposable Compose stack and its local-chain/runtime volumes. |
 | `npm run verification-api:dev` | Run the verification API on `:4310`. |
-| `npm run fund:fee-juice` | Top up fee juice for local accounts. |
+| `npm run fund:fee-juice` | Operator-only Fee Juice diagnostic/fallback; normal local users fund from the management UI. |
 | `npm run vectors:sync` | Sync shared golden vectors into generated constants. |
 | `npm run test:ci` | Run the pinned contract + unit test suite. |
+| `npm run test:reviewer:critical:docker` | Run the blocker, Recovery V3, API/UI, and real Instagram proof acceptance suite in the already-built pinned Docker image. |
 
 ---
 
 ## 11. Current scope & stability notes
 
-- **Primary credential source:** `zkPassport` (canonical claims: `age`, `nationality`, `expiry`), issued via the **A2 recursive / PII-blind** flow. The browser recursively proves a pinned zkPassport outer proof and sends only the wrapper proof, its eight public outputs, registry context, owner addresses, and lifecycle metadata. Raw passport claims, outer proofs and private note hints remain local.
-- **Rooted identity is the canonical path:** `register_rooted_passport_v2` + linked verify paths. Legacy rootless flows are compatibility-only and must be explicitly selected.
-- **Recovery** uses deterministic **Ghost account** derivation from a scoped zkPassport identifier. Ghost derivation is versioned (`v1_legacy_unscoped`, `v2_scoped`) to avoid silent recovery breakage.
-- **Issuance** is accepted only from the immutable `ORCHESTRATOR_ADDRESS` (a stable orchestrator account, required by Aztec sender-for-tags discovery).
+- **Primary credential source:** `zkPassport` (canonical claims: `age`, `nationality`, `expiry`), issued via the **A2 recursive / PII-blind** flow. The browser recursively proves a pinned zkPassport outer proof and sends only the wrapper proof, its eight public outputs, registry context, owner addresses, and lifecycle metadata. Raw passport claims, outer proofs, identifiers, and private note hints must remain local.
+- **Rooted identity is the launch path:** `register_rooted_passport_v2` plus linked verification paths. The project has never been deployed, so the remaining passport rootless and unauthenticated generic-recovery surfaces are scheduled for removal rather than backward compatibility.
+- **Root recovery is proof-bound and backend-optional:** the Ghost-owned `RootRecoveryNote` identifies the lineage but is not sufficient to recover it. The browser creates a fresh zkPassport proof bound to the destination, nonce, deployment, and Aztec message secret. `MagnaRecoveryPortal` verifies the recursive wrapper against zkPassport's authoritative Ethereum registries and sends the proof-authenticated authorization through the canonical Aztec Inbox. The Ghost then calls private `recover_root_v3(...)`, which consumes that exact L1→L2 message and atomically rotates the root plus the complete rooted passport note set to the approved destination. The Magna API is not used in this recovery authority path.
+- **Social recovery scope is explicit:** the shipped Instagram adapter issues a rootless credential. Magna never implemented a `recover_linked(...)` entrypoint; the old generic rootless `recover(...)` was removed because Ghost possession alone was unsafe. Root Recovery V3 rotates only the rooted passport lineage. After wallet loss, Instagram is re-issued from a fresh signed Instagram email rather than copied by passport recovery.
+- **Identifier profiles fail closed:** production SDK `0.16.1` uses `NullifierType.SALTED`, explicit OPRF key ID `1`, strict FaceMatch, and a wrapper requiring `SALTED = 1`. Explicit developer mode uses the official non-salted request, regular FaceMatch, and a separate wrapper requiring `NON_SALTED_MOCK = 2`. The exact query selects zkPassport `outer_count_7` version `0.20.0` (12 public inputs; VK hash `0x19d93a8a69386b80903a8559d884bea729dc1ecc1db48afc6d3bb73d4ed3abbe`). Production pins public input `11`, `oprf_pk_hash`, to `1178201404428554206520802247552222388413553631367032661928167491793274360628`; development requires it to equal `0`. Neither profile accepts the other's artifact. Salted OPRF remains the production privacy defense; the separate proof-bound authorization closes recovery even after identifier disclosure.
+- **Production OPRF integration is a frozen V3 dependency:** zkPassport reported no planned change to the current integration. Magna permanently pins SDK `0.16.1`, production `SALTED`, OPRF key ID `1`, its published public-key hash, and the authenticated outer-proof layout for V3. A newer SDK/key/circuit is a new protocol version, never an automatic upgrade. V3 continuity is defined for the same supported document and exact Magna scope; replacement documents are outside that identity-continuity boundary. The official developer/mock-passport flow instead uses `NON_SALTED_MOCK = 2` and no OPRF solely to keep local integration testable; it is not production-equivalent identifier/privacy evidence. A real supported-document, production `SALTED = 1` artifact and production-wrapper EVM verification are still required before release.
+- **Local orchestrator:** the verification API intentionally imports an Aztec initial test account for the disposable local testnet. This is acceptable for local development only. A non-local deployment must reject that path and provide production custody plus a reviewed rotation/emergency design.
+- **Current signer-rotation limitation:** the pinned Aztec `SchnorrInitializerlessAccount` commits its signing public key into the account's immutable hash and exposes no rotation entrypoint. The current claim that the stable orchestrator account can rotate this signer is therefore not implemented and must not be relied on for production.
+- **Browser secret lifetime:** JavaScript cannot guarantee secure erasure of the immutable identifier string. The client does not persist or transmit it, confines it to the recovery callback, and disposes each transient Ghost session in `finally`. A dedicated recovery origin/page-realm without third-party scripts remains a production deployment requirement because garbage-collector timing cannot be guaranteed.
 - **Renewal/revocation:** passport expiry *pauses* linked authority until `refresh_root_authority(...)` rotates the rooted authority note under the same `root_commitment`. Root revocation kills every linked descendant.
-- Under A2, `root_commitment` is derived in-circuit from the proof-bound scoped nullifier. Ghost derivation remains versioned separately so changes to upstream salted/vOPRF-backed identifiers require an explicit migration path.
+- Under A2, `root_commitment` is derived in-circuit from the proof-bound scoped nullifier. Ghost derivation remains versioned separately, so upstream identifier changes must never be adopted silently.
 
 For protocol internals see `docs/protocol-spec.md`, `docs/threat-model.md`, and `docs/integration-guide.md`.

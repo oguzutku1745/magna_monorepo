@@ -12,6 +12,8 @@ import {
 import {
   type PassportWrapperLocalWitness,
   type PassportWrapperProofArtifact,
+  type PassportA2ProofProfile,
+  PASSPORT_A2_DEVELOPMENT_WRAPPER_ARTIFACT_SHA256,
   PASSPORT_A2_WRAPPER_ARTIFACT_SHA256,
 } from "./types.js";
 
@@ -21,13 +23,19 @@ function packageRoot(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), "..");
 }
 
-export function defaultPassportWrapperCircuitArtifactPath(): string {
-  return resolve(packageRoot(), "circuit/bundle/magna_passport_wrapper_proof.json");
+export function defaultPassportWrapperCircuitArtifactPath(
+  profile: PassportA2ProofProfile = "production",
+): string {
+  return profile === "development"
+    ? resolve(packageRoot(), "circuit-dev/bundle/magna_passport_wrapper_proof_dev.json")
+    : resolve(packageRoot(), "circuit/bundle/magna_passport_wrapper_proof.json");
 }
 
 export function loadPassportWrapperCircuitArtifact(
-  path = defaultPassportWrapperCircuitArtifactPath(),
+  path?: string,
+  profile: PassportA2ProofProfile = "production",
 ): CompiledCircuit {
+  path ??= defaultPassportWrapperCircuitArtifactPath(profile);
   if (!existsSync(path)) {
     throw new Error(
       `Passport wrapper circuit artifact not found at ${path}. ` +
@@ -36,7 +44,11 @@ export function loadPassportWrapperCircuitArtifact(
   }
   const bytes = readFileSync(path);
   const digest = createHash("sha256").update(bytes).digest("hex");
-  if (digest !== PASSPORT_A2_WRAPPER_ARTIFACT_SHA256) {
+  const expectedDigest =
+    profile === "development"
+      ? PASSPORT_A2_DEVELOPMENT_WRAPPER_ARTIFACT_SHA256
+      : PASSPORT_A2_WRAPPER_ARTIFACT_SHA256;
+  if (digest !== expectedDigest) {
     throw new Error(`Passport A2 wrapper circuit artifact hash mismatch at ${path}.`);
   }
   return JSON.parse(bytes.toString("utf8")) as CompiledCircuit;
@@ -48,7 +60,7 @@ export async function provePassportWrapper(
     circuit?: CompiledCircuit;
   } = {},
 ): Promise<PassportWrapperProofArtifact> {
-  const circuit = options.circuit ?? loadPassportWrapperCircuitArtifact();
+  const circuit = options.circuit ?? loadPassportWrapperCircuitArtifact(undefined, witness.profile);
   const { inputs, metadata } = await buildPassportWrapperInputs(witness);
   const noir = new Noir(circuit);
   const backend = await createUltraHonkBackend(circuit.bytecode);

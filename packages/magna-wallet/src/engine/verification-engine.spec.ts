@@ -4,6 +4,7 @@ import { MagnaVerificationEngine } from "./verification-engine.js";
 import { computeInstagramClaimsHash, computePassportClaimsHash, poseidon2FieldHasher } from "./encoding.js";
 import { ClaimId, ConstraintOp, CredentialType } from "@magna/core";
 import { normalizePolicy } from "@magna/core";
+import { Fr } from "@aztec/aztec.js/fields";
 
 describe("MagnaVerificationEngine login flows", () => {
   function contractPolicy(policy: Parameters<typeof normalizePolicy>[0]) {
@@ -839,7 +840,7 @@ describe("MagnaVerificationEngine login flows", () => {
     assert.equal(calledSponsor, "B");
   });
 
-  it("recoverRoot and revokeLinkedCredential forward the root-linked recovery call shapes", async () => {
+  it("recoverRoot and revokeLinkedCredential forward the V3 root-linked recovery call shapes", async () => {
     let capturedRecoverRootArgs: unknown[] | undefined;
     let capturedRecoverRootSend: { from: string; fee?: unknown } | undefined;
     let capturedRevokeArgs: unknown[] | undefined;
@@ -849,7 +850,7 @@ describe("MagnaVerificationEngine login flows", () => {
       orchestratorAddress: "0x1111111111111111111111111111111111111111",
       issuerContract: {
         methods: {
-          recover_root: (...args: unknown[]) => {
+          recover_root_v3: (...args: unknown[]) => {
             capturedRecoverRootArgs = args;
             return {
               send: async (opts: { from: string; fee?: unknown }) => {
@@ -874,7 +875,12 @@ describe("MagnaVerificationEngine login flows", () => {
     await client.recoverRoot(
       {
         hintedRootRecoveryNote: { id: "root-recovery-note" },
-        newActiveOwner: "0x4444444444444444444444444444444444444444",
+        destination: "0x4444444444444444444444444444444444444444",
+        authorizationNonce: 123n,
+        claimsHash: 456n,
+        credentialValidUntil: 789n,
+        messageSecret: 101n,
+        messageLeafIndex: 202n,
       },
       "0x3333333333333333333333333333333333333333",
     );
@@ -888,6 +894,11 @@ describe("MagnaVerificationEngine login flows", () => {
     assert.deepEqual(capturedRecoverRootArgs, [
       { id: "root-recovery-note" },
       "0x4444444444444444444444444444444444444444",
+      new Fr(123n),
+      new Fr(456n),
+      789n,
+      new Fr(101n),
+      new Fr(202n),
     ]);
     assert.deepEqual(capturedRecoverRootSend, {
       from: "0x3333333333333333333333333333333333333333",
@@ -993,9 +1004,9 @@ describe("MagnaVerificationEngine login flows", () => {
     let capturedVerifySend: { from: string; fee?: unknown } | undefined;
 
     const instagramClaims = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       credentialType: CredentialType.Instagram as const,
-      handleHash: 123456n,
+      handleCommitment: 777777n,
       expiryTs: 1_893_456_000n,
     };
 
@@ -1047,6 +1058,7 @@ describe("MagnaVerificationEngine login flows", () => {
         hintedStatusNote: { id: "instagram-status" },
         claimsWitness: {
           handleHash: 123456n,
+          handleBlind: 654321n,
         },
       },
       "0x4444444444444444444444444444444444444444",
@@ -1055,7 +1067,7 @@ describe("MagnaVerificationEngine login flows", () => {
     assert.deepEqual(capturedRegisterArgs, [
       "0x2222222222222222222222222222222222222222",
       "0x3333333333333333333333333333333333333333",
-      computeInstagramClaimsHash(instagramClaims, poseidon2FieldHasher),
+      computeInstagramClaimsHash(instagramClaims),
       CredentialType.Instagram,
       1_893_456_000n,
     ]);
@@ -1075,7 +1087,7 @@ describe("MagnaVerificationEngine login flows", () => {
       }),
       { id: "instagram-credential" },
       { id: "instagram-status" },
-      123456n,
+      { handle_hash: 123456n, handle_blind: 654321n },
       0,
     ]);
     assert.deepEqual(capturedVerifySend, {
@@ -1144,7 +1156,7 @@ describe("MagnaVerificationEngine login flows", () => {
         policy: { credentialType: CredentialType.Instagram, constraints: [] },
         hintedCredentialNote: { id: "credential" },
         hintedStatusNote: { id: "status" },
-        claimsWitness: { handleHash: 99n },
+        claimsWitness: { handleHash: 99n, handleBlind: 100n },
       },
       "0x2222222222222222222222222222222222222222222222222222222222222222",
       { sponsored: true },

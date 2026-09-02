@@ -7,6 +7,7 @@ export type WebAuthnRegistration = {
   rpId: string;
   rpIdHash: Uint8Array;
   origin: string;
+  transports?: AuthenticatorTransport[];
 };
 
 export type WebAuthnAssertionResult = {
@@ -27,6 +28,13 @@ export type WebAuthnDiscoveredPrfOutputs = WebAuthnPrfOutputs & {
 
 export const AZTEC_ACCOUNT_SECRET_PRF_LABEL = "magna:aztec-account-secret:v1";
 export const AZTEC_ACCOUNT_SALT_PRF_LABEL = "magna:aztec-account-salt:v1";
+const AUTHENTICATOR_TRANSPORTS = new Set<AuthenticatorTransport>(["ble", "hybrid", "internal", "nfc", "usb"]);
+
+function recognizedTransports(values: string[]): AuthenticatorTransport[] {
+  return values.filter((value): value is AuthenticatorTransport =>
+    AUTHENTICATOR_TRANSPORTS.has(value as AuthenticatorTransport),
+  );
+}
 
 export async function computeWebAuthnRpIdHash(rpId: string): Promise<Uint8Array> {
   return new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rpId)));
@@ -64,6 +72,15 @@ export async function registerWebAuthnCredential(userName: string, rpId: string)
     rpId,
     rpIdHash,
     origin: window.location.origin,
+    transports: recognizedTransports(response.getTransports?.() ?? []),
+  };
+}
+
+function credentialDescriptor(registration: WebAuthnRegistration): PublicKeyCredentialDescriptor {
+  return {
+    type: "public-key",
+    id: toArrayBuffer(registration.credentialId),
+    ...(registration.transports?.length ? { transports: registration.transports } : {}),
   };
 }
 
@@ -75,7 +92,7 @@ export function makeBrowserAsserter(registration: WebAuthnRegistration): WebAuth
         challenge: toArrayBuffer(challenge),
         rpId: registration.rpId,
         userVerification: "required",
-        allowCredentials: [{ type: "public-key", id: toArrayBuffer(registration.credentialId) }],
+        allowCredentials: [credentialDescriptor(registration)],
         timeout: 60_000,
       },
     });
@@ -104,7 +121,7 @@ export async function evaluateWebAuthnAccountPrf(registration: WebAuthnRegistrat
       challenge: toArrayBuffer(crypto.getRandomValues(new Uint8Array(32))),
       rpId: registration.rpId,
       userVerification: "required",
-      allowCredentials: [{ type: "public-key", id: toArrayBuffer(registration.credentialId) }],
+      allowCredentials: [credentialDescriptor(registration)],
       extensions: {
         prf: {
           evalByCredential: {
