@@ -47,4 +47,9 @@ request id, session challenge, policy hash, client id, relying-party origin, and
 dApps receive only the signed verification result and transaction receipt references. They do not
 receive credentials, private notes, witnesses, passport data, Instagram email data, or wallet keys.
 
+Privacy-preserving receipt events are formally descoped from M3. The relying party receives the
+signed verification result and transaction hash; aggregate metering remains atomic. The current
+frontend-held P-256 signing key is a local-development authority, not production key custody; see
+`docs/threat-model.md` §6.4.
+
 See `apps/reference-dapp` and `docs/integration-guide.md` for the current integration example.

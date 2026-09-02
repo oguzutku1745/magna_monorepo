@@ -509,10 +509,16 @@ a stable per-passport value that could be emitted as an issuance nullifier to en
 Placing that check in the contract rather than the API would preserve the guarantee even if the API
 were compromised.
 
-### 11.2 Verification receipts not emitted
+### 11.2 M3 receipt-event decision
 
-`MagnaIssuer.verify` updates `verify_meter_count` but emits no receipt event, so a relying party
-receives only a transaction hash. Typed private verification receipts are not implemented.
+Privacy-preserving receipt events are formally descoped from M3. The relying party receives the
+signed verification result and transaction hash; aggregate metering remains atomic.
+
+`MagnaIssuer.verify` therefore updates `verify_meter_count` but deliberately emits no typed private
+receipt event. This is an accepted M3 product boundary rather than unfinished M3 implementation.
+The production custody limitation of the current signed session result is tracked separately in the
+threat model; descoping receipt events does not make the frontend development signing key suitable
+for production.
 
 ### 11.3 Residual risks
 

@@ -2,6 +2,11 @@
 
 This record covers Docker image construction, clean-volume deployment, service health, browser rendering, and bootstrap idempotency. It does **not** contain a zkPassport proof and does **not** close the official-mobile Docker evidence gate in the Recovery V3 specification.
 
+The runtime list below is historical evidence from August 29. The superseded `magna-web` frontend
+was subsequently removed during repository cleanup; the current supported browser surfaces are
+`magna-management` and `reference-dapp`. The historical check is retained rather than rewritten as
+if the later topology had existed during this run.
+
 ## Reproduction boundary
 
 - Command: `npm run docker:local`

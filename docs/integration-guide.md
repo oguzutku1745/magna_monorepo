@@ -7,13 +7,13 @@ origin, which is served by **`apps/magna-management`**.
 A working end-to-end example lives in `apps/reference-dapp` — in particular
 `src/login-with-magna.ts`.
 
-> **Pilot status.** Magna is pre-release and not deployed to a public network. The passport
-> issuance path (A2) now binds claim values to the scanned passport: the wrapper circuit
-> recursively verifies the zkPassport proof and constrains nationality, age, and expiry against it.
-> One gap remains before assertions are safe to rely on for anything of value — there is no
-> issuance nullifier, so a single passport can mint unlimited credentials
-> ([`threat-model.md` §6.1](./threat-model.md)). Policy answers are trustworthy; per-person
-> uniqueness is not yet.
+> **Pilot status.** Magna is pre-release and not deployed to a public network. Passport A2 binds
+> claim values to the scanned passport, and Instagram V2 binds the blinded handle claim to an
+> authentic governed DKIM key. Magna does not claim one-person/one-credential uniqueness. More
+> importantly for integrators, the current P-256 session assertion key is embedded in the local
+> wallet frontend and is development-only. Login assertions must not protect production value until
+> the chain-bound user-passkey authorization described in [`threat-model.md` §6.4](./threat-model.md)
+> is specified, implemented, and reviewed.
 
 ---
 
@@ -166,8 +166,9 @@ type SessionAssertion = {
 `receipts[]` carries one entry per requirement, keyed by the `id` you supplied. The signature covers
 a canonical serialization prefixed with the domain tag `magna:session-assertion:v1`.
 
-There is no typed private verification-receipt event: the issuer contract meters verifications but
-emits no receipt, so a transaction hash is the only on-chain evidence available.
+Privacy-preserving receipt events are formally descoped from M3. The relying party receives the
+signed verification result and transaction hash; aggregate metering remains atomic. There is no
+typed private verification-receipt event.
 
 **Never receives:** passkey material, account secrets, PXE state, private notes or note hints, raw
 claims, claim blinds, `root_commitment`, `claims_hash` preimages, zkPassport `uniqueIdentifier`, or

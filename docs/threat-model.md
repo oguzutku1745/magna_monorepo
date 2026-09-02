@@ -259,7 +259,7 @@ under A2, which is what makes §6.1 fixable — and also what makes it a durable
 
 ---
 
-## 6. Open items
+## 6. Open items and accepted non-goals
 
 ### 6.1 No issuance nullifier
 
@@ -273,11 +273,14 @@ deterministic function of the proof-bound scoped nullifier, so it is a stable pe
 that can be emitted as an issuance nullifier. Placing that check in the contract rather than the API
 preserves the guarantee even if the API is compromised.
 
-### 6.2 Verification receipts not emitted
+### 6.2 M3 receipt events — formally descoped
 
-`MagnaIssuer.verify` updates `verify_meter_count` but emits no receipt event. A relying party
-receives only the verification transaction hash through the signed session assertion. Typed private
-receipt metadata, and the atomicity properties that would go with it, are not implemented.
+Privacy-preserving receipt events are formally descoped from M3. The relying party receives the
+signed verification result and transaction hash; aggregate metering remains atomic.
+
+`MagnaIssuer.verify` deliberately emits no typed private receipt event. This is an accepted product
+boundary and no longer an open M3 deliverable. It does not resolve the distinct production session-
+assertion authority issue in §6.4.
 
 ### 6.3 Frozen OPRF dependency
 
