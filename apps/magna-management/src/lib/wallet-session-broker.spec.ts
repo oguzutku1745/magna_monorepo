@@ -12,6 +12,9 @@ const input: WalletSessionBrokerInput = {
     constraints: [{ claimId: ClaimId.AgeMinProven, op: ConstraintOp.Gte, value: 18n }],
   },
   consumerGatewayAddress: "0xconsumer",
+        sessionRequestId: "11".repeat(16),
+        sessionChallenge: `00${"22".repeat(31)}`,
+        sessionExpiresAt: 1_800_000_000,
 };
 
 describe("wallet session login broker", () => {

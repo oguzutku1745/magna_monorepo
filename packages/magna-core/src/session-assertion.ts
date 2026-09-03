@@ -1,124 +1,75 @@
-import { bytesToHex, hexToBytes } from "./bytes.js";
+import { normalizePolicy } from "./policy.js";
+import type { Policy } from "./types.js";
+
+export const SESSION_ASSERTION_VERSION = 2 as const;
+export const MAGNA_SESSION_AUTHORIZATION_DS = 0x4d534132; // "MSA2"
+const NOIR_FIELD_MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
 export type SessionVerificationReceipt = {
   id: string;
   kind: string;
-  receipt: string | null;
+  /** Mined Aztec transaction whose effect contains the request-bound authorization nullifier. */
+  receipt: string;
 };
 
-/** v1 session assertion: what the wallet attests to the dApp. */
+/**
+ * v2 transport envelope. It is deliberately unsigned: @magna/client verifies
+ * every receipt against Aztec instead of trusting a key shipped in frontend JS.
+ */
 export type SessionAssertion = {
-  v: 1;
+  v: typeof SESSION_ASSERTION_VERSION;
   clientId: string;
   origin: string;
   requestId: string;
   sessionChallenge: string;
   policyHash: string;
-  verified: boolean;
+  verified: true;
   issuedAt: number;
   expiresAt: number;
-  receipt: string | null;
-  receipts?: SessionVerificationReceipt[];
+  authorizationContract: string;
+  receipt: string;
+  receipts: SessionVerificationReceipt[];
 };
 
-export type SignedSessionAssertion = {
-  assertion: SessionAssertion;
-  signature: string;
-};
-
-/** Fixed key order: this exact serialization is what gets signed. */
-export function sessionAssertionSigningBytes(a: SessionAssertion): Uint8Array {
-  const canonicalAssertion: {
-    domain: string;
-    v: 1;
-    clientId: string;
-    origin: string;
-    requestId: string;
-    sessionChallenge: string;
-    policyHash: string;
-    verified: boolean;
-    issuedAt: number;
-    expiresAt: number;
-    receipt: string | null;
-    receipts?: SessionVerificationReceipt[];
-  } = {
-    domain: "magna:session-assertion:v1",
-    v: a.v,
-    clientId: a.clientId,
-    origin: a.origin,
-    requestId: a.requestId,
-    sessionChallenge: a.sessionChallenge,
-    policyHash: a.policyHash,
-    verified: a.verified,
-    issuedAt: a.issuedAt,
-    expiresAt: a.expiresAt,
-    receipt: a.receipt,
-  };
-  if (a.receipts !== undefined) {
-    canonicalAssertion.receipts = a.receipts.map(receipt => ({
-      id: receipt.id,
-      kind: receipt.kind,
-      receipt: receipt.receipt,
-    }));
+function hexField(value: string, label: string, byteLength: number): bigint {
+  const normalized = value.startsWith("0x") ? value.slice(2) : value;
+  if (!new RegExp(`^[0-9a-f]{${byteLength * 2}}$`).test(normalized)) {
+    throw new Error(`${label} must be ${byteLength} bytes of lowercase hexadecimal`);
   }
-  const canonical = JSON.stringify(canonicalAssertion);
-  return new TextEncoder().encode(canonical);
+  const field = BigInt(`0x${normalized}`);
+  if (field >= NOIR_FIELD_MODULUS) throw new Error(`${label} is outside the Noir field modulus`);
+  return field;
 }
 
-const ALGO = { name: "ECDSA", namedCurve: "P-256" } as const;
-const SIGN_ALGO = { name: "ECDSA", hash: "SHA-256" } as const;
-
-function subtleCrypto(): SubtleCrypto {
-  const subtle = globalThis.crypto?.subtle;
-  if (!subtle) {
-    throw new Error("Web Crypto API is unavailable");
+/** Exact Poseidon preimage used by MagnaCompanySponsor. */
+export function sessionAuthorizationFields(input: {
+  consumerGatewayAddress: string;
+  requestId: string;
+  sessionChallenge: string;
+  expiresAt: number;
+  requirementIndex: number;
+  policy: Policy;
+}): bigint[] {
+  if (!Number.isSafeInteger(input.expiresAt) || input.expiresAt <= 0) {
+    throw new Error("expiresAt must be a positive safe integer");
   }
-  return subtle;
-}
-
-function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  const copy = new Uint8Array(bytes);
-  return copy.buffer;
-}
-
-export async function generateSessionSigningKeyPair(): Promise<{
-  privateKey: CryptoKey;
-  publicKeyJwk: JsonWebKey;
-}> {
-  const subtle = subtleCrypto();
-  const kp = await subtle.generateKey(ALGO, true, ["sign", "verify"]);
-  const publicKeyJwk = await subtle.exportKey("jwk", kp.publicKey);
-  const privateKeyJwk = await subtle.exportKey("jwk", kp.privateKey);
-  const privateKey = await subtle.importKey("jwk", privateKeyJwk, ALGO, false, ["sign"]);
-  return { privateKey, publicKeyJwk };
-}
-
-export async function signSessionAssertion(
-  assertion: SessionAssertion,
-  privateKey: CryptoKey,
-): Promise<SignedSessionAssertion> {
-  const signature = await subtleCrypto().sign(SIGN_ALGO, privateKey, toArrayBuffer(sessionAssertionSigningBytes(assertion)));
-  return { assertion, signature: bytesToHex(new Uint8Array(signature)) };
-}
-
-export async function verifySessionAssertion(
-  signed: SignedSessionAssertion,
-  publicKeyJwk: JsonWebKey,
-): Promise<boolean> {
-  try {
-    const subtle = subtleCrypto();
-    const signature = hexToBytes(signed.signature);
-    if (signature.length !== 64) {
-      return false;
-    }
-    const key = await subtle.importKey("jwk", publicKeyJwk, ALGO, false, ["verify"]);
-    return await subtle.verify(
-      SIGN_ALGO,
-      key,
-      toArrayBuffer(signature),
-      toArrayBuffer(sessionAssertionSigningBytes(signed.assertion)),
-    );
-  } catch {
-    return false;
+  if (!Number.isSafeInteger(input.requirementIndex) || input.requirementIndex < 0 || input.requirementIndex > 255) {
+    throw new Error("requirementIndex must be a u8");
   }
+  const policy = normalizePolicy(input.policy);
+  return [
+    BigInt(SESSION_ASSERTION_VERSION),
+    hexField(input.consumerGatewayAddress, "consumerGatewayAddress", 32),
+    hexField(input.requestId, "requestId", 16),
+    hexField(input.sessionChallenge, "sessionChallenge", 32),
+    BigInt(input.expiresAt),
+    BigInt(input.requirementIndex),
+    BigInt(policy.credentialType),
+    ...policy.constraints.flatMap(constraint => {
+      if (constraint.value < 0n || constraint.value >= NOIR_FIELD_MODULUS) {
+        throw new Error("policy constraint value is outside the Noir field modulus");
+      }
+      return [BigInt(constraint.claimId), BigInt(constraint.op), constraint.value];
+    }),
+  ];
 }

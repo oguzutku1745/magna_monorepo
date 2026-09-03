@@ -39,6 +39,10 @@ docker compose logs -f bootstrap
 
 The bootstrap writes the generated deployment addresses and browser-safe local URLs before it exits. The verification API starts only after bootstrap exits successfully. The frontend services start only after the API passes its health check; management and the reference dApp are then health-gated in that order. Each frontend copies its generated environment file and starts the same Vite development server used by the manual local workflow. This keeps Aztec's worker and WASM resolution on the already-tested development path instead of introducing a second static-bundle runtime solely for Docker.
 
+Changes to `MagnaCompanySponsor` require `npm run docker:local`, not a frontend refresh or container
+resume: the new contract class and generated binding must be deployed together, and both frontends
+must receive that deployment's gateway and active sponsor addresses.
+
 The bootstrap still validates its inputs defensively, but `npm run docker:local` never reaches it with the previous run's volumes. Restarting an already-created stack is available through the explicitly named resume command:
 
 ```bash
@@ -107,7 +111,10 @@ Docker build cache is different from Magna runtime state: it contains immutable 
 - The Instagram/zkEmail circuit is an isolated `zkemail.nr v2.0.0` / Noir `1.0.0-beta.5` lane, matching upstream zkEmail CI. Its Noir.js runtime is also beta.5 and its `@aztec/bb.js` backend is `0.84.0`, matching Noir beta.5's own integration tests. The image downloads the official beta.5 Nargo archive for its target architecture, verifies the pinned SHA-256, checks the reported compiler version, and compiles the Instagram artifact from a clean dependency cache. It never uses the Aztec Nargo, a host-specific absolute path, or the host's Nargo dependency cache for that circuit. Real-DKIM input checks and full proof generation are the explicit `npm run test:instagram-proof` acceptance test because the full proof takes about 80 seconds and close to 1 GiB for the optimized circuit.
 - The local timing profile is the validated 4-second Ethereum slot, 8-second Aztec slot, and 1-second block cadence.
 - The disposable Anvil account-zero key is injected only into the Vite development bundle for portal relaying and the chain-`31337` Fee Juice faucet. It is not a production custody design.
-- A fresh local P-256 session assertion keypair is generated per bootstrap. The private half goes only to the local wallet environment and the public JWK goes to the reference dApp.
+- Login with Magna uses no shared frontend signing key. Bootstrap writes the public Aztec node,
+  consumer-gateway, and active sponsor addresses to the two app environments. The relying party
+  accepts a result only when the passkey-authenticated verification transaction contains the exact
+  request- and policy-bound authorization nullifier emitted by that sponsor.
 - `MAGNA_ZKPASSPORT_EVM_RPC_URL` may override the default public Sepolia RPC used to resolve developer registry roots:
 
 ```bash
@@ -138,6 +145,15 @@ This test verifies the committed email's real DKIM signature, builds the circuit
 witness, generates an UltraHonk proof, and verifies that proof. It does not mock
 the email, witness, prover, or verifier.
 
-## Remaining evidence gate
+## Remaining developer evidence gate
 
-The Compose definition and static configuration are testable without a passport. Final Docker acceptance still requires a clean-volume, official-mobile proof run that repeats the positive recovery plus the mutation, replay, registry-revocation, and API-offline assertions from the Recovery V3 specification. A container build or health check alone cannot close that evidence gate.
+The Compose definition and static configuration are testable without a physical passport. Final
+Docker acceptance still requires a clean-volume proof produced by zkPassport's official mobile app
+in `devMode=true` with its official mock passport. That run repeats the positive recovery plus the
+mutation, replay, registry-revocation, and API-offline assertions from the Recovery V3 specification.
+A container build or health check alone cannot close that developer evidence gate.
+
+zkPassport confirmed on 2026-08-25 that OPRF does not currently work with dev mode and provided no
+ETA. Consequently, Docker deliberately requests `NON_SALTED_MOCK = 2` and does not attempt
+`SALTED = 1`. The real supported-document, production-registry, strict-FaceMatch, `SALTED = 1` run
+is a separate testnet-deployment gate before release, not a local Docker or M1-M5 acceptance step.

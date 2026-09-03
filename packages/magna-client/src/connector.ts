@@ -1,24 +1,49 @@
 import {
+  ClaimId,
+  ConstraintOp,
+  CredentialType,
+  MAGNA_SESSION_AUTHORIZATION_DS,
   computeLoginRequirementsHash,
   computePolicyHash,
   loginRequirementsToWire,
   normalizePolicy,
   policyToWire,
   randomHex,
+  randomFieldHex,
+  sessionAuthorizationFields,
   type LoginRequirement,
-  verifySessionAssertion,
   type LoginRequest,
   type LoginResponse,
   type Policy,
   type SessionVerificationReceipt,
-  type SignedSessionAssertion,
+  type SessionAssertion,
 } from "@magna/core";
+import { AztecAddress } from "@aztec/aztec.js/addresses";
+import { Fr } from "@aztec/aztec.js/fields";
+import { createAztecNodeClient } from "@aztec/aztec.js/node";
+import { TxHash } from "@aztec/aztec.js/tx";
+import { DomainSeparator } from "@aztec/constants";
+import { pedersenHash, poseidon2HashWithSeparator } from "@aztec/foundation/crypto/sync";
+
+const MAGNA_INSTAGRAM_HANDLE_DS = 0x4d414948n; // "MAIH"
+
+function instagramHandlePolicy(handle: string): Policy {
+  const bytes = new TextEncoder().encode(handle);
+  if (bytes.length > 31) throw new Error("Instagram handle exceeds the 31-byte field limit");
+  let packed = 0n;
+  for (const byte of bytes) packed = (packed << 8n) | BigInt(byte);
+  const handleHash = pedersenHash([MAGNA_INSTAGRAM_HANDLE_DS, BigInt(bytes.length), packed]).toBigInt();
+  return normalizePolicy({
+    credentialType: CredentialType.Instagram,
+    constraints: [{ claimId: ClaimId.InstagramHandleHash, op: ConstraintOp.Eq, value: handleHash }],
+  });
+}
 
 export type MagnaLoginResult = {
   verified: boolean;
-  assertion: SignedSessionAssertion;
-  receipt: string | null;
-  receipts?: SessionVerificationReceipt[];
+  assertion: SessionAssertion;
+  receipt: string;
+  receipts: SessionVerificationReceipt[];
 };
 
 export type MagnaLoginRequirement = LoginRequirement;
@@ -29,30 +54,95 @@ export type ExpectedRequestContext = {
   requestId: string;
   sessionChallenge: string;
   policyHash: string;
+  consumerGatewayAddress: string;
+  requirements: { id: string; kind: string; policy: Policy }[];
 };
 
+export type SessionChainVerifierInput = {
+  aztecNodeUrl: string;
+  authorizationContract: string;
+  consumerGatewayAddress: string;
+  requestId: string;
+  sessionChallenge: string;
+  expiresAt: number;
+  requirementIndex: number;
+  policy: Policy;
+  txHash: string;
+};
+
+export type SessionChainVerifier = (input: SessionChainVerifierInput) => Promise<void>;
+
+export async function verifyAztecSessionAuthorization(
+  input: SessionChainVerifierInput,
+  node = createAztecNodeClient(input.aztecNodeUrl),
+): Promise<void> {
+  const inner = poseidon2HashWithSeparator(
+    sessionAuthorizationFields(input),
+    MAGNA_SESSION_AUTHORIZATION_DS,
+  );
+  // This is the exact Aztec 5.1 siloNullifier construction. Use the synchronous
+  // official Poseidon implementation here so a browser SDK does not initialize
+  // the native/async Barretenberg backend merely to validate a receipt.
+  const expected = poseidon2HashWithSeparator(
+    [AztecAddress.fromStringUnsafe(input.authorizationContract), new Fr(inner.toBigInt())],
+    DomainSeparator.SILOED_NULLIFIER,
+  );
+  const receipt = await node.getTxReceipt(TxHash.fromString(input.txHash), { includeTxEffect: true });
+  if (!receipt.isMined()) throw new Error(`Aztec session transaction ${input.txHash} is not mined`);
+  if (!receipt.hasExecutionSucceeded()) throw new Error(`Aztec session transaction ${input.txHash} reverted`);
+  if (!receipt.txEffect) throw new Error(`Aztec session transaction ${input.txHash} has no transaction effect`);
+  if (!receipt.txEffect.nullifiers.some(nullifier => nullifier.equals(expected))) {
+    throw new Error(`Aztec session transaction ${input.txHash} is not bound to this login request and policy`);
+  }
+}
+
 /**
- * Validates the wallet's response against the in-flight request. Throws on any
- * mismatch. Order: signature first, then field binding, then expiry.
+ * Validates the wallet's response against the in-flight request and the
+ * corresponding Aztec transaction effects. Throws on any mismatch.
  */
 export async function validateLoginResponse(
-  signed: SignedSessionAssertion,
+  assertion: SessionAssertion,
   expected: ExpectedRequestContext,
-  magnaPublicKeyJwk: JsonWebKey,
+  config: Pick<MagnaClientConfig, "aztecNodeUrl" | "sessionAuthorizationAddress" | "chainVerifier">,
   nowSeconds: number = Math.floor(Date.now() / 1000),
 ): Promise<MagnaLoginResult> {
-  const ok = await verifySessionAssertion(signed, magnaPublicKeyJwk);
-  if (!ok) throw new Error("Magna session assertion signature is invalid");
-  const a = signed.assertion;
+  const a = assertion;
+  if (a.v !== 2 || a.verified !== true) throw new Error("invalid Magna chain-bound session assertion");
   if (a.requestId !== expected.requestId) throw new Error("requestId mismatch");
   if (a.sessionChallenge !== expected.sessionChallenge) throw new Error("sessionChallenge mismatch");
   if (a.policyHash !== expected.policyHash) throw new Error("policyHash mismatch");
   if (a.clientId !== expected.clientId) throw new Error("clientId mismatch");
   if (a.origin !== expected.origin) throw new Error("origin mismatch");
+  if (a.authorizationContract !== config.sessionAuthorizationAddress) {
+    throw new Error("session authorization contract mismatch");
+  }
   if (a.expiresAt <= nowSeconds || a.issuedAt > nowSeconds + 60) {
     throw new Error("session assertion expired or not yet valid");
   }
-  return { verified: a.verified, assertion: signed, receipt: a.receipt, receipts: a.receipts };
+  if (a.expiresAt - a.issuedAt !== 300) throw new Error("session assertion lifetime is invalid");
+  if (!Array.isArray(a.receipts) || a.receipts.length !== expected.requirements.length) {
+    throw new Error("session authorization receipt count mismatch");
+  }
+  const verifyChain = config.chainVerifier ?? verifyAztecSessionAuthorization;
+  for (const [index, requirement] of expected.requirements.entries()) {
+    const receipt = a.receipts[index];
+    if (!receipt || receipt.id !== requirement.id || receipt.kind !== requirement.kind || typeof receipt.receipt !== "string") {
+      throw new Error(`session authorization receipt ${index} mismatch`);
+    }
+    await verifyChain({
+      aztecNodeUrl: config.aztecNodeUrl,
+      authorizationContract: a.authorizationContract,
+      consumerGatewayAddress: expected.consumerGatewayAddress,
+      requestId: expected.requestId,
+      sessionChallenge: expected.sessionChallenge,
+      expiresAt: a.expiresAt,
+      requirementIndex: index,
+      policy: requirement.policy,
+      txHash: receipt.receipt,
+    });
+  }
+  if (a.receipt !== a.receipts[0]?.receipt) throw new Error("primary session receipt mismatch");
+  return { verified: true, assertion: a, receipt: a.receipt, receipts: a.receipts };
 }
 
 type PopupLike = {
@@ -82,7 +172,10 @@ function browserWindowImpl(): WindowImpl {
 export type MagnaClientConfig = {
   clientId: string;
   walletOrigin: string;
-  magnaPublicKeyJwk: JsonWebKey;
+  aztecNodeUrl: string;
+  consumerGatewayAddress: string;
+  sessionAuthorizationAddress: string;
+  chainVerifier?: SessionChainVerifier;
   timeoutMs?: number;
   windowImpl?: WindowImpl;
 };
@@ -100,6 +193,7 @@ export class MagnaClient {
     return this.openLoginRequest({
       policy: normalized,
       policyHash,
+      authorizationRequirements: [{ id: "default", kind: "policy", policy: normalized }],
     });
   }
 
@@ -112,10 +206,18 @@ export class MagnaClient {
     }
     const wireRequirements = loginRequirementsToWire(requirements);
     const policyHash = await computeLoginRequirementsHash(wireRequirements);
+    const authorizationRequirements = requirements.map(requirement => ({
+      id: requirement.id,
+      kind: requirement.kind,
+      policy: requirement.kind === "policy"
+        ? normalizePolicy(requirement.policy)
+        : instagramHandlePolicy(requirement.handle),
+    }));
     return this.openLoginRequest({
       policy: normalizePolicy(policyRequirement.policy),
       policyHash,
       requirements: wireRequirements,
+      authorizationRequirements,
     });
   }
 
@@ -123,10 +225,11 @@ export class MagnaClient {
     policy: Policy;
     policyHash: string;
     requirements?: LoginRequest["requirements"];
+    authorizationRequirements: { id: string; kind: string; policy: Policy }[];
   }): Promise<MagnaLoginResult> {
     const win = this.config.windowImpl ?? browserWindowImpl();
     const requestId = randomHex(16);
-    const sessionChallenge = randomHex(32);
+    const sessionChallenge = randomFieldHex();
 
     const request: LoginRequest = {
       v: 1,
@@ -189,8 +292,16 @@ export class MagnaClient {
             popup.close();
             validateLoginResponse(
               response.assertion,
-              { clientId: this.config.clientId, origin: win.origin, requestId, sessionChallenge, policyHash: input.policyHash },
-              this.config.magnaPublicKeyJwk,
+              {
+                clientId: this.config.clientId,
+                origin: win.origin,
+                requestId,
+                sessionChallenge,
+                policyHash: input.policyHash,
+                consumerGatewayAddress: this.config.consumerGatewayAddress,
+                requirements: input.authorizationRequirements,
+              },
+              this.config,
             ).then(resolve, reject);
           });
         }

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { createHash, generateKeyPairSync, randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -153,10 +153,6 @@ if (existsSync(completionMarkerPath)) {
   console.info("[docker-bootstrap] existing completion marker is stale for the current chain; performing a fresh deployment.");
 }
 
-const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
-const sessionSigningKey = privateKey.export({ type: "pkcs8", format: "der" }).toString("base64");
-const publicKeyJwk = JSON.stringify(publicKey.export({ format: "jwk" }));
-
 run("deploy the complete local Aztec application stack", process.execPath, [
   "./scripts/bootstrap-local-apps-wrapper.mjs",
   "--network-name",
@@ -181,10 +177,6 @@ run("deploy the complete local Aztec application stack", process.execPath, [
   localAnvilKey,
   "--local-faucet-private-key",
   localAnvilKey,
-  "--session-signing-key",
-  sessionSigningKey,
-  "--public-key-jwk",
-  publicKeyJwk,
 ]);
 
 run("deploy and pin Recovery V3", process.execPath, ["./scripts/bootstrap-recovery-v3-local.mjs"], {

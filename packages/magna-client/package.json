@@ -11,6 +11,9 @@
     "lint": "echo \"no lint configured\""
   },
   "dependencies": {
+    "@aztec/aztec.js": "5.1.0",
+    "@aztec/constants": "5.1.0",
+    "@aztec/foundation": "5.1.0",
     "@magna/core": "0.1.0"
   },
   "devDependencies": {

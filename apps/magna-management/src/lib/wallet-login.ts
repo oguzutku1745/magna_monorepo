@@ -331,6 +331,9 @@ export type WalletLoginRequestInput = {
   policy: Policy;
   requirements?: LoginRequirement[];
   consumerGatewayAddress: string;
+  sessionRequestId: string;
+  sessionChallenge: string;
+  sessionExpiresAt: number;
   storedCredentialId?: string;
   onVerifying?: () => void;
 };
@@ -357,7 +360,8 @@ async function runWalletLoginWithSession(
     }
     input.onVerifying?.();
     const receipts = [];
-    for (const requirement of requirements) {
+    let authorizationContract: string | undefined;
+    for (const [requirementIndex, requirement] of requirements.entries()) {
       let reconciledFromPxe = false;
       let verification = resolveRequirementCredential({
         requirement,
@@ -372,6 +376,12 @@ async function runWalletLoginWithSession(
           activeAddress: ownerAddress,
           policy: verification.policy,
           consumerGatewayAddress: input.consumerGatewayAddress,
+          sessionAuthorization: {
+            requestId: input.sessionRequestId,
+            sessionChallenge: input.sessionChallenge,
+            expiresAt: input.sessionExpiresAt,
+            requirementIndex,
+          },
           credential: verification.credential,
         });
       } catch (error) {
@@ -401,6 +411,12 @@ async function runWalletLoginWithSession(
             activeAddress: ownerAddress,
             policy: verification.policy,
             consumerGatewayAddress: input.consumerGatewayAddress,
+            sessionAuthorization: {
+              requestId: input.sessionRequestId,
+              sessionChallenge: input.sessionChallenge,
+              expiresAt: input.sessionExpiresAt,
+              requirementIndex,
+            },
             credential: verification.credential,
           });
         } catch (retryError) {
@@ -413,13 +429,28 @@ async function runWalletLoginWithSession(
             : retryError;
         }
       }
+      if (!outcome.receipt) {
+        throw new Error(`Aztec did not return a transaction hash for requirement ${verification.id}.`);
+      }
+      if (!outcome.authorizationContract) {
+        throw new Error(`Aztec did not return a session authorization contract for requirement ${verification.id}.`);
+      }
+      if (authorizationContract && authorizationContract !== outcome.authorizationContract) {
+        throw new Error("Login requirements were authorized by different sponsor contracts.");
+      }
+      authorizationContract = outcome.authorizationContract;
       receipts.push({
         id: verification.id,
         kind: verification.kind,
         receipt: outcome.receipt,
       });
     }
-    return { verified: true, receipt: receipts[0]?.receipt ?? null, receipts };
+    return {
+      verified: true,
+      receipt: receipts[0]?.receipt ?? null,
+      receipts,
+      authorizationContract,
+    };
   } catch (error) {
     console.warn("magna verification failed", error);
     if (isMissingHintedNoteError(error)) {

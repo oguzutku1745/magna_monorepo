@@ -230,7 +230,7 @@ if (result.verified) unlockApp();
 ```
 
 - Drop-in SDK; **three steps** to integrate.
-- The app gets back `{ verified }` + a signed assertion — **no keys, notes, claims, or identifiers.**
+- The app gets back `{ verified }` + a chain-bound transaction receipt — **no keys, notes, claims, or identifiers.**
 - Verification is **gasless** for the user.
 
 <!--

@@ -11,6 +11,12 @@ const orchestratorAddress = "0x0333333333333333333333333333333333333333333333333
 const consumerGatewayAddress = "0x0444444444444444444444444444444444444444444444444444444444444444";
 const sponsorAddress = "0x0555555555555555555555555555555555555555555555555555555555555555";
 const aztecNodeUrl = "http://127.0.0.1:8080";
+const sessionAuthorization = {
+  requestId: "11".repeat(16),
+  sessionChallenge: `00${"22".repeat(31)}`,
+  expiresAt: 1_800_000_000,
+  requirementIndex: 0,
+};
 
 const originalIssuerAt = MagnaIssuerContract.at;
 const originalConsumerAt = MagnaConsumerContract.at;
@@ -88,7 +94,7 @@ test("runMagnaConsumerLogin routes rooted credentials through the linked sponsor
         legacyCalled = true;
         return { send: async () => ({ txHash: "0xlegacy" }) };
       },
-      sponsored_verify_linked: (...args: unknown[]) => {
+      sponsored_verify_linked_session: (...args: unknown[]) => {
         linkedArgs = args;
         return {
         send: async (options: unknown) => {
@@ -115,6 +121,7 @@ test("runMagnaConsumerLogin routes rooted credentials through the linked sponsor
     } as never,
     activeAddress,
     consumerGatewayAddress,
+    sessionAuthorization,
     policy: {
       credentialType: CredentialType.Passport,
       constraints: [
@@ -145,7 +152,7 @@ test("runMagnaConsumerLogin routes rooted credentials through the linked sponsor
     hintedStatusNote,
   ]);
   assert.equal((await assertSponsorFeeOptions(linkedSendOptions)).toString(), sponsorAddress);
-  assert.deepEqual(outcome, { verified: true, receipt: "0xlinked" });
+  assert.deepEqual(outcome, { verified: true, receipt: "0xlinked", authorizationContract: sponsorAddress });
 });
 
 test("runMagnaConsumerLogin routes v2-only rooted passports through the linked sponsor gateway", async () => {
@@ -179,7 +186,7 @@ test("runMagnaConsumerLogin routes v2-only rooted passports through the linked s
   (MagnaCompanySponsorContract as unknown as { at: (address: unknown, wallet: unknown) => unknown }).at = () => ({
     address: { toString: () => sponsorAddress },
     methods: {
-      sponsored_verify_linked_v2: (...args: unknown[]) => {
+      sponsored_verify_linked_session_v2: (...args: unknown[]) => {
         v2Args = args;
         return {
           send: async (options: unknown) => {
@@ -203,6 +210,7 @@ test("runMagnaConsumerLogin routes v2-only rooted passports through the linked s
     } as never,
     activeAddress,
     consumerGatewayAddress,
+    sessionAuthorization,
     policy: {
       credentialType: CredentialType.Passport,
       constraints: [
@@ -228,7 +236,7 @@ test("runMagnaConsumerLogin routes v2-only rooted passports through the linked s
     },
   });
 
-  assert.deepEqual(v2Args?.slice(1), [
+  assert.deepEqual(v2Args?.slice(1, 7), [
     hintedRootStatusNote,
     hintedRootAuthorityNote,
     hintedCredentialNote,
@@ -243,7 +251,7 @@ test("runMagnaConsumerLogin routes v2-only rooted passports through the linked s
     0,
   ]);
   assert.equal((await assertSponsorFeeOptions(linkedSendOptions)).toString(), sponsorAddress);
-  assert.deepEqual(outcome, { verified: true, receipt: "0xlinkedv2" });
+  assert.deepEqual(outcome, { verified: true, receipt: "0xlinkedv2", authorizationContract: sponsorAddress });
 });
 
 test("runMagnaConsumerLogin routes instagram credentials through sponsored issuer verification", async () => {
@@ -278,7 +286,7 @@ test("runMagnaConsumerLogin routes instagram credentials through sponsored issue
     return {
       address: { toString: () => sponsorAddress },
       methods: {
-        sponsored_verify_instagram: (...args: unknown[]) => {
+        sponsored_verify_session_instagram: (...args: unknown[]) => {
           verifyArgs = args;
           return {
             send: async (options: unknown) => {
@@ -305,6 +313,7 @@ test("runMagnaConsumerLogin routes instagram credentials through sponsored issue
     } as never,
     activeAddress,
     consumerGatewayAddress,
+    sessionAuthorization,
     policy: {
       credentialType: CredentialType.Instagram,
       constraints: [
@@ -326,12 +335,12 @@ test("runMagnaConsumerLogin routes instagram credentials through sponsored issue
   });
 
   assert.deepEqual(registeredContracts.slice(0, 2), [issuerAddress, sponsorAddress]);
-  assert.deepEqual(verifyArgs?.slice(1), [
+  assert.deepEqual(verifyArgs?.slice(1, 5), [
     hintedCredentialNote,
     hintedStatusNote,
     { handle_hash: 123n, handle_blind: 789n },
     0,
   ]);
   assert.equal((await assertSponsorFeeOptions(sendOptions)).toString(), sponsorAddress);
-  assert.deepEqual(outcome, { verified: true, receipt: "0xinstagram" });
+  assert.deepEqual(outcome, { verified: true, receipt: "0xinstagram", authorizationContract: sponsorAddress });
 });

@@ -34,7 +34,9 @@ Magna currently names exactly two live adapters:
    private login, renewal/revocation, and destination-bound Root Recovery V3.
 2. **Instagram V2** — client-side proof of an authentic DKIM-signed Instagram recovery email,
    blinded handle claims, governed historical/current DKIM key commitments, rootless issuance, and
-   private handle login. Wallet-loss handling is re-issuance, not recovery.
+   private handle login. Wallet-loss handling is currently re-issuance, not recovery. Because the
+   original proposal promised recovery per credential and a complete recovery lifecycle, this is a
+   scope deviation that requires implementation or written reviewer acceptance before M4 closure.
 
 `X`, `StudentEmail`, and `WorkEmail` are reserved enum values only. They are not implemented
 adapters and must not be presented as live. Instagram's evidence and exact semantic limits are in
@@ -374,10 +376,11 @@ verifier learns the boolean outcome, not the claims.
 Entrypoints come in families. The base name is the schema-v1 path; the `_v2` suffix takes the
 blinded schema-v2 passport witness of §4.1. `_linked` operates on the root-linked lineage,
 `_sponsored` applies the fee-sponsorship path of §10, and `_instagram` takes the Instagram witness.
-`_consumer` is the gateway-mediated path used by Login with Magna: an allowlisted consumer gateway
+`_consumer` is a separately available gateway-mediated issuer path: an allowlisted consumer gateway
 contract calls it on behalf of an explicit `caller`, and the issuer checks that gateway against its
-`consumer_gateways` allowlist and `disabled_consumer_gateways` kill-list. These compose — for
-example `verify_linked_sponsored_v2`.
+`consumer_gateways` allowlist and `disabled_consumer_gateways` kill-list. The current Login with
+Magna path uses the company sponsor's `_session` entrypoints described in §8.3. These suffixes compose
+— for example `verify_linked_sponsored_v2`.
 
 ### 8.1 Rootless verify
 
@@ -406,6 +409,28 @@ Rootless credentials never perform the root check. For Instagram-linked credenti
 recomputes the Instagram V2 `handle_commitment` and `claims_hash` from the private handle-hash and
 blind witness while the rooted passport authority note still gates validity.
 
+### 8.3 Login with Magna session authorization
+
+Login authorization is part of the same private, user-passkey-authenticated transaction as policy
+verification. The active `MagnaCompanySponsor` exposes six `_session` lanes covering rootless and
+root-linked schema-v1 Passport, schema-v2 Passport, and Instagram witnesses. Each lane:
+
+1. receives the relying party's consumer-gateway field, request ID, session challenge, expiry, and
+   requirement index along with the normalized policy;
+2. calls the matching sponsored issuer verification, so credential ownership, witness binding,
+   revocation, expiry, rate limits, rights consumption, and metering all remain atomic;
+3. only after successful verification, computes
+   `Poseidon2(MSA2, gateway, request, challenge, expiry, index, normalized policy)` and emits it as a
+   private nullifier siloed to the active sponsor contract.
+
+The transport response is a version-2 envelope carrying the original request bindings and the Aztec
+transaction hash for each requirement. It is not trusted as a browser signature. `@magna/client`
+recomputes the expected inner nullifier from its own in-flight request, uses Aztec's official
+`siloNullifier` construction with its pinned sponsor address, fetches each transaction receipt from
+its configured Aztec node, and accepts only a mined successful effect containing that exact
+nullifier. The wallet origin therefore holds no shared session-signing private key, and moving login
+authority to a Magna backend is unnecessary.
+
 ---
 
 ## 9. Recovery flows
@@ -423,12 +448,14 @@ Linked credential recovery is **not implemented**. The repository has never expo
 rootless notes only and was removed because Ghost possession alone was not a sufficient recovery
 authorization.
 
-The production-live Instagram V2 adapter currently issues a rootless credential. It is deliberately
-not copied by passport Root Recovery V3. After wallet loss, the holder must obtain a fresh signed
-Instagram recovery email and re-issue the Instagram credential to the recovered wallet. Any future
-linked-social recovery design requires its own destination-bound proof source, contract entrypoint,
-UI/SDK path, and threat-model review; documentation must not imply that the existing
-`LinkedRecoveryNote` data type provides that flow.
+The production-live Instagram V2 adapter currently issues a rootless credential and is not copied by
+passport Root Recovery V3. After wallet loss, the holder must obtain a fresh signed Instagram email
+and re-issue the credential to the recovered wallet. This is safe and explicit, but it is not full
+delivery of the initial proposal's per-credential recovery promise. Before M4 is called closed,
+Magna must either implement a destination-bound Instagram recovery flow or obtain written acceptance
+that fresh-proof re-issuance satisfies/replaces that requirement. Any future linked-social recovery
+design requires its own destination-bound proof source, contract entrypoint, UI/SDK path, and threat-
+model review; the existing `LinkedRecoveryNote` data type does not provide that flow by itself.
 
 ### 9.3 Root recovery
 
@@ -516,9 +543,9 @@ signed verification result and transaction hash; aggregate metering remains atom
 
 `MagnaIssuer.verify` therefore updates `verify_meter_count` but deliberately emits no typed private
 receipt event. This is an accepted M3 product boundary rather than unfinished M3 implementation.
-The production custody limitation of the current signed session result is tracked separately in the
-threat model; descoping receipt events does not make the frontend development signing key suitable
-for production.
+The quoted “signed verification result” is implemented as the passkey-authorized verification
+transaction and request-bound authorization nullifier described in §8.3; no frontend development
+signing key remains.
 
 ### 11.3 Residual risks
 

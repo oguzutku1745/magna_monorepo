@@ -11,6 +11,10 @@ if (nodeMajor < 24) {
 
 const checks = [
   ["passport issuer constraints", ["run", "test:contracts:issuer"]],
+  ["chain-bound session authorization contract", ["run", "test:contracts:company-sponsor"]],
+  ["protocol authorization hash vectors", ["run", "test:core"]],
+  ["wallet verification transaction construction", ["run", "test:wallet"]],
+  ["relying-party chain-effect validation", ["run", "test:client"]],
   ["A2 recursive wrapper", ["run", "-w", "@magna/passport-wrapper-proof", "test"]],
   ["Recovery V3 protocol", ["run", "test:recovery-v3"]],
   ["Recovery V3 recursive wrapper", ["run", "-w", "@magna/recovery-wrapper-proof", "test"]],

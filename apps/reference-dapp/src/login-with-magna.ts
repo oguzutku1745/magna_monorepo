@@ -13,7 +13,9 @@ export type { MagnaLoginResult };
 
 type ReferenceDappEnv = {
   VITE_MAGNA_WALLET_ORIGIN?: string;
-  VITE_MAGNA_PUBLIC_KEY_JWK?: string;
+  VITE_AZTEC_NODE_URL?: string;
+  VITE_MAGNA_CONSUMER_GATEWAY_ADDRESS?: string;
+  VITE_MAGNA_SESSION_AUTHORIZATION_ADDRESS?: string;
 };
 
 function referenceEnv(): ReferenceDappEnv {
@@ -59,14 +61,14 @@ export function magnaSocialRequirements(instagramHandle: string): MagnaLoginRequ
 }
 
 export function createReferenceMagnaClient(env: ReferenceDappEnv = referenceEnv()): MagnaClient {
-  const publicKey = env.VITE_MAGNA_PUBLIC_KEY_JWK;
-  if (!publicKey) {
-    throw new Error("VITE_MAGNA_PUBLIC_KEY_JWK is required for Login with Magna");
-  }
+  if (!env.VITE_MAGNA_CONSUMER_GATEWAY_ADDRESS) throw new Error("VITE_MAGNA_CONSUMER_GATEWAY_ADDRESS is required");
+  if (!env.VITE_MAGNA_SESSION_AUTHORIZATION_ADDRESS) throw new Error("VITE_MAGNA_SESSION_AUTHORIZATION_ADDRESS is required");
   return new MagnaClient({
     clientId: "dapp_reference",
     walletOrigin: env.VITE_MAGNA_WALLET_ORIGIN ?? "http://localhost:5174",
-    magnaPublicKeyJwk: JSON.parse(publicKey) as JsonWebKey,
+    aztecNodeUrl: env.VITE_AZTEC_NODE_URL ?? "http://localhost:8080",
+    consumerGatewayAddress: env.VITE_MAGNA_CONSUMER_GATEWAY_ADDRESS,
+    sessionAuthorizationAddress: env.VITE_MAGNA_SESSION_AUTHORIZATION_ADDRESS,
   });
 }
 

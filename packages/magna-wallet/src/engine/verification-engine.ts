@@ -65,6 +65,24 @@ export type VerificationSponsorContext = {
   sponsorContract?: SendableContract;
 };
 
+export type SessionAuthorizationContext = {
+  consumerGatewayAddress: string;
+  requestId: string;
+  sessionChallenge: string;
+  expiresAt: number;
+  requirementIndex: number;
+};
+
+function toSessionAuthorizationArgs(context: SessionAuthorizationContext) {
+  return [
+    toAztecAddress(context.consumerGatewayAddress),
+    toField(`0x${context.requestId}`),
+    toField(`0x${context.sessionChallenge}`),
+    BigInt(context.expiresAt),
+    context.requirementIndex,
+  ] as const;
+}
+
 export type RecoverOntoNewDeviceInput = {
   wallet: EmbeddedWallet;
   ghost: GhostAccountLifecycleOptions;
@@ -672,54 +690,83 @@ export class MagnaVerificationEngine {
       .send({ from });
   }
 
-  async loginWithCompanySponsor(input: VerifyPassportInput, from: string, sponsorContractOverride?: SendableContract) {
+  async loginWithCompanySponsor(
+    input: VerifyPassportInput,
+    from: string,
+    sponsorContractOverride?: SendableContract,
+    session?: SessionAuthorizationContext,
+  ) {
     const sponsorContract = this.resolveCompanySponsorContract(sponsorContractOverride);
     const policy = toContractPolicy(input.policy);
-    return sponsorContract.methods
-      .sponsored_verify(
+    const method = session ? "sponsored_verify_session" : "sponsored_verify";
+    const args = [
         policy,
         input.hintedCredentialNote,
         input.hintedStatusNote,
         input.claimsWitness.minAgeProven,
         input.claimsWitness.nationalityAlpha3Packed,
         input.sponsorSlot ?? 0,
-      )
+        ...(session ? toSessionAuthorizationArgs(session) : []),
+      ];
+    return sponsorContract.methods
+      [method](...args)
       .send(await this.buildCompanySponsorSendOptions(from, sponsorContract));
   }
 
-  async loginWithCompanySponsorV2(input: VerifyPassportV2Input, from: string, sponsorContractOverride?: SendableContract) {
+  async loginWithCompanySponsorV2(
+    input: VerifyPassportV2Input,
+    from: string,
+    sponsorContractOverride?: SendableContract,
+    session?: SessionAuthorizationContext,
+  ) {
     const sponsorContract = this.resolveCompanySponsorContract(sponsorContractOverride);
     const policy = toContractPolicy(input.policy);
-    return sponsorContract.methods
-      .sponsored_verify_v2(
+    const method = session ? "sponsored_verify_session_v2" : "sponsored_verify_v2";
+    const args = [
         policy,
         input.hintedCredentialNote,
         input.hintedStatusNote,
         toContractPassportCommittedClaimsWitness(input.claimsWitness),
         input.sponsorSlot ?? 0,
-      )
+        ...(session ? toSessionAuthorizationArgs(session) : []),
+      ];
+    return sponsorContract.methods
+      [method](...args)
       .send(await this.buildCompanySponsorSendOptions(from, sponsorContract));
   }
 
-  async loginWithInstagramCompanySponsor(input: VerifyInstagramInput, from: string, sponsorContractOverride?: SendableContract) {
+  async loginWithInstagramCompanySponsor(
+    input: VerifyInstagramInput,
+    from: string,
+    sponsorContractOverride?: SendableContract,
+    session?: SessionAuthorizationContext,
+  ) {
     const sponsorContract = this.resolveCompanySponsorContract(sponsorContractOverride);
     const policy = toContractPolicy(input.policy);
-    return sponsorContract.methods
-      .sponsored_verify_instagram(
+    const method = session ? "sponsored_verify_session_instagram" : "sponsored_verify_instagram";
+    const args = [
         policy,
         input.hintedCredentialNote,
         input.hintedStatusNote,
         toContractInstagramCommittedClaimsWitness(input.claimsWitness),
         input.sponsorSlot ?? 0,
-      )
+        ...(session ? toSessionAuthorizationArgs(session) : []),
+      ];
+    return sponsorContract.methods
+      [method](...args)
       .send(await this.buildCompanySponsorSendOptions(from, sponsorContract));
   }
 
-  async loginWithLinkedCompanySponsor(input: VerifyLinkedPassportInput, from: string, sponsorContractOverride?: SendableContract) {
+  async loginWithLinkedCompanySponsor(
+    input: VerifyLinkedPassportInput,
+    from: string,
+    sponsorContractOverride?: SendableContract,
+    session?: SessionAuthorizationContext,
+  ) {
     const sponsorContract = this.resolveCompanySponsorContract(sponsorContractOverride);
     const policy = toContractPolicy(input.policy);
-    return sponsorContract.methods
-      .sponsored_verify_linked(
+    const method = session ? "sponsored_verify_linked_session" : "sponsored_verify_linked";
+    const args = [
         policy,
         input.hintedRootStatusNote,
         input.hintedRootAuthorityNote,
@@ -728,7 +775,10 @@ export class MagnaVerificationEngine {
         input.claimsWitness.minAgeProven,
         input.claimsWitness.nationalityAlpha3Packed,
         input.sponsorSlot ?? 0,
-      )
+        ...(session ? toSessionAuthorizationArgs(session) : []),
+      ];
+    return sponsorContract.methods
+      [method](...args)
       .send(await this.buildCompanySponsorSendOptions(from, sponsorContract));
   }
 
@@ -736,11 +786,12 @@ export class MagnaVerificationEngine {
     input: VerifyLinkedPassportV2Input,
     from: string,
     sponsorContractOverride?: SendableContract,
+    session?: SessionAuthorizationContext,
   ) {
     const sponsorContract = this.resolveCompanySponsorContract(sponsorContractOverride);
     const policy = toContractPolicy(input.policy);
-    return sponsorContract.methods
-      .sponsored_verify_linked_v2(
+    const method = session ? "sponsored_verify_linked_session_v2" : "sponsored_verify_linked_v2";
+    const args = [
         policy,
         input.hintedRootStatusNote,
         input.hintedRootAuthorityNote,
@@ -748,7 +799,10 @@ export class MagnaVerificationEngine {
         input.hintedStatusNote,
         toContractPassportCommittedClaimsWitness(input.claimsWitness),
         input.sponsorSlot ?? 0,
-      )
+        ...(session ? toSessionAuthorizationArgs(session) : []),
+      ];
+    return sponsorContract.methods
+      [method](...args)
       .send(await this.buildCompanySponsorSendOptions(from, sponsorContract));
   }
 
@@ -756,11 +810,12 @@ export class MagnaVerificationEngine {
     input: VerifyLinkedInstagramInput,
     from: string,
     sponsorContractOverride?: SendableContract,
+    session?: SessionAuthorizationContext,
   ) {
     const sponsorContract = this.resolveCompanySponsorContract(sponsorContractOverride);
     const policy = toContractPolicy(input.policy);
-    return sponsorContract.methods
-      .sponsored_verify_linked_instagram(
+    const method = session ? "sponsored_verify_linked_session_instagram" : "sponsored_verify_linked_instagram";
+    const args = [
         policy,
         input.hintedRootStatusNote,
         input.hintedRootAuthorityNote,
@@ -768,7 +823,10 @@ export class MagnaVerificationEngine {
         input.hintedStatusNote,
         toContractInstagramCommittedClaimsWitness(input.claimsWitness),
         input.sponsorSlot ?? 0,
-      )
+        ...(session ? toSessionAuthorizationArgs(session) : []),
+      ];
+    return sponsorContract.methods
+      [method](...args)
       .send(await this.buildCompanySponsorSendOptions(from, sponsorContract));
   }
 

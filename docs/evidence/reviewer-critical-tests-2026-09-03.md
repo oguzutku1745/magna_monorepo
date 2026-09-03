@@ -18,6 +18,8 @@ The command is implemented by `scripts/run-reviewer-critical-tests.mjs` and stop
 failure. It covers:
 
 - MagnaIssuer constraints and recovery transition tests;
+- company-sponsor session-authorization entrypoints, shared TypeScript/Noir authorization hashes,
+  wallet transaction construction, and `@magna/client` transaction-effect validation;
 - Passport A2 recursive-wrapper bindings (review Blocker 1);
 - Recovery V3 protocol vectors and Noir constraints;
 - Recovery V3 recursive wrapper and EVM portal mutation/replay tests (review Blocker 2);
@@ -36,6 +38,10 @@ therefore complements, rather than replaces, the preserved Gate B-dev live-scan 
 - Blocker 2 is both an automated contract/portal property and an empirical official-mobile flow.
   The command proves the former; the preserved Gate B-dev evidence proves the latter for the local
   developer profile.
+- Login with Magna has no frontend/backend signing private key. The suite checks that altered request,
+  challenge, policy, expiry, requirement index, sponsor, receipt status, or transaction nullifier is
+  rejected.
 - Gate B-production is a release gate, not an M1-M5 Docker-development test. It requires a fresh
   `SALTED = 1` proof from a supported physical document through the unmodified official zkPassport
-  application. It does not require a Magna fork of the mobile application.
+  application during testnet deployment. It does not require a Magna fork of the mobile application,
+  and zkPassport's current lack of dev-mode OPRF support does not block the local Docker lane.

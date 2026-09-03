@@ -28,7 +28,7 @@ many credentials (§6.1).
 | Party | Trusted for | Explicitly not trusted for |
 | --- | --- | --- |
 | User device / PXE | private witness generation, local proving, holding blinds and secrets | producing honest witnesses — the circuit must constrain them |
-| `magna-management` (wallet origin) | passkey custody, note discovery, session assertion issuance | nothing on behalf of a remote dApp beyond the signed assertion |
+| `magna-management` (wallet origin) | passkey custody, note discovery, initiating passkey-authenticated verification transactions | being a standalone login authority; the relying party verifies the resulting Aztec transaction effect |
 | `magna-verification-api` + orchestrator | verifying proofs, being the sole issuance caller | learning claim values; it is designed to be PII-blind |
 | `MagnaIssuer` contract | note semantics, nullifier discipline, caller acceptance | judging claim truthfulness — it verifies a commitment, not a passport |
 | Aztec sequencer / node | public execution and state inclusion | learning private witness values |
@@ -53,7 +53,7 @@ gap was critical rather than cosmetic.
 - `root_commitment` — opaque cross-credential linkage handle
 - zkPassport `uniqueIdentifier` and the Ghost seeds derived from it
 - orchestrator authorization keys
-- the dev session-signing key used for login assertions
+- session-authorization request preimages and their Aztec transaction receipts
 
 ---
 
@@ -221,20 +221,25 @@ public revert surfaces.
 **Mitigation:** A2 derives `root_commitment` in-circuit from the proof-bound `scoped_nullifier`,
 giving a stable per-passport value that makes uniqueness enforceable — but nothing records it.
 
-**Status:** **not implemented and not claimed.** See §6.1. This is a missing Sybil-resistance
-feature, not a way to forge the policy claims inside an otherwise valid credential.
+**Status:** **not implemented.** See §6.1. The original proposal claimed high-level Sybil resistance,
+so this is a scope gap that needs implementation or explicit written acceptance. It is distinct from
+forging the policy claims inside an otherwise valid credential.
 
 ### T12. Malicious dApp against the wallet
 
 **Risk:** an integrating dApp tries to extract more than a policy answer.
 
 **Mitigation:** the dApp only ever holds `@magna/client`. Passkeys, PXE, notes, note hints, raw
-claims, and contract bindings stay inside the wallet origin. Responses are P-256 session assertions
-validated against `requestId`, `sessionChallenge`, `policyHash`, `clientId`, `origin`, and expiry,
-and are accepted only from the configured `walletOrigin`.
+claims, and contract bindings stay inside the wallet origin. The holder's WebAuthn Aztec account
+authorizes the private verification transaction. In that same transaction the active sponsor emits
+a nullifier binding the consumer gateway, request ID, session challenge, expiry, requirement index,
+and normalized policy. The SDK independently recomputes the expected nullifier, silos it to the
+pinned sponsor address with Aztec's official hash routine, and requires it in a mined successful
+transaction effect returned by the configured node. Browser messages are still accepted only from
+the configured `walletOrigin`.
 
-**Status:** enforced for the current development configuration. `VITE_MAGNA_SESSION_SIGNING_KEY`
-is a frontend env var readable by page clients and does not provide production-grade key custody.
+**Status:** enforced. There is no Magna session-signing private key in a frontend or backend, and a
+wallet message without the matching chain effect is not an authorization.
 
 ---
 
@@ -273,14 +278,19 @@ deterministic function of the proof-bound scoped nullifier, so it is a stable pe
 that can be emitted as an issuance nullifier. Placing that check in the contract rather than the API
 preserves the guarantee even if the API is compromised.
 
+The initial proposal's “Sybil Resistance: Unique-human checks without identity disclosure” language
+does claim this property at a high level. Until an issuance nullifier is implemented, the mismatch
+must be treated as an open scope item rather than described as an unclaimed feature.
+
 ### 6.2 M3 receipt events — formally descoped
 
 Privacy-preserving receipt events are formally descoped from M3. The relying party receives the
 signed verification result and transaction hash; aggregate metering remains atomic.
 
 `MagnaIssuer.verify` deliberately emits no typed private receipt event. This is an accepted product
-boundary and no longer an open M3 deliverable. It does not resolve the distinct production session-
-assertion authority issue in §6.4.
+boundary and no longer an open M3 deliverable. In the current protocol, the quoted “signed
+verification result” is realized by the passkey-authorized Aztec transaction and its sponsor-emitted
+request-bound nullifier, not by an application-held signing key.
 
 ### 6.3 Frozen OPRF dependency
 
@@ -297,27 +307,18 @@ not claim that a renewed or replacement passport is the same zkPassport ID. OPRF
 service downtime temporarily blocks fresh recovery authorization and is an accepted availability
 dependency. Neither boundary weakens the separate destination-bound proof requirement.
 
-### 6.4 Production Login with Magna assertion authority
-
-The current local profile signs relying-party session assertions with
-`VITE_MAGNA_SESSION_SIGNING_KEY`. It is a Magna development key embedded in the management Vite
-bundle, not the user's passkey or Aztec account key. Anyone who loads that bundle can extract it and
-forge a development assertion, although it cannot spend the user's Aztec notes.
-
-Moving the same key to a backend KMS would hide it but would make that backend the login authority
-and availability dependency. The preferred production design is a user-passkey signature over the
-session challenge and policy result, cryptographically bound to the Aztec account that submitted the
-successful verification transaction (or to a chain-verifiable opaque receipt commitment). That
-design requires its own protocol spec and reviewer tests. Until then, the current session assertion
-lane is local-development only.
-
-### 6.5 Gate B-production
+### 6.4 Gate B-production
 
 The production `SALTED = 1` Passport A2/Recovery V3 artifacts still require an empirical run with a
 supported physical document through the unmodified official zkPassport application and the pinned
 production wrapper/EVM verifier. The developer Gate B proof cannot establish production OPRF or
 strict-FaceMatch behavior. This does not require cloning zkPassport's app; cloning/local TACEO nodes
 was only a discarded workaround for the developer mock-passport OPRF mismatch.
+
+zkPassport confirmed on 2026-08-25 that OPRF does not work with dev mode and gave no ETA. The local
+Docker profile therefore correctly proves `NON_SALTED_MOCK = 2` through the official application.
+The real supported-document `SALTED = 1` run is scheduled for testnet deployment and is an M6/release
+gate, not an M1-M5 local-Docker requirement.
 
 ---
 
@@ -389,6 +390,23 @@ A2 now requires the zkPassport disclosure proof to include both MRZ document-typ
 wrapper accepts only authenticated `P` (passport) or `I` (ID card) document types and derives the
 nationality and expiry offsets from that proof-bound byte. `is_id_card` no longer exists in the
 circuit ABI.
+
+### 7.5 Frontend-readable session-signing key
+
+The former local login lane signed a browser message with a P-256 private key embedded in the
+management Vite bundle. Anyone loading that bundle could extract the key and forge an assertion.
+Moving it to a Magna backend would merely replace a confidentiality failure with centralized login
+authority and an availability dependency.
+
+The key and its public-JWK configuration have been removed. Login assertions are version 2 transport
+envelopes, not trusted signatures. For every requested requirement the user's WebAuthn Aztec account
+submits the actual private verification. Only after the issuer verification succeeds does the active
+company sponsor emit the exact session-authorization nullifier. The preimage binds domain `MSA2`,
+consumer gateway, request ID, challenge, expiry, requirement index, and normalized policy; Aztec
+silos the nullifier to the sponsor contract. `@magna/client` derives the same value from the request,
+pins both the gateway and sponsor, fetches each receipt from the configured Aztec node, and requires a
+mined successful transaction effect containing that value. Mutation and missing/failed-receipt tests
+cover this boundary.
 
 ---
 

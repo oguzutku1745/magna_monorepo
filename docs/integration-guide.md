@@ -9,18 +9,17 @@ A working end-to-end example lives in `apps/reference-dapp` — in particular
 
 > **Pilot status.** Magna is pre-release and not deployed to a public network. Passport A2 binds
 > claim values to the scanned passport, and Instagram V2 binds the blinded handle claim to an
-> authentic governed DKIM key. Magna does not claim one-person/one-credential uniqueness. More
-> importantly for integrators, the current P-256 session assertion key is embedded in the local
-> wallet frontend and is development-only. Login assertions must not protect production value until
-> the chain-bound user-passkey authorization described in [`threat-model.md` §6.4](./threat-model.md)
-> is specified, implemented, and reviewed.
+> authentic governed DKIM key. The original proposal did claim high-level Sybil resistance, but
+> one-passport/one-credential issuance uniqueness is not implemented; see the explicit M5 scope gap
+> in [`threat-model.md` §6.1](./threat-model.md). Login authorization no longer uses a frontend-held
+> signing key: the SDK verifies a request-bound nullifier in the successful Aztec transaction.
 
 ---
 
 ## 1. Configure the connector
 
-Install `@magna/client` and configure it with your registered dApp id, the Magna wallet origin, and
-Magna's published P-256 session-signing public key:
+Install `@magna/client` and pin the wallet origin, Aztec node, registered dApp gateway, and active
+Magna session-authorization contract:
 
 ```ts
 import { MagnaClient } from "@magna/client";
@@ -28,7 +27,9 @@ import { MagnaClient } from "@magna/client";
 const magna = new MagnaClient({
   clientId: "dapp_reference",
   walletOrigin: "https://wallet.magna.xyz",
-  magnaPublicKeyJwk: MAGNA_SESSION_PUBLIC_JWK,
+  aztecNodeUrl: "https://aztec-node.example",
+  consumerGatewayAddress: "0x...",
+  sessionAuthorizationAddress: "0x...",
 });
 ```
 
@@ -77,8 +78,8 @@ if (result.verified) {
 
 The client opens `${walletOrigin}/authorize`, posts a `magna:login-request`, and accepts
 `magna:login-response` messages only from the configured `walletOrigin`. Before resolving, it
-validates the P-256 session assertion signature and checks `requestId`, `sessionChallenge`,
-`policyHash`, `clientId`, `origin`, and expiry.
+checks `requestId`, `sessionChallenge`, `policyHash`, `clientId`, `origin`, and expiry, then derives
+the expected policy-bound nullifier and requires it in the successful Aztec transaction effect.
 
 ---
 
@@ -114,20 +115,24 @@ await loginWithRedirect(
   {
     clientId: "dapp_reference",
     walletOrigin: "https://wallet.magna.xyz",
-    magnaPublicKeyJwk: MAGNA_SESSION_PUBLIC_JWK,
+    aztecNodeUrl: "https://aztec-node.example",
+    consumerGatewayAddress: "0x...",
+    sessionAuthorizationAddress: "0x...",
     redirectUri: `${window.location.origin}/login/callback`,
   },
   passportGate,
 );
 ```
 
-On the callback page, exchange the one-time code and validate the signed assertion:
+On the callback page, exchange the one-time code and validate the chain-bound assertion:
 
 ```ts
 const result = await completeRedirectLogin({
   clientId: "dapp_reference",
   walletOrigin: "https://wallet.magna.xyz",
-  magnaPublicKeyJwk: MAGNA_SESSION_PUBLIC_JWK,
+  aztecNodeUrl: "https://aztec-node.example",
+  consumerGatewayAddress: "0x...",
+  sessionAuthorizationAddress: "0x...",
   exchangeUrl: "https://wallet.magna.xyz/api/session/exchange",
 });
 
@@ -144,38 +149,42 @@ wallet origin proxies it.
 
 ## 6. What the dApp receives
 
-**Receives:** a signed v1 session assertion:
+**Receives:** a v2 chain-bound session assertion envelope:
 
 ```ts
 type SessionAssertion = {
-  v: 1;
+  v: 2;
   clientId: string;
   origin: string;
   requestId: string;
   sessionChallenge: string;
   policyHash: string;
-  verified: boolean;
+  verified: true;
   issuedAt: number;
   expiresAt: number;
-  receipt: string | null;                                   // verify tx hash
-  receipts?: { id: string; kind: string; receipt: string | null }[];
+  authorizationContract: string;                           // pinned sponsor
+  receipt: string;                                         // primary Aztec tx hash
+  receipts: { id: string; kind: string; receipt: string }[];
 };
 ```
 
-`receipt` is the on-chain verification transaction hash, or `null`. For multi-requirement logins,
-`receipts[]` carries one entry per requirement, keyed by the `id` you supplied. The signature covers
-a canonical serialization prefixed with the domain tag `magna:session-assertion:v1`.
+For multi-requirement logins, `receipts[]` carries one transaction per requirement. The SDK does not
+trust this envelope by itself. It recomputes `Poseidon2("MSA2", gateway, request, challenge, expiry,
+index, normalized policy)`, silos it to the configured authorization contract using Aztec's official
+hash routine, and requires the result in each mined successful transaction effect.
 
 Privacy-preserving receipt events are formally descoped from M3. The relying party receives the
 signed verification result and transaction hash; aggregate metering remains atomic. There is no
-typed private verification-receipt event.
+typed private verification-receipt event. Here, “signed verification result” means the successful
+passkey-authorized Aztec transaction plus its request-bound authorization nullifier; it is not a
+signature made by a Magna application key.
 
 **Never receives:** passkey material, account secrets, PXE state, private notes or note hints, raw
 claims, claim blinds, `root_commitment`, `claims_hash` preimages, zkPassport `uniqueIdentifier`, or
 Aztec contract bindings.
 
-Treat the assertion as a bearer credential for the session: verify the signature, check that
-`policyHash` is the policy you requested, and check expiry before granting access. Do not treat a
+Treat the accepted result as a bearer credential for the session: retain the SDK's request and chain
+checks and enforce expiry before granting access. Do not treat a
 `verified: true` result as an identity — it is a policy answer, and deliberately carries no stable
 user identifier.
 
@@ -188,15 +197,16 @@ These variables belong to the **Magna Management** app, not the integrating dApp
 ```dotenv
 VITE_REFERENCE_DAPP_ORIGIN=http://localhost:5175
 VITE_REFERENCE_DAPP_GATEWAY=0x...
-VITE_MAGNA_SESSION_SIGNING_KEY=<base64-pkcs8-p256-private-key>
 ```
 
 The reference dApp needs only:
 
 ```dotenv
 VITE_MAGNA_WALLET_ORIGIN=http://localhost:5174
-VITE_MAGNA_PUBLIC_KEY_JWK={"kty":"EC","crv":"P-256",...}
+VITE_AZTEC_NODE_URL=http://localhost:8080
+VITE_MAGNA_CONSUMER_GATEWAY_ADDRESS=0x...
+VITE_MAGNA_SESSION_AUTHORIZATION_ADDRESS=0x...
 ```
 
-`VITE_MAGNA_SESSION_SIGNING_KEY` is dev-only. A frontend env var is readable by anyone who loads the
-page; the current frontend-held key does not provide production-grade signing-key custody.
+The local bootstrap writes these public addresses automatically. No application signing private key
+is configured in either frontend.

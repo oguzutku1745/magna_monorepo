@@ -107,8 +107,6 @@ Options:
   --verification-api-url <url>        Optional browser-facing verification API URL
   --recovery-v3-relayer-private-key <hex> Local-only portal transaction payer
   --local-faucet-private-key <hex>    Local-only Fee Juice faucet key
-  --session-signing-key <base64>      Local-only PKCS8 session assertion key
-  --public-key-jwk <json>             Matching Login with Magna public JWK
   --l1-mnemonic <mnemonic>            Optional override for test mnemonic
   --treasury <address>                Optional override for rights-stack L1 portal treasury
   --l1-payment-token-address <addr>   Optional override for rights-stack L1 payment token
@@ -492,8 +490,6 @@ function syncAppBootstrapOutputs({
   verificationApiUrl,
   recoveryV3RelayerPrivateKey,
   localFaucetPrivateKey,
-  sessionSigningKey,
-  publicKeyJwk,
 }) {
   updateManifestWithWebBootstrap(manifestPath, {
     orchestratorAddress,
@@ -536,10 +532,6 @@ function syncAppBootstrapOutputs({
         recoveryV3RelayerPrivateKey,
         "--local-faucet-private-key",
         localFaucetPrivateKey,
-        "--session-signing-key",
-        sessionSigningKey,
-        "--public-key-jwk",
-        publicKeyJwk,
       ],
       `${description}: write apps/magna-management environment`,
     );
@@ -565,8 +557,6 @@ function syncAppBootstrapOutputs({
         publicL1RpcUrl,
         "--verification-api-url",
         verificationApiUrl,
-        "--public-key-jwk",
-        publicKeyJwk,
       ],
       `${description}: write apps/reference-dapp environment`,
     );
@@ -647,8 +637,6 @@ async function main() {
   const verificationApiUrl = String(args.verificationApiUrl ?? "http://localhost:4310");
   const recoveryV3RelayerPrivateKey = String(args.recoveryV3RelayerPrivateKey ?? "");
   const localFaucetPrivateKey = String(args.localFaucetPrivateKey ?? "");
-  const sessionSigningKey = String(args.sessionSigningKey ?? "");
-  const publicKeyJwk = String(args.publicKeyJwk ?? "");
   const l1Mnemonic = String(args.l1Mnemonic ?? DEFAULT_L1_MNEMONIC);
   const waitForNodeMs = parseNumber(args.waitForNodeMs, DEFAULT_WAIT_FOR_NODE_MS, "wait-for-node-ms");
   const feeJuiceWitnessWaitMs = parseNumber(
@@ -847,8 +835,6 @@ async function main() {
       verificationApiUrl,
       recoveryV3RelayerPrivateKey,
       localFaucetPrivateKey,
-      sessionSigningKey,
-      publicKeyJwk,
     });
 
     await warpForwardSeconds({
@@ -927,8 +913,6 @@ async function main() {
       verificationApiUrl,
       recoveryV3RelayerPrivateKey,
       localFaucetPrivateKey,
-      sessionSigningKey,
-      publicKeyJwk,
     });
 
     console.info("[app-bootstrap] completed");

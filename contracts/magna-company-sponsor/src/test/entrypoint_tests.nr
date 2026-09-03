@@ -1,5 +1,45 @@
 use crate::MagnaCompanySponsor;
 use crate::test::setup::setup;
+use aztec::protocol::{address::AztecAddress, traits::FromField};
+use magna_lib::{
+    CLAIM_AGE_MIN_PROVEN,
+    CLAIM_NONE,
+    OP_GTE,
+    OP_NONE,
+    Constraint,
+    Policy,
+    compute_session_authorization,
+};
+
+#[test]
+fn test_session_authorization_hash_matches_sdk_vector() {
+    let empty = Constraint { claim_id: CLAIM_NONE, op: OP_NONE, value: 0 };
+    let policy = Policy {
+        credential_type: 1,
+        constraints: [
+            Constraint { claim_id: CLAIM_AGE_MIN_PROVEN, op: OP_GTE, value: 18 },
+            empty,
+            empty,
+            empty,
+            empty,
+            empty,
+            empty,
+            empty,
+        ],
+    };
+    let actual = compute_session_authorization(
+        AztecAddress::from_field(0x0400000000000000000000000000000000000000000000000000000000000000),
+        0x22222222222222222222222222222222,
+        0x0033333333333333333333333333333333333333333333333333333333333333,
+        1800000000,
+        1,
+        policy,
+    );
+    assert(
+        actual == 17750339779338875618543372302299504726590070954394071976808203118234804546074,
+        "session authorization SDK/Noir vector mismatch",
+    );
+}
 
 #[test]
 unconstrained fn test_sponsored_verify_meter_starts_at_zero() {

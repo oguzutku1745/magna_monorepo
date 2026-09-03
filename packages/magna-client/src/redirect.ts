@@ -1,7 +1,9 @@
 import {
   computePolicyHash,
   normalizePolicy,
+  policyFromWire,
   policyToWire,
+  randomFieldHex,
   randomHex,
   type LoginRequest,
   type Policy,
@@ -17,7 +19,7 @@ const PENDING_KEY = "magna-pending-login-v1";
 /**
  * Fallback for popup-blocked/mobile contexts: full-page redirect carrying the
  * request; the wallet redirects back with a one-time code which is exchanged
- * at the wallet-operated exchange endpoint for the signed assertion.
+ * at the wallet-operated exchange endpoint for the chain-bound assertion.
  */
 export async function loginWithRedirect(
   config: MagnaClientConfig & { redirectUri: string },
@@ -36,7 +38,7 @@ export async function loginWithRedirect(
     clientId: config.clientId,
     origin,
     requestId: randomHex(16),
-    sessionChallenge: randomHex(32),
+    sessionChallenge: randomFieldHex(),
     policy: policyToWire(normalized),
     policyHash,
     responseMode: "redirectCode",
@@ -48,6 +50,7 @@ export async function loginWithRedirect(
       requestId: request.requestId,
       sessionChallenge: request.sessionChallenge,
       policyHash,
+      policy: request.policy,
     }),
   );
   const json = JSON.stringify(request);
@@ -72,6 +75,7 @@ export async function completeRedirectLogin(
     requestId: string;
     sessionChallenge: string;
     policyHash: string;
+    policy: LoginRequest["policy"];
   };
   const response = await fetchImpl(config.exchangeUrl, {
     method: "POST",
@@ -88,7 +92,9 @@ export async function completeRedirectLogin(
       requestId: pending.requestId,
       sessionChallenge: pending.sessionChallenge,
       policyHash: pending.policyHash,
+      consumerGatewayAddress: config.consumerGatewayAddress,
+      requirements: [{ id: "default", kind: "policy", policy: policyFromWire(pending.policy) }],
     },
-    config.magnaPublicKeyJwk,
+    config,
   );
 }

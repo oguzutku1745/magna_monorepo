@@ -87,7 +87,6 @@ Options:
   --out <path>                     Default: apps/magna-management/.env
   --template <path>                Default: apps/magna-management/.env.example
   --wallet-origin <url>            Default: http://localhost:5174
-  --public-key-jwk <json>          Optional Login with Magna public verification key for dApps
   --issuer-address <aztec address> Optional explicit issuer address
   --company-sponsor-address <aztec address> Optional explicit sponsor address
   --company-sponsor-addresses <csv> Optional explicit sponsor address list
@@ -98,7 +97,6 @@ Options:
   --verification-api-url <url>       Optional browser-facing zkPassport verification API URL
   --recovery-v3-relayer-private-key <hex> Local-only portal transaction payer
   --local-faucet-private-key <hex>   Local-only Fee Juice faucet key
-  --session-signing-key <base64>     Local-only PKCS8 session assertion key
 `;
 }
 
@@ -255,11 +253,6 @@ function main() {
     templatePairs.get("VITE_MAGNA_WALLET_ORIGIN"),
     "http://localhost:5174",
   );
-  const publicKeyJwk = preferString(
-    typeof args.publicKeyJwk === "string" ? args.publicKeyJwk : "",
-    existingOutPairs.get("VITE_MAGNA_PUBLIC_KEY_JWK"),
-    templatePairs.get("VITE_MAGNA_PUBLIC_KEY_JWK"),
-  );
   const referenceDappOrigin = preferString(
     existingOutPairs.get("VITE_REFERENCE_DAPP_ORIGIN"),
     templatePairs.get("VITE_REFERENCE_DAPP_ORIGIN"),
@@ -269,11 +262,6 @@ function main() {
     referenceDappConsumerAddress,
     existingOutPairs.get("VITE_REFERENCE_DAPP_GATEWAY"),
     templatePairs.get("VITE_REFERENCE_DAPP_GATEWAY"),
-  );
-  const sessionSigningKey = preferString(
-    typeof args.sessionSigningKey === "string" ? args.sessionSigningKey : "",
-    existingOutPairs.get("VITE_MAGNA_SESSION_SIGNING_KEY"),
-    templatePairs.get("VITE_MAGNA_SESSION_SIGNING_KEY"),
   );
 
   const merged = new Map(templatePairs);
@@ -297,8 +285,8 @@ function main() {
   merged.set("VITE_REFERENCE_DAPP_ORIGIN", referenceDappOrigin);
   merged.set("VITE_REFERENCE_DAPP_GATEWAY", referenceDappGateway);
   merged.set("VITE_MAGNA_WALLET_ORIGIN", walletOrigin);
-  merged.set("VITE_MAGNA_PUBLIC_KEY_JWK", publicKeyJwk);
-  merged.set("VITE_MAGNA_SESSION_SIGNING_KEY", sessionSigningKey);
+  merged.set("VITE_MAGNA_CONSUMER_GATEWAY_ADDRESS", referenceDappGateway);
+  merged.set("VITE_MAGNA_SESSION_AUTHORIZATION_ADDRESS", activeCompanySponsorAddress);
 
   const lines = templateRaw.split(/\r?\n/).map((line) => {
     const trimmed = line.trim();
@@ -335,8 +323,8 @@ function main() {
   if (templatePairs.has("VITE_REFERENCE_DAPP_GATEWAY") && !referenceDappGateway) {
     warnings.push("VITE_REFERENCE_DAPP_GATEWAY is still empty");
   }
-  if (templatePairs.has("VITE_MAGNA_PUBLIC_KEY_JWK") && !publicKeyJwk) {
-    warnings.push("VITE_MAGNA_PUBLIC_KEY_JWK is still empty");
+  if (templatePairs.has("VITE_MAGNA_SESSION_AUTHORIZATION_ADDRESS") && !activeCompanySponsorAddress) {
+    warnings.push("VITE_MAGNA_SESSION_AUTHORIZATION_ADDRESS is still empty");
   }
 
   console.info(`Wrote ${outPath} from ${manifestPath}`);

@@ -1,55 +1,67 @@
 # `@magna/client`
 
-Thin TypeScript connector for relying-party applications using Login with Magna.
+Relying-party connector for Login with Magna.
 
-The package intentionally contains no Aztec wallet, PXE, contract-binding, passkey, note-discovery,
-issuance, or recovery implementation. Those responsibilities stay inside the Magna wallet origin,
-currently served by `apps/magna-management`.
+The package contains no wallet, PXE, note-discovery, issuance, recovery, or private witness code.
+It does contain the read-only Aztec primitives needed to verify the transaction authorization
+returned by the wallet.
 
-## Popup login
+## Configuration
 
 ```ts
-import {
-  CredentialType,
-  MagnaClient,
-  ageGteConstraint,
-  type Policy,
-} from "@magna/client";
+import { CredentialType, MagnaClient, ageGteConstraint } from "@magna/client";
 
 const magna = new MagnaClient({
   clientId: "dapp_reference",
-  walletOrigin: "http://localhost:5174",
-  magnaPublicKeyJwk: JSON.parse(MAGNA_PUBLIC_KEY_JWK),
+  walletOrigin: "https://wallet.magna.xyz",
+  aztecNodeUrl: "https://aztec-node.example",
+  consumerGatewayAddress: "0x...",       // gateway registered for this dApp
+  sessionAuthorizationAddress: "0x...",  // pinned active Magna sponsor contract
 });
 
-const policy: Policy = {
+const result = await magna.login({
   credentialType: CredentialType.Passport,
   constraints: [ageGteConstraint(18)],
-};
+});
 
-const result = await magna.login(policy);
 if (!result.verified) throw new Error("Magna policy was not satisfied");
 ```
 
-Use `loginWithRequirements(...)` when a login request combines a policy with additional
-wallet-validated requirements, such as an Instagram handle requirement.
+`loginWithRequirements(...)` supports a single prompt containing multiple credential requirements,
+including a specific Instagram handle. `loginWithRedirect(...)` and `completeRedirectLogin(...)`
+provide the full-page fallback.
 
-## Redirect fallback
+## Authorization boundary
 
-`loginWithRedirect(...)` and `completeRedirectLogin(...)` provide the full-page fallback for
-popup-blocked or mobile contexts. The wallet returns a one-time code; the connector exchanges it
-and validates the signed session assertion against the original request context.
+There is no shared Magna session-signing private key. For every requirement, the wallet submits a
+fee-sponsored Aztec transaction from the user's WebAuthn account. The sponsor verifies the private
+credential policy and then emits a one-time private nullifier in that same transaction:
 
-## Security boundary
+```text
+Poseidon2("MSA2", consumer gateway, request id, challenge, expiry,
+          requirement index, normalized policy)
+```
 
-Every successful result is validated against Magna's configured P-256 public key and bound to the
-request id, session challenge, policy hash, client id, relying-party origin, and expiry. Integrating
-dApps receive only the signed verification result and transaction receipt references. They do not
-receive credentials, private notes, witnesses, passport data, Instagram email data, or wallet keys.
+Aztec silos that nullifier to the pinned sponsor contract. Before returning `verified: true`, this
+SDK independently:
+
+- checks the response against the original request id, challenge, policy hash, client id, origin,
+  five-minute lifetime, requirement ids, and order;
+- recomputes each policy-bound nullifier;
+- fetches each transaction receipt from the configured Aztec node;
+- requires the transaction to be mined and successful; and
+- requires its transaction effect to contain the exact siloed nullifier.
+
+Changing the requested policy, destination dApp gateway, challenge, expiry, requirement order,
+transaction hash, or sponsor address therefore fails verification. A copied frontend response is
+not an authority. The transaction is authorized through the user's chain account/AuthWit path,
+which in the shipped wallet is the WebAuthn passkey account.
+
+The dApp receives transaction hashes and public request metadata only. It never receives private
+notes, note hints, witnesses, passport data, Instagram email/handle witness data, passkey material,
+or wallet keys.
 
 Privacy-preserving receipt events are formally descoped from M3. The relying party receives the
-signed verification result and transaction hash; aggregate metering remains atomic. The current
-frontend-held P-256 signing key is a local-development authority, not production key custody; see
-`docs/threat-model.md` §6.4.
-
-See `apps/reference-dapp` and `docs/integration-guide.md` for the current integration example.
+signed verification result and transaction hash; aggregate metering remains atomic. In the current
+v2 implementation, “signed verification result” is realized by the chain-authorized transaction
+effect rather than a separate application signing key.

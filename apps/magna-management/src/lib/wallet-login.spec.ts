@@ -12,7 +12,7 @@ const testState = vi.hoisted(() => {
     metadata: { deploymentStatus: "deployed" },
     disconnect,
   }));
-  const runMagnaConsumerLogin = vi.fn(async () => ({ verified: true, receipt: "0xlogin" }));
+  const runMagnaConsumerLogin = vi.fn(async () => ({ verified: true, receipt: "0xlogin", authorizationContract: "0xsponsor" }));
   const discoverCredentialRefs = vi.fn<() => Promise<unknown[]>>(async () => []);
 
   return {
@@ -124,7 +124,7 @@ describe("runWalletLoginForRequest", () => {
     testState.discoverCredentialRefs.mockResolvedValue([]);
     testState.disconnect.mockClear();
     testState.runMagnaConsumerLogin.mockReset();
-    testState.runMagnaConsumerLogin.mockResolvedValue({ verified: true, receipt: "0xlogin" });
+    testState.runMagnaConsumerLogin.mockResolvedValue({ verified: true, receipt: "0xlogin", authorizationContract: "0xsponsor" });
   });
 
   afterEach(() => {
@@ -137,6 +137,9 @@ describe("runWalletLoginForRequest", () => {
       runWalletLoginForRequest({
         policy,
         consumerGatewayAddress: "0xconsumer",
+        sessionRequestId: "11".repeat(16),
+        sessionChallenge: `00${"22".repeat(31)}`,
+        sessionExpiresAt: 1_800_000_000,
       }),
     ).rejects.toThrow("No active Magna passport credential is available in this wallet session.");
 
@@ -158,10 +161,13 @@ describe("runWalletLoginForRequest", () => {
         {
           policy,
           consumerGatewayAddress: "0xconsumer",
+        sessionRequestId: "11".repeat(16),
+        sessionChallenge: `00${"22".repeat(31)}`,
+        sessionExpiresAt: 1_800_000_000,
         },
         existingSession,
       ),
-    ).resolves.toMatchObject({ verified: true, receipt: "0xlogin" });
+    ).resolves.toMatchObject({ verified: true, receipt: "0xlogin", authorizationContract: "0xsponsor" });
 
     expect(testState.createWebAuthnWalletSession).not.toHaveBeenCalled();
     expect(testState.runMagnaConsumerLogin).toHaveBeenCalledWith(
@@ -176,6 +182,9 @@ describe("runWalletLoginForRequest", () => {
     await runWalletLoginForRequest({
       policy,
       consumerGatewayAddress: "0xconsumer",
+        sessionRequestId: "11".repeat(16),
+        sessionChallenge: `00${"22".repeat(31)}`,
+        sessionExpiresAt: 1_800_000_000,
       storedCredentialId: "selected-passkey-id",
     });
 
@@ -193,6 +202,9 @@ describe("runWalletLoginForRequest", () => {
       runWalletLoginForRequest({
         policy,
         consumerGatewayAddress: "0xconsumer",
+        sessionRequestId: "11".repeat(16),
+        sessionChallenge: `00${"22".repeat(31)}`,
+        sessionExpiresAt: 1_800_000_000,
       }),
     ).rejects.toThrow("policy constraint failed");
 
@@ -221,8 +233,11 @@ describe("runWalletLoginForRequest", () => {
       runWalletLoginForRequest({
         policy,
         consumerGatewayAddress: "0xconsumer",
+        sessionRequestId: "11".repeat(16),
+        sessionChallenge: `00${"22".repeat(31)}`,
+        sessionExpiresAt: 1_800_000_000,
       }),
-    ).resolves.toMatchObject({ verified: true, receipt: "0xlogin" });
+    ).resolves.toMatchObject({ verified: true, receipt: "0xlogin", authorizationContract: "0xsponsor" });
 
     expect(testState.runMagnaConsumerLogin).toHaveBeenCalledOnce();
     const calls = testState.runMagnaConsumerLogin.mock.calls as unknown as [
@@ -247,6 +262,9 @@ describe("runWalletLoginForRequest", () => {
       runWalletLoginForRequest({
         policy,
         consumerGatewayAddress: "0xconsumer",
+        sessionRequestId: "11".repeat(16),
+        sessionChallenge: `00${"22".repeat(31)}`,
+        sessionExpiresAt: 1_800_000_000,
       }),
     ).rejects.toThrow("Passport A2 credential is missing its local committed-claims witness");
     expect(testState.runMagnaConsumerLogin).not.toHaveBeenCalled();
@@ -266,6 +284,9 @@ describe("runWalletLoginForRequest", () => {
       runWalletLoginForRequest({
         policy,
         consumerGatewayAddress: "0xconsumer",
+        sessionRequestId: "11".repeat(16),
+        sessionChallenge: `00${"22".repeat(31)}`,
+        sessionExpiresAt: 1_800_000_000,
       }),
     ).rejects.toThrow("resolved to the local fee payer/orchestrator account");
 
@@ -286,6 +307,9 @@ describe("runWalletLoginForRequest", () => {
       runWalletLoginForRequest({
         policy,
         consumerGatewayAddress: "0xconsumer",
+        sessionRequestId: "11".repeat(16),
+        sessionChallenge: `00${"22".repeat(31)}`,
+        sessionExpiresAt: 1_800_000_000,
       }),
     ).rejects.toThrow("PXE could not read the matching private notes");
 
@@ -306,14 +330,17 @@ describe("runWalletLoginForRequest", () => {
         issuanceTxHash: "0xissue",
       },
     ]);
-    testState.runMagnaConsumerLogin.mockResolvedValueOnce({ verified: true, receipt: "0xlogin" });
+    testState.runMagnaConsumerLogin.mockResolvedValueOnce({ verified: true, receipt: "0xlogin", authorizationContract: "0xsponsor" });
 
     await expect(
       runWalletLoginForRequest({
         policy,
         consumerGatewayAddress: "0xconsumer",
+        sessionRequestId: "11".repeat(16),
+        sessionChallenge: `00${"22".repeat(31)}`,
+        sessionExpiresAt: 1_800_000_000,
       }),
-    ).resolves.toMatchObject({ verified: true, receipt: "0xlogin" });
+    ).resolves.toMatchObject({ verified: true, receipt: "0xlogin", authorizationContract: "0xsponsor" });
 
     expect(testState.runMagnaConsumerLogin).toHaveBeenCalledOnce();
     const loginCalls = testState.runMagnaConsumerLogin.mock.calls as unknown as Array<[
@@ -359,8 +386,11 @@ describe("runWalletLoginForRequest", () => {
       runWalletLoginForRequest({
         policy,
         consumerGatewayAddress: "0xconsumer",
+        sessionRequestId: "11".repeat(16),
+        sessionChallenge: `00${"22".repeat(31)}`,
+        sessionExpiresAt: 1_800_000_000,
       }),
-    ).resolves.toMatchObject({ verified: true, receipt: "0xlogin" });
+    ).resolves.toMatchObject({ verified: true, receipt: "0xlogin", authorizationContract: "0xsponsor" });
 
     expect(testState.discoverCredentialRefs).toHaveBeenCalledWith(testState.activeAddress);
     const calls = testState.runMagnaConsumerLogin.mock.calls as unknown as [
@@ -374,8 +404,8 @@ describe("runWalletLoginForRequest", () => {
   it("runs mixed passport and instagram requirements in one wallet session", async () => {
     saveCredentialRefs([passportRef(), instagramRef()]);
     testState.runMagnaConsumerLogin
-      .mockResolvedValueOnce({ verified: true, receipt: "0xpassport" })
-      .mockResolvedValueOnce({ verified: true, receipt: "0xinstagram" });
+      .mockResolvedValueOnce({ verified: true, receipt: "0xpassport", authorizationContract: "0xsponsor" })
+      .mockResolvedValueOnce({ verified: true, receipt: "0xinstagram", authorizationContract: "0xsponsor" });
 
     const outcome = await runWalletLoginForRequest({
       policy,
@@ -384,10 +414,14 @@ describe("runWalletLoginForRequest", () => {
         { id: "instagram", kind: "instagram-handle", handle: "akinspur" },
       ],
       consumerGatewayAddress: "0xconsumer",
+        sessionRequestId: "11".repeat(16),
+        sessionChallenge: `00${"22".repeat(31)}`,
+        sessionExpiresAt: 1_800_000_000,
     });
 
     expect(outcome).toEqual({
       verified: true,
+      authorizationContract: "0xsponsor",
       receipt: "0xpassport",
       receipts: [
         { id: "passport", kind: "policy", receipt: "0xpassport" },
@@ -408,7 +442,7 @@ describe("runWalletLoginForRequest", () => {
   it("identifies the failing requirement when a mixed login cannot read hinted notes", async () => {
     saveCredentialRefs([passportRef(), instagramRef()]);
     testState.runMagnaConsumerLogin
-      .mockResolvedValueOnce({ verified: true, receipt: "0xpassport" })
+      .mockResolvedValueOnce({ verified: true, receipt: "0xpassport", authorizationContract: "0xsponsor" })
       .mockRejectedValueOnce(new Error("status note not found"));
 
     await expect(
@@ -419,6 +453,9 @@ describe("runWalletLoginForRequest", () => {
           { id: "instagram", kind: "instagram-handle", handle: "akinspur" },
         ],
         consumerGatewayAddress: "0xconsumer",
+        sessionRequestId: "11".repeat(16),
+        sessionChallenge: `00${"22".repeat(31)}`,
+        sessionExpiresAt: 1_800_000_000,
       }),
     ).rejects.toThrow("requirement instagram, instagram-handle, instagram claims hash 456, @akinspur");
 
@@ -454,6 +491,9 @@ describe("runWalletLoginForRequest", () => {
           { id: "instagram", kind: "instagram-handle", handle: "akinspur" },
         ],
         consumerGatewayAddress: "0xconsumer",
+        sessionRequestId: "11".repeat(16),
+        sessionChallenge: `00${"22".repeat(31)}`,
+        sessionExpiresAt: 1_800_000_000,
       }),
     ).rejects.toThrow("requirement passport, policy, passport claims hash 123, root 99");
 

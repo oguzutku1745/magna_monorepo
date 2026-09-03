@@ -1,6 +1,12 @@
-use aztec::protocol::traits::{Deserialize, Serialize};
+use aztec::protocol::{
+    address::AztecAddress,
+    hash::poseidon2_hash_with_separator,
+    traits::{Deserialize, Serialize, ToField},
+};
 
 pub global MAX_CONSTRAINTS: u32 = 8;
+pub global MAGNA_SESSION_AUTHORIZATION_DS: u32 = 0x4D534132; // "MSA2"
+pub global MAGNA_SESSION_ASSERTION_VERSION: u8 = 2;
 
 // Claim IDs (v1)
 pub global CLAIM_NONE: u8 = 0;
@@ -27,6 +33,54 @@ pub struct Constraint {
 pub struct Policy {
     pub credential_type: u8,
     pub constraints: [Constraint; MAX_CONSTRAINTS],
+}
+
+/// Request- and policy-bound authorization emitted only after verification succeeds.
+/// Keep this preimage aligned with @magna/core sessionAuthorizationFields.
+pub fn compute_session_authorization(
+    consumer_gateway: AztecAddress,
+    request_id: Field,
+    session_challenge: Field,
+    expires_at: u64,
+    requirement_index: u8,
+    policy: Policy,
+) -> Field {
+    poseidon2_hash_with_separator(
+        [
+            MAGNA_SESSION_ASSERTION_VERSION as Field,
+            consumer_gateway.to_field(),
+            request_id,
+            session_challenge,
+            expires_at as Field,
+            requirement_index as Field,
+            policy.credential_type as Field,
+            policy.constraints[0].claim_id as Field,
+            policy.constraints[0].op as Field,
+            policy.constraints[0].value,
+            policy.constraints[1].claim_id as Field,
+            policy.constraints[1].op as Field,
+            policy.constraints[1].value,
+            policy.constraints[2].claim_id as Field,
+            policy.constraints[2].op as Field,
+            policy.constraints[2].value,
+            policy.constraints[3].claim_id as Field,
+            policy.constraints[3].op as Field,
+            policy.constraints[3].value,
+            policy.constraints[4].claim_id as Field,
+            policy.constraints[4].op as Field,
+            policy.constraints[4].value,
+            policy.constraints[5].claim_id as Field,
+            policy.constraints[5].op as Field,
+            policy.constraints[5].value,
+            policy.constraints[6].claim_id as Field,
+            policy.constraints[6].op as Field,
+            policy.constraints[6].value,
+            policy.constraints[7].claim_id as Field,
+            policy.constraints[7].op as Field,
+            policy.constraints[7].value,
+        ],
+        MAGNA_SESSION_AUTHORIZATION_DS,
+    )
 }
 
 #[derive(Serialize, Deserialize)]

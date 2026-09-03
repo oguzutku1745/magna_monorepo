@@ -14,7 +14,6 @@ import {
 } from "@magna/wallet";
 import { AuthorizeWalletPicker, authorizeWalletsForOrigin } from "./AuthorizeWalletPicker";
 import { resolveRegisteredDapp } from "./lib/dapp-registry";
-import { signAssertion } from "./lib/session-signer";
 import {
   runWalletLoginForRequest,
   type WalletLoginRequestInput,
@@ -112,24 +111,26 @@ export function AuthorizePage() {
   const completeAuthorization = useCallback(
     async (pending: PendingAuthorization, outcome: MagnaConsumerLoginOutcome) => {
       setPhase("verifying");
-      const now = Math.floor(Date.now() / 1000);
+      if (!outcome.receipt || !outcome.authorizationContract || !outcome.receipts?.length) {
+        throw new Error("Aztec login did not produce a chain-bound session authorization.");
+      }
       const assertion: SessionAssertion = {
-        v: 1,
+        v: 2,
         clientId: pending.request.clientId,
         origin: pending.replyOrigin,
         requestId: pending.request.requestId,
         sessionChallenge: pending.request.sessionChallenge,
         policyHash: pending.request.policyHash,
-        verified: outcome.verified,
-        issuedAt: now,
-        expiresAt: now + 300,
+        verified: true,
+        issuedAt: pending.loginInput.sessionExpiresAt - 300,
+        expiresAt: pending.loginInput.sessionExpiresAt,
+        authorizationContract: outcome.authorizationContract,
         receipt: outcome.receipt,
         receipts: outcome.receipts,
       };
-      const signed = await signAssertion(assertion);
       if (pending.request.responseMode === "redirectCode") {
         const redirectUrl = redirectUriForRegisteredDapp(pending.request.redirectUri, pending.replyOrigin);
-        redirectUrl.searchParams.set("magna_code", await createRedirectCode(signed));
+        redirectUrl.searchParams.set("magna_code", await createRedirectCode(assertion));
         setPhase("done");
         window.location.href = redirectUrl.toString();
         return;
@@ -137,7 +138,7 @@ export function AuthorizePage() {
       const opener = window.opener as Window | null;
       if (!opener) throw new Error("The requesting dApp window is no longer available.");
       opener.postMessage(
-        { v: 1, kind: "magna:login-response", requestId: pending.request.requestId, assertion: signed },
+        { v: 2, kind: "magna:login-response", requestId: pending.request.requestId, assertion },
         pending.replyOrigin,
       );
       setPhase("done");
@@ -152,12 +153,22 @@ export function AuthorizePage() {
       setError("");
       setPhase("authenticating");
       try {
+        // Wallet selection can remain open indefinitely. Start the five-minute
+        // chain-bound authorization window only when the user actually chooses
+        // a passkey, not when the popup first received the request.
+        const refreshedPending: PendingAuthorization = {
+          ...pendingAuthorization,
+          loginInput: {
+            ...pendingAuthorization.loginInput,
+            sessionExpiresAt: Math.floor(Date.now() / 1000) + 300,
+          },
+        };
         const outcome = await runWalletLoginForRequest({
-          ...pendingAuthorization.loginInput,
+          ...refreshedPending.loginInput,
           storedCredentialId: account.credentialId,
           onVerifying: () => setPhase("verifying"),
         });
-        await completeAuthorization(pendingAuthorization, outcome);
+        await completeAuthorization(refreshedPending, outcome);
       } catch (cause) {
         failAuthorization(cause);
       }
@@ -188,10 +199,14 @@ export function AuthorizePage() {
         requestRef.current = { request: data, replyOrigin: dapp.origin };
 
         setPhase("authenticating");
+        const issuedAt = Math.floor(Date.now() / 1000);
         const loginInput: WalletLoginRequestInput = {
           policy: policyFromWire(data.policy),
           requirements: loginRequirementsFromRequest(data),
           consumerGatewayAddress: dapp.consumerGatewayAddress,
+          sessionRequestId: data.requestId,
+          sessionChallenge: data.sessionChallenge,
+          sessionExpiresAt: issuedAt + 300,
         };
         const brokered = await tryWalletLoginThroughExistingSession(loginInput, {
           onBrokerSelected: () => setPhase("authenticating"),

@@ -1,7 +1,7 @@
 import { bytesToHex } from "./bytes.js";
 import { MAX_CONSTRAINTS, normalizePolicy } from "./policy.js";
 import { ClaimId, ConstraintOp, CredentialType, type Policy } from "./types.js";
-import type { SignedSessionAssertion } from "./session-assertion.js";
+import type { SessionAssertion } from "./session-assertion.js";
 
 export type WirePolicy = {
   credentialType: Policy["credentialType"];
@@ -51,10 +51,10 @@ export type LoginRequest = {
 };
 
 export type LoginResponse = {
-  v: 1;
+  v: 2;
   kind: "magna:login-response";
   requestId: string;
-  assertion: SignedSessionAssertion;
+  assertion: SessionAssertion;
 };
 
 export type LoginErrorResponse = {
@@ -198,6 +198,11 @@ export function randomHex(byteLength: number): string {
   }
   const bytes = webCrypto().getRandomValues(new Uint8Array(byteLength));
   return bytesToHex(bytes);
+}
+
+/** A canonical 32-byte value guaranteed to fit in the Noir/Aztec field. */
+export function randomFieldHex(): string {
+  return `00${randomHex(31)}`;
 }
 
 /** Wire-format policy: bigint values as decimal strings. */

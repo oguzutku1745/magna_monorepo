@@ -2,7 +2,7 @@ import { ClaimId, ConstraintOp, CredentialType, type Policy } from "@magna/core"
 import { AztecAddress } from "@aztec/aztec.js/addresses";
 import type { Wallet } from "@aztec/aztec.js/wallet";
 import { MagnaCompanySponsorContract, MagnaConsumerContract, MagnaIssuerContract } from "@magna/contracts-bindings";
-import { MagnaVerificationEngine } from "../engine/verification-engine.js";
+import { MagnaVerificationEngine, type SessionAuthorizationContext } from "../engine/verification-engine.js";
 import { packAlpha3 } from "../engine/encoding.js";
 import type { PassportCommittedClaimsWitness } from "../engine/types.js";
 import { buildCompanySponsorNetworkFeeConfig } from "../engine/sponsorship.js";
@@ -49,7 +49,8 @@ export type MagnaConsumerLoginCredential =
 export type MagnaConsumerLoginOutcome = {
   verified: boolean;
   receipt: string | null;
-  receipts?: { id: string; kind: string; receipt: string | null }[];
+  receipts?: { id: string; kind: string; receipt: string }[];
+  authorizationContract?: string;
 };
 
 type MagnaConsumerLoginEnv = Pick<
@@ -204,6 +205,7 @@ export async function runMagnaConsumerLogin(input: {
   activeAddress: string;
   policy: Policy;
   consumerGatewayAddress: string;
+  sessionAuthorization: Omit<SessionAuthorizationContext, "consumerGatewayAddress">;
   credential: Partial<MagnaConsumerLoginCredential> | null | undefined;
   onVerifying?: () => void;
 }): Promise<MagnaConsumerLoginOutcome> {
@@ -266,6 +268,10 @@ export async function runMagnaConsumerLogin(input: {
     },
     hintLookupAttempts: 1,
   });
+  const sessionAuthorization: SessionAuthorizationContext = {
+    ...input.sessionAuthorization,
+    consumerGatewayAddress: input.consumerGatewayAddress,
+  };
   const receipt = input.policy.credentialType === CredentialType.Instagram
     ? await engine.loginWithInstagramCompanySponsor(
         {
@@ -278,6 +284,7 @@ export async function runMagnaConsumerLogin(input: {
         },
         input.activeAddress,
         sponsor,
+        sessionAuthorization,
       )
     : await (async () => {
         const passportCredential = credential as MagnaPassportConsumerLoginCredential;
@@ -294,14 +301,16 @@ export async function runMagnaConsumerLogin(input: {
                 claimsWitness: committedClaimsWitness,
               },
               input.activeAddress,
-              sponsor)
+              sponsor,
+              sessionAuthorization)
             : engine.loginWithCompanySponsorV2({
                 policy: input.policy,
                 ...(await hintClient.fetchPassportHintsByClaimsHash(input.activeAddress, passportCredential.claimsHash)),
                 claimsWitness: committedClaimsWitness,
               },
               input.activeAddress,
-              sponsor);
+              sponsor,
+              sessionAuthorization);
         }
         const claimsWitness = {
           minAgeProven: passportCredential.normalizedClaims!.minAgeProven,
@@ -318,15 +327,21 @@ export async function runMagnaConsumerLogin(input: {
               claimsWitness,
             },
             input.activeAddress,
-            sponsor)
+            sponsor,
+            sessionAuthorization)
           : engine.loginWithCompanySponsor({
               policy: input.policy,
               ...(await hintClient.fetchPassportHintsByClaimsHash(input.activeAddress, passportCredential.claimsHash)),
               claimsWitness,
             },
             input.activeAddress,
-            sponsor);
+            sponsor,
+            sessionAuthorization);
       })();
 
-  return { verified: true, receipt: readTxHash(receipt) ?? null };
+  return {
+    verified: true,
+    receipt: readTxHash(receipt) ?? null,
+    authorizationContract: sponsorAddress,
+  };
 }

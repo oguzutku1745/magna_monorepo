@@ -693,7 +693,7 @@ The developer circuit/artifact/VK/verifier MUST be isolated from production. A p
 
 Passing Gate B-dev proves the recursive-proof plumbing, Bind encoding, wrapper witness/proving path, generated verifier, EVM transaction path, and negative mutations using a genuine zkPassport proof. It does not prove production NFC document authenticity, production biometric assurance, mainnet registry acceptance, production OPRF availability, or production `SALTED = 1` behavior.
 
-### 16.3 Gate B-production: real supported document through the production wrapper and EVM
+### 16.3 Gate B-production: testnet-deployment run with a real supported document
 
 This release gate MUST repeat the end-to-end proof with the production trust context:
 
@@ -715,6 +715,10 @@ Required assertions and retained evidence:
 - The wrapper proof and generated production Solidity verifier MUST pass an actual EVM transaction, and every mutation listed in Gate B-dev MUST fail again against the production artifacts.
 
 Because producing this artifact requires a person with a physical passport and the production zkPassport mobile flow, automation MUST stop and report **blocked awaiting the production artifact** if that interaction has not occurred. It MUST NOT promote a Gate B-dev artifact or create a replacement fixture. Every raw Gate B artifact contains the scoped OPRF value and MUST be handled only in an isolated local spike, encrypted at rest, excluded from version control and normal application/backend flows, and removed when the document holder no longer needs the reproducibility record.
+
+This empirical gate is scheduled for Magna's testnet deployment and is not a local Docker or M1-M5
+acceptance requirement. It uses the unmodified official zkPassport application; it does not require
+building or distributing a Magna fork of that application.
 
 ### 16.4 Integration and release order
 
@@ -747,7 +751,7 @@ Before any production release:
 
 ## 17. Accepted zkPassport invariants and compatibility boundary
 
-The zkPassport team reported to Magna on 2026-08-23 that no change to the current integration is planned. Magna therefore accepts the current behavior as a permanent V3 dependency rather than an unresolved release gate.
+The zkPassport team reported to Magna on 2026-08-23 that no change to the current integration is planned. Magna therefore accepts the current behavior as a permanent V3 dependency rather than an unresolved release gate. On 2026-08-25, the team separately confirmed that OPRF does not work with dev mode and that dev-mode support has no ETA. Consequently, local Docker intentionally uses the official `NON_SALTED_MOCK = 2` path; it MUST NOT be blocked on or represented as exercising `SALTED = 1`.
 
 - V3 permanently pins SDK `0.16.1`, utils `0.37.3`, registry client `0.14.0`, production `NullifierType.SALTED = 1`, OPRF key ID `1`, its published coordinates and Poseidon2 hash, developer `NON_SALTED_MOCK = 2` with a zero OPRF-key-hash field, `outer_count_7` version `0.20.0`, its VK hash, the public-input layout, Ethereum mainnet Root Registry/Helper addresses, and registry IDs in section 4.
 - The same supported physical document, service domain, scope, subscope, and key ID are the V3 continuity boundary. Magna does not claim person-wide continuity across passport renewal, replacement, chip replacement, document-number change, or issuing-country migration.
@@ -756,7 +760,7 @@ The zkPassport team reported to Magna on 2026-08-23 that no change to the curren
 - Temporary unavailability of zkPassport's application, OPRF network, or registries temporarily prevents new recovery authorization. This is an accepted direct zkPassport availability dependency and does not reintroduce Magna-backend authority.
 - The official SDK `0.16.1` README labels the software experimental and unaudited. Freezing its behavior does not assert otherwise; Magna's production security review MUST cover the complete pinned integration and wrapper boundary.
 
-Gate B-dev passed on 2026-08-26 using zkPassport's official developer/mock-passport environment, which produced a genuine proof through the real SDK and circuits. Its clean-deployment combined L2 consumption gate passed on 2026-08-28 and is recorded in `docs/evidence/recovery-v3-gate-b-dev-2026-08-28.md`. Gate B-production remains mandatory before release because only it proves that the real production application emits the frozen `SALTED = 1` artifact from a supported physical document and that Magna's production wrapper verifies it on an actual EVM. Neither gate is waiting for a policy or lifecycle answer from zkPassport.
+Gate B-dev passed on 2026-08-26 using zkPassport's official developer/mock-passport environment, which produced a genuine proof through the real SDK and circuits. Its clean-deployment combined L2 consumption gate passed on 2026-08-28 and is recorded in `docs/evidence/recovery-v3-gate-b-dev-2026-08-28.md`. Gate B-production remains mandatory before release because only it proves that the real production application emits the frozen `SALTED = 1` artifact from a supported physical document and that Magna's production wrapper verifies it on an actual EVM. It will be run during testnet deployment, not as a local Docker/M1-M5 criterion. Neither gate is waiting for a policy or lifecycle answer from zkPassport.
 
 ## 18. Acceptance matrix
 

@@ -25,7 +25,12 @@ pub contract MagnaCompanySponsor {
         },
     };
     use magna_company_rights_registry::MagnaCompanyRightsRegistry;
-    use magna_lib::{InstagramCommittedClaimsWitness, PassportCommittedClaimsWitness, Policy};
+    use magna_lib::{
+        InstagramCommittedClaimsWitness,
+        PassportCommittedClaimsWitness,
+        Policy,
+        compute_session_authorization,
+    };
 
     #[storage]
     struct Storage<Context> {
@@ -293,6 +298,218 @@ pub contract MagnaCompanySponsor {
             )
             .call(self.context);
 
+        MagnaCompanyRightsRegistry::at(self.storage.rights_registry.read())
+            .consume_right(1 as u128)
+            .enqueue(self.context);
+        self.enqueue_self._meter_sponsored_verify();
+    }
+
+    #[external("private")]
+    #[allow_phase_change]
+    fn sponsored_verify_session(
+        policy: Policy,
+        hinted_credential: HintedNote<CredentialNote>,
+        hinted_status: HintedNote<StatusNote>,
+        min_age_proven: u8,
+        nationality_alpha3_packed: Field,
+        sponsor_slot: u8,
+        consumer_gateway: AztecAddress,
+        request_id: Field,
+        session_challenge: Field,
+        expires_at: u64,
+        requirement_index: u8,
+    ) {
+        let caller = self.msg_sender();
+        assert(consumer_gateway != AztecAddress::zero(), "consumer gateway required");
+        let authorization = compute_session_authorization(
+            consumer_gateway, request_id, session_challenge, expires_at, requirement_index, policy,
+        );
+        self.internal.assert_fee_cap();
+        self.context.set_as_fee_payer();
+        self.context.end_setup();
+        MagnaIssuer::at(self.storage.issuer.read())
+            .verify_sponsored(
+                caller, policy, hinted_credential, hinted_status,
+                min_age_proven, nationality_alpha3_packed, sponsor_slot,
+            )
+            .call(self.context);
+        self.context.push_nullifier_unsafe(authorization);
+        MagnaCompanyRightsRegistry::at(self.storage.rights_registry.read())
+            .consume_right(1 as u128)
+            .enqueue(self.context);
+        self.enqueue_self._meter_sponsored_verify();
+    }
+
+    #[external("private")]
+    #[allow_phase_change]
+    fn sponsored_verify_session_v2(
+        policy: Policy,
+        hinted_credential: HintedNote<CredentialNote>,
+        hinted_status: HintedNote<StatusNote>,
+        claims_witness: PassportCommittedClaimsWitness,
+        sponsor_slot: u8,
+        consumer_gateway: AztecAddress,
+        request_id: Field,
+        session_challenge: Field,
+        expires_at: u64,
+        requirement_index: u8,
+    ) {
+        let caller = self.msg_sender();
+        assert(consumer_gateway != AztecAddress::zero(), "consumer gateway required");
+        let authorization = compute_session_authorization(
+            consumer_gateway, request_id, session_challenge, expires_at, requirement_index, policy,
+        );
+        self.internal.assert_fee_cap();
+        self.context.set_as_fee_payer();
+        self.context.end_setup();
+        MagnaIssuer::at(self.storage.issuer.read())
+            .verify_sponsored_v2(caller, policy, hinted_credential, hinted_status, claims_witness, sponsor_slot)
+            .call(self.context);
+        self.context.push_nullifier_unsafe(authorization);
+        MagnaCompanyRightsRegistry::at(self.storage.rights_registry.read())
+            .consume_right(1 as u128)
+            .enqueue(self.context);
+        self.enqueue_self._meter_sponsored_verify();
+    }
+
+    #[external("private")]
+    #[allow_phase_change]
+    fn sponsored_verify_session_instagram(
+        policy: Policy,
+        hinted_credential: HintedNote<CredentialNote>,
+        hinted_status: HintedNote<StatusNote>,
+        claims_witness: InstagramCommittedClaimsWitness,
+        sponsor_slot: u8,
+        consumer_gateway: AztecAddress,
+        request_id: Field,
+        session_challenge: Field,
+        expires_at: u64,
+        requirement_index: u8,
+    ) {
+        let caller = self.msg_sender();
+        assert(consumer_gateway != AztecAddress::zero(), "consumer gateway required");
+        let authorization = compute_session_authorization(
+            consumer_gateway, request_id, session_challenge, expires_at, requirement_index, policy,
+        );
+        self.internal.assert_fee_cap();
+        self.context.set_as_fee_payer();
+        self.context.end_setup();
+        MagnaIssuer::at(self.storage.issuer.read())
+            .verify_sponsored_instagram(caller, policy, hinted_credential, hinted_status, claims_witness, sponsor_slot)
+            .call(self.context);
+        self.context.push_nullifier_unsafe(authorization);
+        MagnaCompanyRightsRegistry::at(self.storage.rights_registry.read())
+            .consume_right(1 as u128)
+            .enqueue(self.context);
+        self.enqueue_self._meter_sponsored_verify();
+    }
+
+    #[external("private")]
+    #[allow_phase_change]
+    fn sponsored_verify_linked_session(
+        policy: Policy,
+        hinted_root_status: HintedNote<RootStatusNote>,
+        hinted_root_authority: HintedNote<RootAuthorityNote>,
+        hinted_credential: HintedNote<LinkedCredentialNote>,
+        hinted_status: HintedNote<LinkedStatusNote>,
+        min_age_proven: u8,
+        nationality_alpha3_packed: Field,
+        sponsor_slot: u8,
+        consumer_gateway: AztecAddress,
+        request_id: Field,
+        session_challenge: Field,
+        expires_at: u64,
+        requirement_index: u8,
+    ) {
+        let caller = self.msg_sender();
+        assert(consumer_gateway != AztecAddress::zero(), "consumer gateway required");
+        let authorization = compute_session_authorization(
+            consumer_gateway, request_id, session_challenge, expires_at, requirement_index, policy,
+        );
+        self.internal.assert_fee_cap();
+        self.context.set_as_fee_payer();
+        self.context.end_setup();
+        MagnaIssuer::at(self.storage.issuer.read())
+            .verify_linked_sponsored(
+                caller, policy, hinted_root_status, hinted_root_authority, hinted_credential,
+                hinted_status, min_age_proven, nationality_alpha3_packed, sponsor_slot,
+            )
+            .call(self.context);
+        self.context.push_nullifier_unsafe(authorization);
+        MagnaCompanyRightsRegistry::at(self.storage.rights_registry.read())
+            .consume_right(1 as u128)
+            .enqueue(self.context);
+        self.enqueue_self._meter_sponsored_verify();
+    }
+
+    #[external("private")]
+    #[allow_phase_change]
+    fn sponsored_verify_linked_session_v2(
+        policy: Policy,
+        hinted_root_status: HintedNote<RootStatusNote>,
+        hinted_root_authority: HintedNote<RootAuthorityNote>,
+        hinted_credential: HintedNote<LinkedCredentialNote>,
+        hinted_status: HintedNote<LinkedStatusNote>,
+        claims_witness: PassportCommittedClaimsWitness,
+        sponsor_slot: u8,
+        consumer_gateway: AztecAddress,
+        request_id: Field,
+        session_challenge: Field,
+        expires_at: u64,
+        requirement_index: u8,
+    ) {
+        let caller = self.msg_sender();
+        assert(consumer_gateway != AztecAddress::zero(), "consumer gateway required");
+        let authorization = compute_session_authorization(
+            consumer_gateway, request_id, session_challenge, expires_at, requirement_index, policy,
+        );
+        self.internal.assert_fee_cap();
+        self.context.set_as_fee_payer();
+        self.context.end_setup();
+        MagnaIssuer::at(self.storage.issuer.read())
+            .verify_linked_sponsored_v2(
+                caller, policy, hinted_root_status, hinted_root_authority,
+                hinted_credential, hinted_status, claims_witness, sponsor_slot,
+            )
+            .call(self.context);
+        self.context.push_nullifier_unsafe(authorization);
+        MagnaCompanyRightsRegistry::at(self.storage.rights_registry.read())
+            .consume_right(1 as u128)
+            .enqueue(self.context);
+        self.enqueue_self._meter_sponsored_verify();
+    }
+
+    #[external("private")]
+    #[allow_phase_change]
+    fn sponsored_verify_linked_session_instagram(
+        policy: Policy,
+        hinted_root_status: HintedNote<RootStatusNote>,
+        hinted_root_authority: HintedNote<RootAuthorityNote>,
+        hinted_credential: HintedNote<LinkedCredentialNote>,
+        hinted_status: HintedNote<LinkedStatusNote>,
+        claims_witness: InstagramCommittedClaimsWitness,
+        sponsor_slot: u8,
+        consumer_gateway: AztecAddress,
+        request_id: Field,
+        session_challenge: Field,
+        expires_at: u64,
+        requirement_index: u8,
+    ) {
+        let caller = self.msg_sender();
+        assert(consumer_gateway != AztecAddress::zero(), "consumer gateway required");
+        let authorization = compute_session_authorization(
+            consumer_gateway, request_id, session_challenge, expires_at, requirement_index, policy,
+        );
+        self.internal.assert_fee_cap();
+        self.context.set_as_fee_payer();
+        self.context.end_setup();
+        MagnaIssuer::at(self.storage.issuer.read())
+            .verify_linked_sponsored_instagram(
+                caller, policy, hinted_root_status, hinted_root_authority,
+                hinted_credential, hinted_status, claims_witness, sponsor_slot,
+            )
+            .call(self.context);
+        self.context.push_nullifier_unsafe(authorization);
         MagnaCompanyRightsRegistry::at(self.storage.rights_registry.read())
             .consume_right(1 as u128)
             .enqueue(self.context);
