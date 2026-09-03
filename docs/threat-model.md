@@ -174,8 +174,7 @@ used as a public registry key.
 **Status:** partially enforced. The verification API receives `root_commitment` as a wrapper public
 output on every A2 lifecycle call. Under A2 it is a deterministic function of the passport's scoped
 nullifier, so it is a stable per-passport correlator visible to the server — a deliberate tradeoff
-for making issuance uniqueness enforceable, and one that keeps the preimage device-local but does
-not hide the handle.
+used by the issuance nullifier while keeping the scoped-nullifier preimage device-local.
 
 ### T8. Over- vs under-revocation
 
@@ -218,12 +217,14 @@ public revert surfaces.
 
 **Risk:** one passport mints many independent credentials.
 
-**Mitigation:** A2 derives `root_commitment` in-circuit from the proof-bound `scoped_nullifier`,
-giving a stable per-passport value that makes uniqueness enforceable — but nothing records it.
+**Mitigation:** A2 derives `root_commitment` in-circuit from the proof-bound `scoped_nullifier`.
+`register_rooted_passport_v2` emits a domain-separated, contract-siloed issuance nullifier derived
+from that root, schema version, and Passport credential type. A second initial lineage for the same
+scoped identity is rejected regardless of changed owner or claim metadata.
 
-**Status:** **not implemented.** See §6.1. The original proposal claimed high-level Sybil resistance,
-so this is a scope gap that needs implementation or explicit written acceptance. It is distinct from
-forging the policy claims inside an otherwise valid credential.
+**Status:** enforced for rooted Passport A2 issuance. Recovery and renewal preserve the original
+lineage and do not re-emit the initial-issuance nullifier. The guarantee is scoped-passport
+uniqueness, not global biological-human uniqueness across multiple or replacement documents.
 
 ### T12. Malicious dApp against the wallet
 
@@ -260,27 +261,19 @@ root-status and root-authority note hints that A1 renewal used to send.
 
 Still server-visible, and therefore correlators: `claims_hash`, `root_commitment`, `ghostOwner`,
 and `request_context_hash`. `root_commitment` in particular is stable per passport by construction
-under A2, which is what makes §6.1 fixable — and also what makes it a durable correlator.
+under A2, which is what makes the issuance nullifier deterministic — and also what makes it a
+durable correlator.
 
 ---
 
 ## 6. Open items and accepted non-goals
 
-### 6.1 No issuance nullifier
+### 6.1 Issuance uniqueness boundary
 
-No used-nullifier set is persisted by the API, and `register_rooted_passport_v2` enforces only
-`root_commitment != 0`, not uniqueness. One passport can mint unlimited credentials, so there is no
-Sybil-resistance guarantee.
-
-Magna therefore must not market one-person/one-credential uniqueness. A2 makes such a future
-feature tractable: `root_commitment` is a
-deterministic function of the proof-bound scoped nullifier, so it is a stable per-passport value
-that can be emitted as an issuance nullifier. Placing that check in the contract rather than the API
-preserves the guarantee even if the API is compromised.
-
-The initial proposal's “Sybil Resistance: Unique-human checks without identity disclosure” language
-does claim this property at a high level. Until an issuance nullifier is implemented, the mismatch
-must be treated as an open scope item rather than described as an unclaimed feature.
+Rooted Passport A2 initial issuance is single-use per proof-bound `root_commitment` through a
+domain-separated Aztec nullifier. No API database or plaintext identifier registry is authoritative
+for this invariant. The boundary is one zkPassport scoped identifier per issuer deployment; Magna
+does not claim person-wide uniqueness across multiple physical passports or replacement documents.
 
 ### 6.2 M3 receipt events — formally descoped
 

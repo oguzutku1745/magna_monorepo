@@ -9,6 +9,7 @@ pub(crate) global MAGNA_GHOST_DS: u32 = 0x4D414748; // "MAGH"
 pub(crate) global MAGNA_PASSPORT_NATIONALITY_COMMITMENT_DS: u32 = 0x4D414E43; // "MANC"
 pub(crate) global MAGNA_PASSPORT_EXPIRY_COMMITMENT_DS: u32 = 0x4D414558; // "MAEX"
 pub(crate) global MAGNA_INSTAGRAM_HANDLE_COMMITMENT_DS: u32 = 0x4D414943; // "MAIC"
+pub(crate) global MAGNA_PASSPORT_ISSUANCE_DS: u32 = 0x4D415049; // "MAPI"
 pub(crate) global MAGNA_SPONSOR_RL_DS: u32 = 0x4D414752; // "MAGR" (Magna rate-limit)
 pub(crate) global MAGNA_SPONSOR_RL_WINDOW_SECONDS: u64 = 86400;
 pub(crate) global MAGNA_SPONSOR_RL_MAX_SLOTS_PER_WINDOW: u8 = 5;

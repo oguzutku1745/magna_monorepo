@@ -34,9 +34,8 @@ Magna currently names exactly two live adapters:
    private login, renewal/revocation, and destination-bound Root Recovery V3.
 2. **Instagram V2** — client-side proof of an authentic DKIM-signed Instagram recovery email,
    blinded handle claims, governed historical/current DKIM key commitments, rootless issuance, and
-   private handle login. Wallet-loss handling is currently re-issuance, not recovery. Because the
-   original proposal promised recovery per credential and a complete recovery lifecycle, this is a
-   scope deviation that requires implementation or written reviewer acceptance before M4 closure.
+   private handle login. After Passport Root Recovery V3, the holder issues Instagram again on the
+   recovered wallet using a fresh signed Instagram security email.
 
 `X`, `StudentEmail`, and `WorkEmail` are reserved enum values only. They are not implemented
 adapters and must not be presented as live. Instagram's evidence and exact semantic limits are in
@@ -441,21 +440,14 @@ The generic rootless `recover(...)` entrypoint has been removed and is not part 
 rooted passport product. A future rootless recovery design requires a
 separate proof source and threat-model review; it must not reuse Ghost possession as sole authority.
 
-### 9.2 Linked credential recovery
+### 9.2 Instagram after passport recovery
 
-Linked credential recovery is **not implemented**. The repository has never exposed a
-`recover_linked(...)` contract entrypoint. The previous generic `recover(...)` entrypoint handled
-rootless notes only and was removed because Ghost possession alone was not a sufficient recovery
-authorization.
-
-The production-live Instagram V2 adapter currently issues a rootless credential and is not copied by
-passport Root Recovery V3. After wallet loss, the holder must obtain a fresh signed Instagram email
-and re-issue the credential to the recovered wallet. This is safe and explicit, but it is not full
-delivery of the initial proposal's per-credential recovery promise. Before M4 is called closed,
-Magna must either implement a destination-bound Instagram recovery flow or obtain written acceptance
-that fresh-proof re-issuance satisfies/replaces that requirement. Any future linked-social recovery
-design requires its own destination-bound proof source, contract entrypoint, UI/SDK path, and threat-
-model review; the existing `LinkedRecoveryNote` data type does not provide that flow by itself.
+Instagram V2 uses the rootless credential lane. Passport Root Recovery V3 rotates the rooted
+passport note set only; it does not copy the prior wallet's Instagram notes. Once the recovered
+wallet is open, the holder obtains a fresh signed Instagram security email and uses the normal
+client-side Instagram issuance flow. The browser verifies the email, generates a new blinded-handle
+proof, and issues an active Instagram credential to the recovered wallet without sending the email
+or plaintext handle to Magna API.
 
 ### 9.3 Root recovery
 
@@ -523,18 +515,20 @@ external public metering hook is issuer-only and meter-only, to avoid public rev
 ## 11. Known limitations
 
 These define the limits of the properties described above. Security analysis of each item is in
-[`threat-model.md`](./threat-model.md) — §6 for open items, §7 for resolved ones.
+[`threat-model.md`](./threat-model.md) — §6 for accepted limits and open items, §7 for resolved
+attack findings.
 
-### 11.1 No issuance nullifier
+### 11.1 Issuance uniqueness boundary
 
-Neither the verification API nor `MagnaIssuer` persists a used-nullifier set for issuance, and
-`register_rooted_passport_v2` enforces only `root_commitment != 0`, not uniqueness. One passport can
-therefore mint unlimited distinct credentials; the protocol offers no Sybil-resistance guarantee.
+`register_rooted_passport_v2` derives and emits a contract-siloed issuance nullifier from the A2
+schema version, Passport credential type, and proof-bound `root_commitment`. Aztec rejects a second
+initial rooted issuance carrying the same scoped passport identity even if the destination owner,
+Ghost owner, claims, or expiry are changed. Recovery and renewal preserve the existing lineage and
+therefore do not emit the initial-issuance nullifier again.
 
-Because `root_commitment` is now a deterministic function of the proof-bound scoped nullifier, it is
-a stable per-passport value that could be emitted as an issuance nullifier to enforce uniqueness.
-Placing that check in the contract rather than the API would preserve the guarantee even if the API
-were compromised.
+This is one rooted Magna lineage per zkPassport scoped identifier and issuer deployment. It is not a
+claim that one biological person can possess only one physical passport, or that replacement
+documents necessarily retain the same zkPassport identifier.
 
 ### 11.2 M3 receipt-event decision
 

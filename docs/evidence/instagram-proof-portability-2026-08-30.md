@@ -8,9 +8,9 @@ governed DKIM-key boundary, Aztec issuer/login path, and tester-facing UI are im
 reviewer-runnable acceptance suite.
 
 The adapter proves possession of an authentic DKIM-signed Instagram recovery email whose signed
-body names the claimed handle. It does not claim one-person/one-handle uniqueness, continuous
-Instagram control after issuance, or social-credential recovery. The credential is rootless and
-must be re-issued from a fresh signed Instagram email after wallet loss.
+body names the claimed handle. The credential uses the rootless lane. After Passport Root Recovery
+V3, the holder opens the recovered wallet and issues Instagram again from a fresh signed Instagram
+security email through the same browser-local proof flow.
 
 ## Reproducible pinned lane
 

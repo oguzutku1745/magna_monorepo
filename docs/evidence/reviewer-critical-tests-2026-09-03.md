@@ -32,6 +32,18 @@ The official zkPassport mobile scan is intentionally not replaced by a fixture. 
 therefore complements, rather than replaces, the preserved Gate B-dev live-scan evidence in
 `recovery-v3-gate-b-dev-2026-08-28.md`.
 
+The static image suite checks the issuance-nullifier formula and normal contract paths. With the
+ordered Docker stack still running, execute the real-network duplicate check separately:
+
+```bash
+npm run test:issuance-uniqueness:e2e
+```
+
+That test deploys a fresh issuer, mines the first rooted Passport A2 issuance, then changes the
+active owner, Ghost owner, claims, and expiry while retaining the same proof-bound root. The second
+transaction must be rejected by Aztec's nullifier tree. It does not replace this check with an API
+database, fixture receipt, or mocked chain response.
+
 ## Reviewer interpretation
 
 - Blocker 1 is an automated circuit/API property and must pass this command.
@@ -41,6 +53,9 @@ therefore complements, rather than replaces, the preserved Gate B-dev live-scan 
 - Login with Magna has no frontend/backend signing private key. The suite checks that altered request,
   challenge, policy, expiry, requirement index, sponsor, receipt status, or transaction nullifier is
   rejected.
+- Rooted Passport A2 initial issuance is one-use per scoped identity. The contract test pins the
+  domain-separated TypeScript/Noir hash vector; `npm run test:issuance-uniqueness:e2e` proves the
+  duplicate is rejected by a real local Aztec state transition.
 - Gate B-production is a release gate, not an M1-M5 Docker-development test. It requires a fresh
   `SALTED = 1` proof from a supported physical document through the unmodified official zkPassport
   application during testnet deployment. It does not require a Magna fork of the mobile application,

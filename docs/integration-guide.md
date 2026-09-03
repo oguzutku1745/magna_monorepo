@@ -9,10 +9,10 @@ A working end-to-end example lives in `apps/reference-dapp` — in particular
 
 > **Pilot status.** Magna is pre-release and not deployed to a public network. Passport A2 binds
 > claim values to the scanned passport, and Instagram V2 binds the blinded handle claim to an
-> authentic governed DKIM key. The original proposal did claim high-level Sybil resistance, but
-> one-passport/one-credential issuance uniqueness is not implemented; see the explicit M5 scope gap
-> in [`threat-model.md` §6.1](./threat-model.md). Login authorization no longer uses a frontend-held
-> signing key: the SDK verifies a request-bound nullifier in the successful Aztec transaction.
+> authentic governed DKIM key. Rooted Passport A2 issuance emits a contract-siloed nullifier that
+> permits one initial lineage per zkPassport scoped identifier. Login authorization no longer uses
+> a frontend-held signing key: the SDK verifies a request-bound nullifier in the successful Aztec
+> transaction.
 
 ---
 

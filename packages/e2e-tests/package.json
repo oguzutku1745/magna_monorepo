@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
+    "test:issuance-uniqueness": "AZTEC_E2E=1 vitest run src/issuance-uniqueness.e2e.spec.ts",
     "lint": "echo \"no lint configured\""
   },
   "dependencies": {

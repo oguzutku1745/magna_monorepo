@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { getInitialTestAccountsData } from "@aztec/accounts/testing";
+import { getInitialTestAccountsData, INITIAL_TEST_SIGNING_KEYS } from "@aztec/accounts/testing";
 import { deriveSecretKeyFromSigningKey } from "@aztec/accounts/utils";
 import { L1FeeJuicePortalManager } from "@aztec/aztec.js/ethereum";
 import { SetPublicAuthwitContractInteraction } from "@aztec/aztec.js/authorization";
@@ -22,6 +22,7 @@ import { Ecdsa } from "@aztec/foundation/crypto/ecdsa";
 import { retryUntil } from "@aztec/foundation/retry";
 import { poseidon2HashWithSeparator } from "@aztec/foundation/crypto/sync";
 import { TestDateProvider } from "@aztec/foundation/timer";
+import { createAztecNodeDebugClient } from "@aztec/stdlib/interfaces/client";
 import { getNonNullifiedL1ToL2MessageWitness } from "@aztec/stdlib/messaging";
 import { Gas, GasFees, GasSettings } from "@aztec/stdlib/gas";
 import { EmbeddedWallet } from "@aztec/wallets/embedded";
@@ -90,6 +91,8 @@ const INITIAL_L1_STABLE_SUPPLY = 1_000_000_000_000n;
 const MAGNA_CLAIMS_DS = 0x4d414743;
 const MAGNA_REVOCATION_DS = 0x4d415247;
 const MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS = 300n;
+const LOCAL_ANVIL_CHAIN_ID = 31_337n;
+const LOCAL_CLOCK_DRIFT_DANGER_SECONDS = 180n;
 const MAX_CONSTRAINTS = 8;
 const TRANSIENT_LOCAL_NETWORK_TX_ERROR_MARKERS = [
   "Invalid tx: Invalid expiration timestamp",
@@ -468,6 +471,54 @@ async function syncWalletPxeAfterWarp(label: string, wallet?: EmbeddedWallet): P
   );
 }
 
+async function synchronizeLocalChainClock(
+  node: ReturnType<typeof createAztecNodeClient>,
+  wallet: EmbeddedWallet,
+): Promise<void> {
+  const nodeInfo = await node.getNodeInfo();
+  if (BigInt(nodeInfo.l1ChainId) !== LOCAL_ANVIL_CHAIN_ID) {
+    throw new Error(
+      `Refusing local E2E clock synchronization on chain ${String(nodeInfo.l1ChainId)}; ` +
+        `expected Anvil chain ${LOCAL_ANVIL_CHAIN_ID.toString()}`,
+    );
+  }
+
+  const l1Client = createExtendedL1Client(L1_RPC_URLS, L1_MNEMONIC);
+  const l1ChainId = BigInt(await l1Client.getChainId());
+  if (l1ChainId !== LOCAL_ANVIL_CHAIN_ID) {
+    throw new Error(
+      `Configured L1 RPC reports chain ${l1ChainId.toString()}; ` +
+        `expected Anvil chain ${LOCAL_ANVIL_CHAIN_ID.toString()}`,
+    );
+  }
+
+  const latestTimestamp = BigInt((await l1Client.getBlock()).timestamp);
+  const wallTimestamp = BigInt(Math.floor(Date.now() / 1_000));
+  const drift = latestTimestamp - wallTimestamp;
+  if (drift >= LOCAL_CLOCK_DRIFT_DANGER_SECONDS) {
+    throw new Error(
+      `Local L1 is ${drift.toString()}s ahead of the host. Restart the local network before E2E testing; ` +
+        `the monotonic chain clock cannot safely be moved backwards.`,
+    );
+  }
+  if (latestTimestamp >= wallTimestamp) return;
+
+  const beforeL2Block = await node.getBlockNumber();
+  const debug = createAztecNodeDebugClient(AZTEC_NODE_URL);
+  await debug.warpL2TimeAtLeastTo(Number(wallTimestamp));
+  await retryUntil(
+    async () => ((await node.getBlockNumber()) > beforeL2Block ? true : undefined),
+    "local L2 checkpoint after wall-clock synchronization",
+    120,
+    1,
+  );
+  console.info(
+    `[e2e] synchronized local L1/L2 clock ` +
+      `(from_ts=${latestTimestamp.toString()} to_at_least=${wallTimestamp.toString()})`,
+  );
+  await syncWalletPxeAfterWarp("local wall-clock synchronization", wallet);
+}
+
 async function createWallet(node: ReturnType<typeof createAztecNodeClient>): Promise<EmbeddedWallet> {
   return await EmbeddedWallet.create(node, {
     ephemeral: true,
@@ -487,13 +538,14 @@ async function loadInitialAccount(
   if (!deployerData) {
     throw new Error(`Deployer ${deployer.toString()} is not one of local network test accounts`);
   }
+  const accountIndex = testAccounts.indexOf(deployerData);
 
   const account = await runStep(
-    `wallet.createSchnorrAccount(${alias})`,
-    async () => await wallet.createSchnorrAccount(
+    `wallet.createSchnorrInitializerlessAccount(${alias})`,
+    async () => await wallet.createSchnorrInitializerlessAccount(
       deployerData.secret,
       deployerData.salt,
-      deployerData.signingKey,
+      INITIAL_TEST_SIGNING_KEYS[accountIndex] ?? deployerData.signingKey,
       alias,
     ),
   );
@@ -971,6 +1023,10 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
       async () => await createWallet(node),
     );
     wallet = embeddedWallet;
+    await runStep(
+      "synchronize local L1/L2 clock",
+      async () => await synchronizeLocalChainClock(node, embeddedWallet),
+    );
 
     const testAccounts = await runStep(
       "getInitialTestAccountsData",

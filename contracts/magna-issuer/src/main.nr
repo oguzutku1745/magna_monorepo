@@ -40,6 +40,7 @@ pub contract MagnaIssuer {
         constants::{
             MAGNA_CLAIMS_DS,
             MAGNA_INSTAGRAM_HANDLE_COMMITMENT_DS,
+            MAGNA_PASSPORT_ISSUANCE_DS,
             MAGNA_PASSPORT_EXPIRY_COMMITMENT_DS,
             MAGNA_PASSPORT_NATIONALITY_COMMITMENT_DS,
             MAGNA_REVOCATION_DS,
@@ -56,6 +57,7 @@ pub contract MagnaIssuer {
             SCHEMA_VERSION_V2,
         },
         errors::{assert_orchestrator_sender, assert_owners_match_sender},
+        issuance::compute_passport_issuance_nullifier,
         metering::increment_counter,
         rate_limit::compute_sponsor_rate_limit_nullifier,
         revocation::{
@@ -412,6 +414,22 @@ pub contract MagnaIssuer {
         assert_orchestrator_sender(self.msg_sender(), self.storage.orchestrator.read());
         assert(root_commitment != 0, "root commitment required");
         assert(claims_hash != 0, "authority claims hash required");
+
+        // A2 binds root_commitment to the authenticated zkPassport scoped
+        // nullifier. Creating this contract-siloed nullifier makes initial
+        // rooted Passport issuance single-use for that stable identity.
+        // Recovery and renewal preserve the existing lineage and deliberately
+        // do not emit this initial-issuance nullifier again.
+        let issuance_nullifier = compute_passport_issuance_nullifier(
+            root_commitment,
+            SCHEMA_VERSION_V2,
+            1,
+            MAGNA_PASSPORT_ISSUANCE_DS,
+        );
+        let siloed_issuance_nullifier = compute_siloed_nullifier(self.address, issuance_nullifier);
+        let header = self.context.get_anchor_block_header();
+        assert_nullifier_did_not_exist_by(header, siloed_issuance_nullifier);
+        self.context.push_nullifier_unsafe(issuance_nullifier);
 
         // Safety: Randomness here is only used as a note secret input and does not
         // influence consensus-critical public state branching.
