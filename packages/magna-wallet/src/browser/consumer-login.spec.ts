@@ -110,6 +110,7 @@ test("runMagnaConsumerLogin routes rooted credentials through the linked sponsor
   const outcome = await runMagnaConsumerLogin({
     env: sponsorEnv(),
     wallet: {
+      pxe: { debug: { getNotes: async () => [{ id: "account-auth" }] } },
       registerSender: async () => undefined,
       getContractMetadata: async (address: { toString(): string }) => ({
         instance: { address: address.toString() },
@@ -201,6 +202,7 @@ test("runMagnaConsumerLogin routes v2-only rooted passports through the linked s
   const outcome = await runMagnaConsumerLogin({
     env: sponsorEnv(),
     wallet: {
+      pxe: { debug: { getNotes: async () => [{ id: "account-auth" }] } },
       registerSender: async () => undefined,
       getContractMetadata: async (address: { toString(): string }) => ({
         instance: { address: address.toString() },
@@ -302,6 +304,7 @@ test("runMagnaConsumerLogin routes instagram credentials through sponsored issue
   const outcome = await runMagnaConsumerLogin({
     env: sponsorEnv(),
     wallet: {
+      pxe: { debug: { getNotes: async () => [{ id: "account-auth" }] } },
       registerSender: async () => undefined,
       getContractMetadata: async (address: { toString(): string }) => ({
         instance: { address: address.toString() },

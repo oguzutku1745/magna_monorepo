@@ -17,18 +17,31 @@ import {
   type WalletSession,
 } from "@magna/wallet";
 import { getManagementEnv } from "./env";
-import { hydratePassportA2Witness, refsForOwner, upsertCredentialRef, type StoredCredentialRef } from "./storage";
+import {
+  hydratePassportA2Witness,
+  loadCredentialRefs,
+  replaceCredentialRefsForOwnerFromChain,
+  type StoredCredentialRef,
+} from "./storage";
 
 const A2_LOCAL_WITNESS_MISSING_MESSAGE =
   "Passport A2 credential is missing its local committed-claims witness. Re-issue this passport credential on this device.";
 const ACCOUNT_AUTH_NOTE_MISSING_MESSAGE =
   "Login with Magna could not authorize the verification transaction: the passkey wallet's own signing-key " +
-  "note is not present in this session's private state (PXE), so the account cannot sign. This is an " +
-  "account/PXE sync issue, not a missing credential. Reopen the passkey wallet to resync its private state, " +
-  "then try again.";
+  "note is not present in this session's private state (PXE), so the account cannot sign.";
 
-function loadPassportCredential(ownerAddress: string, issuerAddress?: string) {
-  const passports = refsForOwner(ownerAddress, { issuerAddress }).filter(
+export const PASSKEY_ACCOUNT_AUTH_NOTE_MISSING_CODE = "PASSKEY_ACCOUNT_AUTH_NOTE_MISSING";
+
+export function isPasskeyAccountAuthNoteMissing(error: unknown): boolean {
+  return errorMessage(error).includes(PASSKEY_ACCOUNT_AUTH_NOTE_MISSING_CODE);
+}
+
+function loadPassportCredential(
+  ownerAddress: string,
+  issuerAddress: string | undefined,
+  chainCredentials: StoredCredentialRef[],
+) {
+  const passports = chainCredentials.filter(
     ref => ref.kind === "passport" && ref.status === "active",
   );
   const credential = passports.find(ref => ref.issuanceKind === "a2" && ref.passportCommittedClaimsV2Witness);
@@ -73,9 +86,15 @@ function instagramHandleHashFromPolicy(policy: Policy): bigint {
   return constraint.value;
 }
 
-function loadInstagramCredential(ownerAddress: string, handleHash: bigint, issuerAddress?: string, handle?: string) {
+function loadInstagramCredential(
+  ownerAddress: string,
+  handleHash: bigint,
+  issuerAddress: string | undefined,
+  chainCredentials: StoredCredentialRef[],
+  handle?: string,
+) {
   const handleHashString = handleHash.toString();
-  const credential = refsForOwner(ownerAddress, { issuerAddress }).find(
+  const credential = chainCredentials.find(
     ref =>
       ref.kind === "instagram" &&
       ref.status === "active" &&
@@ -123,7 +142,10 @@ function isMissingHintedNoteError(error: unknown): boolean {
 
 function isAccountAuthNoteError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return message.includes("Failed to get a note") && !isMissingHintedNoteError(error);
+  return (
+    message.includes("PASSKEY_ACCOUNT_AUTH_NOTE_MISSING") ||
+    (message.includes("Failed to get a note") && !isMissingHintedNoteError(error))
+  );
 }
 
 function errorMessage(error: unknown): string {
@@ -269,6 +291,7 @@ function resolveRequirementCredential(input: {
   requirement: LoginRequirement;
   ownerAddress: string;
   issuerAddress?: string;
+  chainCredentials: StoredCredentialRef[];
 }) {
   if (input.requirement.kind === "instagram-handle") {
     const handleHash = computeInstagramHandleHash(input.requirement.handle);
@@ -279,7 +302,13 @@ function resolveRequirementCredential(input: {
         credentialType: CredentialType.Instagram,
         constraints: [instagramHandleEqConstraint(handleHash)],
       },
-      credential: loadInstagramCredential(input.ownerAddress, handleHash, input.issuerAddress, input.requirement.handle),
+      credential: loadInstagramCredential(
+        input.ownerAddress,
+        handleHash,
+        input.issuerAddress,
+        input.chainCredentials,
+        input.requirement.handle,
+      ),
     };
   }
 
@@ -288,7 +317,7 @@ function resolveRequirementCredential(input: {
       id: input.requirement.id,
       kind: input.requirement.kind,
       policy: input.requirement.policy,
-      credential: loadPassportCredential(input.ownerAddress, input.issuerAddress),
+      credential: loadPassportCredential(input.ownerAddress, input.issuerAddress, input.chainCredentials),
     };
   }
 
@@ -298,7 +327,12 @@ function resolveRequirementCredential(input: {
       id: input.requirement.id,
       kind: input.requirement.kind,
       policy: input.requirement.policy,
-      credential: loadInstagramCredential(input.ownerAddress, handleHash, input.issuerAddress),
+      credential: loadInstagramCredential(
+        input.ownerAddress,
+        handleHash,
+        input.issuerAddress,
+        input.chainCredentials,
+      ),
     };
   }
 
@@ -312,19 +346,28 @@ async function reconcileStoredRefsFromPxe(input: {
 }): Promise<StoredCredentialRef[]> {
   const client = new MagnaBrowserClient(input.session.wallet, input.env, input.ownerAddress);
   const discovered = await client.discoverCredentialRefs(input.ownerAddress);
-  const existingRefs = refsForOwner(input.ownerAddress, { issuerAddress: input.env.issuerAddress });
+  const existingRefs = loadCredentialRefs().filter(
+    ref =>
+      normalizeAddress(ref.ownerAddress) === normalizeAddress(input.ownerAddress) &&
+      normalizeAddress(ref.issuerAddress) === normalizeAddress(input.env.issuerAddress),
+  );
   const reconciled: StoredCredentialRef[] = [];
 
   for (const discoveredRef of discovered) {
+    const matching = existingRefs.filter(ref => hasSameCredentialClaims(ref, discoveredRef));
     const existing =
-      existingRefs.find(ref => matchesDiscoveredRef(ref, discoveredRef)) ??
-      existingRefs.find(ref => hasSameCredentialClaims(ref, discoveredRef));
+      matching.find(ref => matchesDiscoveredRef(ref, discoveredRef)) ??
+      matching.find(ref => Boolean(ref.passportCommittedClaimsV2Witness || ref.handleBlind)) ??
+      matching[0];
     const stored = storedRefFromDiscovered(discoveredRef, input.env.issuerAddress, existing);
-    upsertCredentialRef(stored);
     reconciled.push(stored);
   }
 
-  return reconciled;
+  return replaceCredentialRefsForOwnerFromChain(
+    input.ownerAddress,
+    input.env.issuerAddress,
+    reconciled,
+  );
 }
 
 export type WalletLoginRequestInput = {
@@ -351,22 +394,18 @@ async function runWalletLoginWithSession(
     }
     const ownerAddress = sessionOwnerAddress(session, env);
     const requirements = verificationRequirements(input.policy, input.requirements);
-    let reconciledBeforeVerification = false;
-    try {
-      await reconcileStoredRefsFromPxe({ session, ownerAddress, env });
-      reconciledBeforeVerification = true;
-    } catch (reconcileError) {
-      console.warn("magna credential preflight discovery failed", reconcileError);
-    }
+    // Fail closed unless the current PXE/Aztec state supplies the credential
+    // set. Persisted witness sidecars may enrich these refs but cannot add one.
+    const chainCredentials = await reconcileStoredRefsFromPxe({ session, ownerAddress, env });
     input.onVerifying?.();
     const receipts = [];
     let authorizationContract: string | undefined;
     for (const [requirementIndex, requirement] of requirements.entries()) {
-      let reconciledFromPxe = false;
-      let verification = resolveRequirementCredential({
+      const verification = resolveRequirementCredential({
         requirement,
         ownerAddress,
         issuerAddress: env.issuerAddress,
+        chainCredentials,
       });
       let outcome: MagnaConsumerLoginOutcome;
       try {
@@ -389,45 +428,7 @@ async function runWalletLoginWithSession(
           await logAccountAuthNoteDiagnostic({ wallet: session.wallet, ownerAddress, env, cause: error });
           throw annotateAccountAuthNoteError(error);
         }
-        if (!isMissingHintedNoteError(error) || reconciledFromPxe || reconciledBeforeVerification) {
-          throw isMissingHintedNoteError(error) ? annotateMissingHintedNoteError(error, verification) : error;
-        }
-
-        const reconciled = await reconcileStoredRefsFromPxe({ session, ownerAddress, env });
-        reconciledFromPxe = true;
-        if (reconciled.length === 0) {
-          throw annotateMissingHintedNoteError(error, verification);
-        }
-
-        verification = resolveRequirementCredential({
-          requirement,
-          ownerAddress,
-          issuerAddress: env.issuerAddress,
-        });
-        try {
-          outcome = await runMagnaConsumerLogin({
-            env,
-            wallet: session.wallet,
-            activeAddress: ownerAddress,
-            policy: verification.policy,
-            consumerGatewayAddress: input.consumerGatewayAddress,
-            sessionAuthorization: {
-              requestId: input.sessionRequestId,
-              sessionChallenge: input.sessionChallenge,
-              expiresAt: input.sessionExpiresAt,
-              requirementIndex,
-            },
-            credential: verification.credential,
-          });
-        } catch (retryError) {
-          if (isAccountAuthNoteError(retryError)) {
-            await logAccountAuthNoteDiagnostic({ wallet: session.wallet, ownerAddress, env, cause: retryError });
-            throw annotateAccountAuthNoteError(retryError);
-          }
-          throw isMissingHintedNoteError(retryError)
-            ? annotateMissingHintedNoteError(retryError, verification)
-            : retryError;
-        }
+        throw isMissingHintedNoteError(error) ? annotateMissingHintedNoteError(error, verification) : error;
       }
       if (!outcome.receipt) {
         throw new Error(`Aztec did not return a transaction hash for requirement ${verification.id}.`);
@@ -473,6 +474,10 @@ export async function runWalletLoginForRequest(
     alias: "magna-user",
     userName: "magna-user",
     rpId: window.location.hostname || "localhost",
+    // A standalone authorization window must not open or inherit the
+    // management tab's persistent SQLite-OPFS PXE. Rebuild an isolated PXE
+    // from the passkey-derived account privacy keys and current chain logs.
+    ephemeral: true,
     storedCredentialId: input.storedCredentialId,
     deployWithLocalTestAccount: env.enableLocalTestBootstrap,
     localTestAccountIndex: env.localTestAccountIndex,

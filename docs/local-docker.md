@@ -24,10 +24,12 @@ npm run docker:local
 
 This is intentionally a destructive reset of **only the `magna-local` Compose project**. Every invocation:
 
-1. removes the previous Magna containers and the named volumes containing Anvil/Aztec state, the deployment manifest, generated runtime configuration, and frontend bundles;
-2. removes the previously tagged `magna-local-app:aztec-5.1.0` image;
-3. creates a dedicated empty `magna-local-clean-builder`, rebuilds with `--no-cache --load`, and then deletes that builder and all of its cache;
-4. starts new L1/L2 processes and performs a completely new application and Recovery V3 deployment.
+1. removes unused prior Magna application-image generations, identified by Magna's image label, without globally pruning Docker;
+2. creates a dedicated empty `magna-local-clean-builder`, rebuilds with `--no-cache`, exports the result to a temporary host file, loads it, and then deletes that builder and all of its cache;
+3. only after that replacement image is safely loaded, removes the previous Magna containers and named volumes containing Anvil/Aztec state, the deployment manifest, generated runtime configuration, and frontend bundles;
+4. removes the now-unused previous Magna image and starts new L1/L2 processes for a completely new application and Recovery V3 deployment.
+
+If image construction fails, the command removes its temporary builder and export file but leaves an already-running Magna stack and its chain volumes untouched. This prevents a compiler, network, or storage failure from destroying the last usable local environment.
 
 The command cannot and must not delete the user's OS/cloud passkey credentials. Each fresh bootstrap does, however, generate a new deployment-instance ID. On the next page load, the management and login apps detect that ID, clear the prior Aztec `pxe_data` and `wallet_data` SQLite-OPFS stores for this local network, and discard chain-specific credential metadata before allowing automatic wallet restoration. The underlying passkey remains available and can be used to deploy the same user-controlled address on the fresh chain, or the tester can create a new passkey.
 
@@ -49,7 +51,12 @@ The bootstrap still validates its inputs defensively, but `npm run docker:local`
 npm run docker:local:resume
 ```
 
-This command uses `docker compose start` on the existing long-running containers. It does not build an image, compile contracts, run the bootstrap service, recreate containers, or replace volumes. It returns after starting the containers, so use `docker compose logs -f` separately when live logs are needed. Use it only when the containers were previously created and you intentionally want to keep the current disposable chain, deployment, and generated runtime configuration.
+This command uses `docker compose start` on existing containers without building
+or bootstrapping. It is not a chain-persistence guarantee: this local profile's
+Anvil and Aztec processes keep chain state in memory. If those processes exited,
+retained application configuration does not restore their chain. Use a fresh
+`npm run docker:local` deployment after such a restart. To refresh an app while
+keeping the running chain, use the frontend-only command below.
 
 The two Vite frontends mount their `src`, `index.html`, and Vite configuration from the current checkout. This is intentionally limited to the development Compose profile: dependency installation, generated contract bindings, and backend/package builds remain pinned inside the image. After changing frontend source, refresh only those containers without compiling contracts or touching the chain:
 
@@ -93,7 +100,7 @@ docker compose logs -f anvil aztec-localnet verification-api management
 docker compose down
 ```
 
-To pause and resume the same disposable chain containers, use `docker compose stop` and `npm run docker:local:resume`. To remove the current project without immediately rebuilding it, use:
+To remove the current project without immediately rebuilding it, use:
 
 ```bash
 npm run docker:local:down
@@ -101,7 +108,7 @@ npm run docker:local:down
 
 That command removes only this Compose project's containers and named volumes. It destroys the disposable local chain and deployment. Browser passkeys are not deleted, but credentials tied to the removed chain are no longer usable, so create new local wallets after the reset.
 
-Docker build cache is different from Magna runtime state: it contains immutable intermediate image layers, not an Anvil database, Aztec state, a deployment manifest, or browser/PXE data. The clean command nevertheless isolates and deletes Magna's build cache on every run. It does not run a global `docker builder prune`; caches belonging to unrelated projects are untouched. After a successful build, Docker retains only the runnable Magna image rather than Magna's intermediate builder cache.
+Docker build cache is different from Magna runtime state: it contains immutable intermediate image layers, not an Anvil database, Aztec state, a deployment manifest, or browser/PXE data. The clean command nevertheless isolates and deletes Magna's build cache on every run. It does not run a global `docker builder prune`; caches belonging to unrelated projects are untouched. Runnable Magna images carry `io.magna.local-app=true`, and the clean command removes unused older generations with that label. A narrowly matched legacy signature cleans images built before the label existed. After a successful build, Docker retains only the current runnable Magna image rather than Magna's intermediate builder cache.
 
 ## Configuration boundary
 
@@ -145,15 +152,60 @@ This test verifies the committed email's real DKIM signature, builds the circuit
 witness, generates an UltraHonk proof, and verifies that proof. It does not mock
 the email, witness, prover, or verifier.
 
-## Remaining developer evidence gate
+## Official mobile developer evidence
 
-The Compose definition and static configuration are testable without a physical passport. Final
-Docker acceptance still requires a clean-volume proof produced by zkPassport's official mobile app
-in `devMode=true` with its official mock passport. That run repeats the positive recovery plus the
-mutation, replay, registry-revocation, and API-offline assertions from the Recovery V3 specification.
-A container build or health check alone cannot close that developer evidence gate.
+The September 6 managed-clock deployment passed an official mobile developer
+recovery with mutation/replay rejection, canonical Inbox ingestion and successful
+Aztec execution at block 45. See the [public receipt and browser evidence](evidence/recovery-v3-mobile-2026-09-06.md).
+Future acceptance runs still require a fresh official mobile proof; a container
+build or health check is not a substitute. Independent-root and registry-negative
+checks remain part of Recovery V3 bootstrap and its protocol evidence.
 
 zkPassport confirmed on 2026-08-25 that OPRF does not currently work with dev mode and provided no
 ETA. Consequently, Docker deliberately requests `NON_SALTED_MOCK = 2` and does not attempt
 `SALTED = 1`. The real supported-document, production-registry, strict-FaceMatch, `SALTED = 1` run
 is a separate testnet-deployment gate before release, not a local Docker or M1-M5 acceptance step.
+
+
+### Managed local clock
+
+Docker starts the fresh Anvil genesis two hours in the past and injects the same
+clock into Aztec. The existing 3,600-second consumer-gateway delay elapses during
+bootstrap without putting the chain ahead of real time. Bootstrap then advances
+L1/L2 forward to the host clock, removes Anvil's synthetic per-block timestamp
+increment, resets the injected clock, and verifies readiness before the API and
+apps start. Authenticated passport dates and contract freshness rules are unchanged.
+
+The local-only loader in `docker/local-clock` checks exact integration points in
+the digest-pinned Aztec 5.1.0 runtime and refuses an unsupported runtime. It paces
+both ordinary and explicit checkpoints at the sequencer: a future slot waits for
+wall time instead of making L1 advance ahead of it. The 8s Aztec / 4s Ethereum
+protocol slot configuration is preserved. The internal clock control endpoint
+on port 8090 is not published to the host. Its readiness marker is bound to the
+Anvil genesis hash; a fresh chain cannot reuse an old marker.
+
+Run `npm run localnet:drift` on the host. It reads the running management
+container's public RPC configuration, so Docker recovery and the diagnostic
+both inspect Anvil on `127.0.0.1:18545`. To select another network, provide both
+`L1_RPC_URL` and `AZTEC_NODE_URL`, or `MAGNA_DEPLOYMENT_MANIFEST` for a host deployment.
+Inaccessible Docker configuration fails closed instead of reporting another chain.
+
+The output shows latest and pending L1 timestamps and signed drift (`L1 minus
+host`). Both differences are checked by magnitude. A stale latest block with a
+current pending timestamp is explicitly classified as idle, rather than future
+drift; recovery already synchronizes an idle chain forward before submission.
+The diagnostic never mines or changes time. Recovery logs its sampled block,
+endpoint, host time and drift under `[recovery-v3:local-clock]` in the console.
+
+`npm run test:localnet:clock:docker` runs an isolated Anvil/Aztec integration test
+using the actual loader and compiled Magna gateway contracts. It verifies the
+gateway delay, rejects future debug warps, runs two real Fee Juice bridge/claim
+cycles and an additional Aztec transaction within 180 seconds, and checks clock
+drift and idle pending time. It uses the standard local bootstrap proving mode;
+it does not substitute for official zkPassport mobile recovery evidence.
+
+The local recovery Inbox loop stops retrying after a three-minute budget instead
+of entering an additional six-minute polling wait. RPC/proof processing has its
+own latency; this is not a three-minute guarantee for mobile scanning and the
+complete browser proof/recovery flow. A wait timeout does not cancel a submitted
+portal transaction.

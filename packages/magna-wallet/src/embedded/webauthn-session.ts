@@ -12,6 +12,7 @@ import {
   makeBrowserAsserter,
   registerWebAuthnCredential,
   type WebAuthnDiscoveredPrfOutputs,
+  type WebAuthnAssertionResult,
   type WebAuthnPrfOutputs,
   type WebAuthnRegistration,
 } from "../webauthn/ceremony.js";
@@ -52,6 +53,13 @@ export type WebAuthnWalletSessionOptions = {
   userName: string;
   rpId: string;
   alias: string;
+  /**
+   * Rebuild private state from the selected passkey and the current Aztec chain
+   * in an isolated in-memory PXE. This is used by standalone authorization
+   * windows so they neither share nor contend for the management tab's OPFS
+   * database.
+   */
+  ephemeral?: boolean;
   forceCreate?: boolean;
   storedCredentialId?: string;
   publicKeyRecoveryBundle?: string;
@@ -338,6 +346,14 @@ function registrationFromStored(account: StoredWebAuthnAccount): WebAuthnRegistr
   };
 }
 
+/** Performs only the per-transaction assertion in the calling browser window. */
+export async function assertStoredWebAuthnAccount(
+  account: StoredWebAuthnAccount,
+  challenge: Uint8Array,
+): Promise<WebAuthnAssertionResult> {
+  return makeBrowserAsserter(registrationFromStored(account))(challenge);
+}
+
 function registrationFromPublicKeyRecovery(
   bundle: WebAuthnPublicKeyRecoveryBundle,
   discovered: WebAuthnDiscoveredPrfOutputs,
@@ -531,7 +547,7 @@ export async function createWebAuthnWalletSession(options: WebAuthnWalletSession
 
 async function createWebAuthnWalletSessionOnce(options: WebAuthnWalletSessionOptions): Promise<WalletSession> {
   const storage = storageForOptions(options.storage);
-  const wallet = await createEmbeddedWallet(options.nodeUrl, false);
+  const wallet = await createEmbeddedWallet(options.nodeUrl, options.ephemeral ?? false);
   try {
     const recoveryBundle = options.publicKeyRecoveryBundle
       ? parseWebAuthnPublicKeyRecoveryBundle(options.publicKeyRecoveryBundle)
@@ -592,6 +608,14 @@ async function createWebAuthnWalletSessionOnce(options: WebAuthnWalletSessionOpt
 
     const accountManager = await AccountManager.create(wallet, secret, webAuthnAccountContract(registration), { salt });
     const address = accountManager.address.toString();
+    if (stored && stored.address.toLowerCase() !== address.toLowerCase()) {
+      throw new Error(
+        `Stored passkey wallet was created for a different Magna WebAuthn account artifact. ` +
+          `stored=${stored.address} current=${address}. ` +
+          `Create a new passkey wallet with the current build or recover the credential into a newly created target; ` +
+          `an account already deployed from the previous contract class cannot be rewritten.`,
+      );
+    }
     if (recoveryBundle?.address && recoveryBundle.address !== address) {
       throw new Error(`Recovered WebAuthn account address mismatch. expected=${recoveryBundle.address} derived=${address}`);
     }
@@ -622,7 +646,7 @@ async function createWebAuthnWalletSessionOnce(options: WebAuthnWalletSessionOpt
         accountFlavor: "secp256r1",
         deploymentStatus: deployment.isReady ? "deployed" : "counterfactual",
         sessionOrigin,
-        storageMode: "persistent",
+        storageMode: options.ephemeral ? "ephemeral" : "persistent",
         walletAuth: "webauthn",
         credentialId: base64urlEncode(registration.credentialId),
         passkeyName: storedAccount.displayName ?? options.userName,

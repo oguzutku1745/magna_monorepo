@@ -45,8 +45,13 @@ pub contract MagnaWebAuthnAccount {
             origin,
             origin_len,
         };
+        // Match Aztec's canonical P-256 account bootstrap. This immutable note is the
+        // account's own configuration and must be rediscoverable after restoring the
+        // account into a fresh PXE. Constrained delivery would require an established
+        // sender/recipient handshake and sequence state before the account can even
+        // read the key needed to authorize its first transaction.
         self.storage.signing_public_key.initialize(note).deliver(
-            MessageDelivery::onchain_constrained().with_sender(self.address),
+            MessageDelivery::onchain_unconstrained().with_sender(self.address),
         );
     }
 

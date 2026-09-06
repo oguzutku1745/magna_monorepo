@@ -16,6 +16,10 @@ import {
   webAuthnPrfOutputsToAccountMaterial,
 } from "./webauthn-session.js";
 import type { WebAuthnRegistration } from "../webauthn/ceremony.js";
+import {
+  makeBrowserAsserter,
+  withWebAuthnAssertionDelegate,
+} from "../webauthn/ceremony.js";
 
 test("PRF-backed stored WebAuthn accounts do not persist raw wallet material", () => {
   const stored = storedWebAuthnAccountFromRegistration(
@@ -235,3 +239,28 @@ function memoryStorage(): Storage {
     },
   };
 }
+
+test("an active assertion delegate owns the passkey ceremony for an existing account contract", async () => {
+  const registration = registrationFixture();
+  const challenge = new Uint8Array(32).fill(17);
+  const delegatedAssertion = {
+    signatureRS: new Uint8Array(64).fill(18),
+    authenticatorData: new Uint8Array([19, 20]),
+    clientDataJSON: new TextEncoder().encode('{"type":"webauthn.get"}'),
+  };
+  let receivedRegistration: WebAuthnRegistration | undefined;
+  let receivedChallenge: Uint8Array | undefined;
+
+  const result = await withWebAuthnAssertionDelegate(
+    async (candidate, candidateChallenge) => {
+      receivedRegistration = candidate;
+      receivedChallenge = candidateChallenge;
+      return delegatedAssertion;
+    },
+    () => makeBrowserAsserter(registration)(challenge),
+  );
+
+  assert.equal(receivedRegistration, registration);
+  assert.equal(receivedChallenge, challenge);
+  assert.equal(result, delegatedAssertion);
+});

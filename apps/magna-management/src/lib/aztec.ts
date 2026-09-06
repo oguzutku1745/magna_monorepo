@@ -2,6 +2,17 @@ import type { ChainInfo } from "@aztec/aztec.js/account";
 import { Fr } from "@aztec/aztec.js/fields";
 import { createAztecNodeClient } from "@aztec/aztec.js/node";
 import { TxExecutionResult, TxHash, TxStatus } from "@aztec/aztec.js/tx";
+import { BlockNumber } from "@aztec/foundation/branded-types";
+
+export type MagnaChainInfo = ChainInfo & {
+  /**
+   * Identifies the concrete Aztec chain instance, not merely its network
+   * configuration. Local Docker chains deliberately reuse the same chain id,
+   * rollup version, and deterministic L1 contract addresses after a reset, but
+   * their genesis block hash changes with the new genesis timestamp/state.
+   */
+  genesisBlockHash: string;
+};
 
 export type RecoveryTransactionChainState = {
   status: "confirmed" | "pending" | "rejected" | "unavailable";
@@ -17,12 +28,19 @@ type RecoveryTransactionReceipt = {
   error?: string;
 };
 
-export async function getChainInfo(nodeUrl: string): Promise<ChainInfo> {
+export async function getChainInfo(nodeUrl: string): Promise<MagnaChainInfo> {
   const node = createAztecNodeClient(nodeUrl);
-  const info = await node.getNodeInfo();
+  const [info, genesisBlock] = await Promise.all([
+    node.getNodeInfo(),
+    node.getBlock(BlockNumber.ZERO),
+  ]);
+  if (!genesisBlock) {
+    throw new Error("Aztec node did not return its genesis block.");
+  }
   return {
     chainId: new Fr(info.l1ChainId),
     version: new Fr(info.rollupVersion),
+    genesisBlockHash: genesisBlock.hash.toString(),
   };
 }
 

@@ -14,8 +14,9 @@ services:
   anvil:
     image: aztecprotocol/aztec:5.1.0@sha256:dd26a01042caf0f34760c4221bd1c855862181842e0cbe3c8c6b4e3f6a5b4128
     init: true
-    entrypoint: ["/opt/foundry/bin/anvil"]
-    command: ["--silent", "--host", "0.0.0.0", "--port", "8545", "--chain-id", "31337"]
+    entrypoint: ["node", "/opt/magna-local-clock/start-anvil.mjs"]
+    volumes:
+      - ./docker/local-clock:/opt/magna-local-clock:ro
     environment:
       LD_PRELOAD: ""
     ports:
@@ -30,10 +31,14 @@ services:
   aztec-localnet:
     image: aztecprotocol/aztec:5.1.0@sha256:dd26a01042caf0f34760c4221bd1c855862181842e0cbe3c8c6b4e3f6a5b4128
     init: true
-    entrypoint: ["node", "--no-warnings", "/usr/src/yarn-project/aztec/dest/bin/index.js"]
+    entrypoint: ["node", "--no-warnings", "--import", "/opt/magna-local-clock/register.mjs", "/usr/src/yarn-project/aztec/dest/bin/index.js"]
+    volumes:
+      - ./docker/local-clock:/opt/magna-local-clock:ro
+      - magna-runtime:/runtime
     command: ["start", "--local-network", "--l1-rpc-urls", "http://anvil:8545"]
     environment:
       LD_PRELOAD: ""
+      MAGNA_MANAGED_LOCAL_CLOCK: "1"
       ETHEREUM_SLOT_DURATION: "4"
       AZTEC_SLOT_DURATION: "8"
       SEQ_BLOCK_DURATION_MS: "1000"
@@ -53,6 +58,7 @@ services:
     <<: *magna-app
     command: ["node", "./scripts/bootstrap-docker-local.mjs"]
     environment:
+      MAGNA_LOCAL_CLOCK_CONTROL_URL: http://aztec-localnet:8090
       MAGNA_DEPLOYMENT_MANIFEST: /workspace/deployments/local.json
       MAGNA_DOCKER_RUNTIME_DIR: /runtime
       MAGNA_AZTEC_NODE_URL: http://aztec-localnet:8080

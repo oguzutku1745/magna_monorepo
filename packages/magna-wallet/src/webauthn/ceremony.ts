@@ -18,6 +18,10 @@ export type WebAuthnAssertionResult = {
 };
 
 export type WebAuthnAsserter = (challenge: Uint8Array) => Promise<WebAuthnAssertionResult>;
+export type WebAuthnAssertionDelegate = (
+  registration: WebAuthnRegistration,
+  challenge: Uint8Array,
+) => Promise<WebAuthnAssertionResult>;
 export type WebAuthnPrfOutputs = {
   secret: Uint8Array;
   salt: Uint8Array;
@@ -29,6 +33,28 @@ export type WebAuthnDiscoveredPrfOutputs = WebAuthnPrfOutputs & {
 export const AZTEC_ACCOUNT_SECRET_PRF_LABEL = "magna:aztec-account-secret:v1";
 export const AZTEC_ACCOUNT_SALT_PRF_LABEL = "magna:aztec-account-salt:v1";
 const AUTHENTICATOR_TRANSPORTS = new Set<AuthenticatorTransport>(["ble", "hybrid", "internal", "nfc", "usb"]);
+let activeAssertionDelegate: WebAuthnAssertionDelegate | undefined;
+
+/**
+ * Routes transaction assertions through a caller-owned top-level window for the
+ * duration of one operation. Account contracts resolve this at assertion time,
+ * so an already-open wallet/PXE can keep executing while an authorization popup
+ * owns the browser's passkey ceremony.
+ */
+export async function withWebAuthnAssertionDelegate<T>(
+  delegate: WebAuthnAssertionDelegate,
+  operation: () => Promise<T>,
+): Promise<T> {
+  if (activeAssertionDelegate) {
+    throw new Error("A WebAuthn assertion delegate is already active.");
+  }
+  activeAssertionDelegate = delegate;
+  try {
+    return await operation();
+  } finally {
+    activeAssertionDelegate = undefined;
+  }
+}
 
 function recognizedTransports(values: string[]): AuthenticatorTransport[] {
   return values.filter((value): value is AuthenticatorTransport =>
@@ -87,6 +113,9 @@ function credentialDescriptor(registration: WebAuthnRegistration): PublicKeyCred
 /** Per-transaction assertion: challenge = authwit outer hash bytes. */
 export function makeBrowserAsserter(registration: WebAuthnRegistration): WebAuthnAsserter {
   return async (challenge: Uint8Array): Promise<WebAuthnAssertionResult> => {
+    if (activeAssertionDelegate) {
+      return activeAssertionDelegate(registration, challenge);
+    }
     const credential = await navigator.credentials.get({
       publicKey: {
         challenge: toArrayBuffer(challenge),

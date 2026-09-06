@@ -1,6 +1,7 @@
 FROM aztecprotocol/aztec:5.1.0@sha256:dd26a01042caf0f34760c4221bd1c855862181842e0cbe3c8c6b4e3f6a5b4128
 
 ARG TARGETARCH
+LABEL io.magna.local-app="true"
 WORKDIR /workspace
 ENTRYPOINT []
 
@@ -12,8 +13,12 @@ RUN cp ./deployments/docker-build-placeholder.json ./deployments/local.json
 COPY l1-contracts ./l1-contracts
 COPY packages ./packages
 COPY scripts ./scripts
+COPY docker ./docker
 
-RUN npm ci
+# Limit concurrent large proving-package downloads and retry transient resets.
+# Retries reuse only downloads from this fresh build; npm ci still enforces the
+# lockfile and integrity checks, and a persistent failure still fails the build.
+RUN npm ci --maxsockets=5 || npm ci --maxsockets=5 || npm ci --maxsockets=5
 COPY docker/aztec /usr/local/bin/aztec
 ENV LD_PRELOAD=""
 RUN chmod 755 /usr/local/bin/aztec
@@ -54,11 +59,14 @@ RUN npm run -w @magna/passport-wrapper-proof build
 RUN npm run -w @magna/recovery-wrapper-proof build
 RUN npm run -w @magna/client build
 RUN npm run -w @magna/instagram-proof build
-ENV NODE_OPTIONS="--max-old-space-size=6144"
+# Leave room for the existing local stack while building its replacement on
+# Docker Desktop's 8 GiB VM. Both frontend production builds pass with 3 GiB.
+ENV NODE_OPTIONS="--max-old-space-size=3072"
 RUN npm run -w @magna/management build
 RUN npm run -w @magna/verification-api build
 RUN npm run -w @magna/reference-dapp build
 RUN npm run -w @magna/e2e-tests build
 RUN rm ./deployments/local.json
+ENV NODE_OPTIONS="--max-old-space-size=6144"
 
 CMD ["node", "./scripts/start-docker-service.mjs", "management"]

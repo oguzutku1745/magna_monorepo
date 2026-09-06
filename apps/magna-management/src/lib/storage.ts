@@ -74,6 +74,7 @@ const CREDENTIALS_KEY = "magna-management:credential-refs:v1";
 const WALLET_PROFILE_KEY = "magna-management:wallet-profile:v1";
 const CHAIN_FINGERPRINT_KEY = "magna-management:chain-fingerprint:v1";
 const PASSPORT_A2_WITNESSES_KEY = "magna-management:passport-a2-witnesses:v1";
+const INSTAGRAM_V2_WITNESSES_KEY = "magna-management:instagram-v2-witnesses:v1";
 const RECOVERY_V3_FINALIZATION_KEY = "magna-management:recovery-v3-finalization:v1";
 const RECOVERY_TARGET_PROFILE_KEY = "magna-management:recovery-target-profile:v1";
 
@@ -83,7 +84,26 @@ type StoredPassportA2WitnessRecord = {
   mode?: "passport" | "rooted";
   rootCommitment?: string;
   claimsHash: string;
+  createdAt: string;
+  issuanceKind?: CredentialIssuanceKind;
+  ghostOwner?: string;
+  ghostDerivationVersion?: GhostDerivationVersion;
+  renewalTxHash?: string;
+  recoveryTxHash?: string;
+  normalizedClaims?: StoredCredentialRef["normalizedClaims"];
   witness: PassportCommittedClaimsV2LocalWitness;
+};
+
+type StoredInstagramV2WitnessRecord = {
+  issuerAddress?: string;
+  ownerAddress: string;
+  claimsHash: string;
+  createdAt: string;
+  ghostOwner?: string;
+  ghostDerivationVersion?: GhostDerivationVersion;
+  instagramHandle: string;
+  handleHash: string;
+  handleBlind: string;
 };
 
 export type CredentialRefFilter = {
@@ -158,6 +178,13 @@ export function savePassportA2Witness(ref: StoredCredentialRef): void {
     mode: ref.mode,
     rootCommitment: ref.rootCommitment,
     claimsHash: ref.claimsHash,
+    createdAt: ref.createdAt,
+    issuanceKind: ref.issuanceKind,
+    ghostOwner: ref.ghostOwner,
+    ghostDerivationVersion: ref.ghostDerivationVersion,
+    renewalTxHash: ref.renewalTxHash,
+    recoveryTxHash: ref.recoveryTxHash,
+    normalizedClaims: ref.normalizedClaims,
     witness: ref.passportCommittedClaimsV2Witness,
   };
   savePassportA2WitnessRecords(records);
@@ -174,14 +201,20 @@ export function hydratePassportA2Witness(ref: StoredCredentialRef): StoredCreden
   if (ref.kind !== "passport" || ref.passportCommittedClaimsV2Witness) {
     return ref;
   }
-  const witness = readPassportA2Witness(ref);
-  if (!witness) {
+  const record = loadPassportA2WitnessRecords()[passportA2WitnessStorageKey(ref)];
+  if (!record?.witness) {
     return ref;
   }
   return {
     ...ref,
-    issuanceKind: ref.issuanceKind ?? "a2",
-    passportCommittedClaimsV2Witness: witness,
+    createdAt: record.createdAt ?? ref.createdAt,
+    issuanceKind: record.issuanceKind ?? ref.issuanceKind ?? "a2",
+    ghostOwner: record.ghostOwner ?? ref.ghostOwner,
+    ghostDerivationVersion: record.ghostDerivationVersion ?? ref.ghostDerivationVersion,
+    renewalTxHash: record.renewalTxHash ?? ref.renewalTxHash,
+    recoveryTxHash: record.recoveryTxHash ?? ref.recoveryTxHash,
+    normalizedClaims: record.normalizedClaims ?? ref.normalizedClaims,
+    passportCommittedClaimsV2Witness: record.witness,
   };
 }
 
@@ -189,13 +222,81 @@ export function hydratePassportA2Witnesses(refs: StoredCredentialRef[]): StoredC
   return refs.map(hydratePassportA2Witness);
 }
 
+function instagramV2WitnessStorageKey(
+  ref: Pick<StoredCredentialRef, "ownerAddress" | "claimsHash"> &
+    Partial<Pick<StoredCredentialRef, "issuerAddress">>,
+): string {
+  return [
+    normalizeScopeValue(ref.issuerAddress),
+    normalizeScopeValue(ref.ownerAddress),
+    ref.claimsHash,
+  ].join(":");
+}
+
+function loadInstagramV2WitnessRecords(): Record<string, StoredInstagramV2WitnessRecord> {
+  return safeParse<Record<string, StoredInstagramV2WitnessRecord>>(
+    window.localStorage.getItem(INSTAGRAM_V2_WITNESSES_KEY),
+    {},
+  );
+}
+
+function saveInstagramV2Witness(ref: StoredCredentialRef): void {
+  if (
+    ref.kind !== "instagram" ||
+    !ref.instagramHandle ||
+    !ref.handleHash ||
+    !ref.handleBlind
+  ) {
+    return;
+  }
+  const records = loadInstagramV2WitnessRecords();
+  records[instagramV2WitnessStorageKey(ref)] = {
+    issuerAddress: ref.issuerAddress,
+    ownerAddress: ref.ownerAddress,
+    claimsHash: ref.claimsHash,
+    createdAt: ref.createdAt,
+    ghostOwner: ref.ghostOwner,
+    ghostDerivationVersion: ref.ghostDerivationVersion,
+    instagramHandle: ref.instagramHandle,
+    handleHash: ref.handleHash,
+    handleBlind: ref.handleBlind,
+  };
+  window.localStorage.setItem(INSTAGRAM_V2_WITNESSES_KEY, JSON.stringify(records));
+}
+
+function hydrateInstagramV2Witness(ref: StoredCredentialRef): StoredCredentialRef {
+  if (ref.kind !== "instagram") return ref;
+  const witness = loadInstagramV2WitnessRecords()[instagramV2WitnessStorageKey(ref)];
+  if (!witness) return ref;
+  return {
+    ...ref,
+    createdAt: witness.createdAt,
+    ghostOwner: witness.ghostOwner ?? ref.ghostOwner,
+    ghostDerivationVersion: witness.ghostDerivationVersion ?? ref.ghostDerivationVersion,
+    instagramHandle: witness.instagramHandle,
+    handleHash: witness.handleHash,
+    handleBlind: witness.handleBlind,
+  };
+}
+
+function hydrateCredentialPrivateWitnesses(ref: StoredCredentialRef): StoredCredentialRef {
+  return hydrateInstagramV2Witness(hydratePassportA2Witness(ref));
+}
+
+export function saveCredentialPrivateWitness(ref: StoredCredentialRef): void {
+  savePassportA2Witness(ref);
+  saveInstagramV2Witness(ref);
+}
+
 export function loadCredentialRefs(): StoredCredentialRef[] {
-  return hydratePassportA2Witnesses(safeParse<StoredCredentialRef[]>(window.localStorage.getItem(CREDENTIALS_KEY), []));
+  return safeParse<StoredCredentialRef[]>(window.localStorage.getItem(CREDENTIALS_KEY), []).map(
+    hydrateCredentialPrivateWitnesses,
+  );
 }
 
 export function saveCredentialRefs(refs: StoredCredentialRef[]): void {
   for (const ref of refs) {
-    savePassportA2Witness(ref);
+    saveCredentialPrivateWitness(ref);
   }
   window.localStorage.setItem(CREDENTIALS_KEY, JSON.stringify(refs));
 }
@@ -259,14 +360,20 @@ export function clearPendingRecoveryV3Finalization(): void {
   window.localStorage.removeItem(RECOVERY_V3_FINALIZATION_KEY);
 }
 
-export function reconcileStoredChainFingerprint(nextFingerprint: string): boolean {
+export function storedChainFingerprintChanged(nextFingerprint: string): boolean {
   const previousFingerprint = window.localStorage.getItem(CHAIN_FINGERPRINT_KEY);
-  const changed = Boolean(previousFingerprint && previousFingerprint !== nextFingerprint);
-  if (changed) {
-    clearStoredWalletState();
-  }
+  return Boolean(previousFingerprint && previousFingerprint !== nextFingerprint);
+}
+
+/**
+ * Commits a chain fingerprint only after the caller has successfully disposed
+ * of any PXE databases from the previous chain. Recording it before OPFS
+ * deletion would turn a transient "database is in use" failure into a
+ * permanent stale-cache condition on the next reload.
+ */
+export function commitStoredChainFingerprint(nextFingerprint: string, clearChainState: boolean): void {
+  if (clearChainState) clearStoredWalletState();
   window.localStorage.setItem(CHAIN_FINGERPRINT_KEY, nextFingerprint);
-  return changed;
 }
 
 function normalizeScopeValue(value?: string): string {
@@ -282,6 +389,36 @@ function credentialStorageKey(ref: StoredCredentialRef): string {
     ref.claimsHash,
     ref.rootCommitment ?? "",
   ].join(":");
+}
+
+function sameCredentialScope(ref: StoredCredentialRef, ownerAddress: string, issuerAddress?: string): boolean {
+  return (
+    normalizeScopeValue(ref.ownerAddress) === normalizeScopeValue(ownerAddress) &&
+    normalizeScopeValue(ref.issuerAddress) === normalizeScopeValue(issuerAddress)
+  );
+}
+
+/**
+ * Returns one canonical PXE snapshot enriched with private local witnesses.
+ * Any legacy browser-cached references for this scope are removed: credential
+ * existence belongs to Aztec/PXE and is deliberately not persisted here.
+ */
+export function replaceCredentialRefsForOwnerFromChain(
+  ownerAddress: string,
+  issuerAddress: string | undefined,
+  chainRefs: StoredCredentialRef[],
+): StoredCredentialRef[] {
+  const canonical = new Map<string, StoredCredentialRef>();
+  for (const ref of chainRefs) {
+    if (!sameCredentialScope(ref, ownerAddress, issuerAddress)) {
+      throw new Error("Chain credential snapshot contains a reference outside the requested owner/issuer scope.");
+    }
+    canonical.set(credentialStorageKey(ref), hydrateCredentialPrivateWitnesses(ref));
+  }
+  const scoped = Array.from(canonical.values());
+  const outsideScope = loadCredentialRefs().filter(ref => !sameCredentialScope(ref, ownerAddress, issuerAddress));
+  saveCredentialRefs(outsideScope);
+  return scoped;
 }
 
 export function upsertCredentialRef(ref: StoredCredentialRef): StoredCredentialRef[] {

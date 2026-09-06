@@ -894,20 +894,11 @@ export class MagnaBrowserClient {
    * account with a built-in stub (it has no notion of the custom WebAuthn account contract); that
    * stub's note layout differs, so the account's real note is skipped during the simulation's note
    * discovery and never reaches the store. Proactively discovering it here against the real,
-   * registered account artifact guarantees `is_valid_impl` can read it during proving. Best-effort:
-   * any failure is left for the verify send to surface (with its own clearer error).
+   * registered account artifact guarantees `is_valid_impl` can read it during proving.
    */
   async ensureAccountAuthNoteDiscovered(accountAddress: string): Promise<number> {
-    try {
-      const notes = await this.readAccountAuthNotes(accountAddress);
-      return notes.length;
-    } catch (error) {
-      console.warn(
-        "[magna] account auth-note pre-discovery skipped (verify will surface details if it matters):",
-        errorDetails(error),
-      );
-      return -1;
-    }
+    const notes = await this.readAccountAuthNotes(accountAddress);
+    return notes.length;
   }
 
   /**

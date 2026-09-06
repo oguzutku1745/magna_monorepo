@@ -8,6 +8,7 @@ import {
   type SessionAssertion,
 } from "@magna/core";
 import {
+  assertStoredWebAuthnAccount,
   loadStoredWebAuthnAccounts,
   type MagnaConsumerLoginOutcome,
   type StoredWebAuthnAccount,
@@ -15,6 +16,7 @@ import {
 import { AuthorizeWalletPicker, authorizeWalletsForOrigin } from "./AuthorizeWalletPicker";
 import { resolveRegisteredDapp } from "./lib/dapp-registry";
 import {
+  isPasskeyAccountAuthNoteMissing,
   runWalletLoginForRequest,
   type WalletLoginRequestInput,
 } from "./lib/wallet-login";
@@ -163,6 +165,41 @@ export function AuthorizePage() {
             sessionExpiresAt: Math.floor(Date.now() / 1000) + 300,
           },
         };
+        try {
+          const brokered = await tryWalletLoginThroughExistingSession(refreshedPending.loginInput, {
+            targetCredentialId: account.credentialId,
+            onBrokerSelected: () => setPhase("authenticating"),
+            performWebAuthnAssertion: async (credentialId, challenge) => {
+              if (credentialId !== account.credentialId) {
+                throw new Error("The open wallet requested a different passkey than the wallet you selected.");
+              }
+              window.focus();
+              return assertStoredWebAuthnAccount(account, challenge);
+            },
+          });
+          if (brokered.handled) {
+            await completeAuthorization(refreshedPending, brokered.outcome);
+            return;
+          }
+          if (brokered.conflictingCredentialIds.length > 0) {
+            throw new Error(
+              `The selected wallet is not the wallet currently open in the management tab. ` +
+                `Open “${account.displayName}” in management, then retry Login with Magna.`,
+            );
+          }
+        } catch (brokerError) {
+          if (!isPasskeyAccountAuthNoteMissing(brokerError)) {
+            throw brokerError;
+          }
+          // The broker runs before the first Aztec transaction. If its
+          // long-lived PXE missed the account constructor note, retry in this
+          // popup with a clean in-memory PXE reconstructed from the selected
+          // passkey and current chain. No note or credential is copied from
+          // browser storage into PXE.
+          console.warn(
+            "[magna][authorize] Open-wallet PXE missed the account auth note; rebuilding private state from chain in an isolated authorization PXE.",
+          );
+        }
         const outcome = await runWalletLoginForRequest({
           ...refreshedPending.loginInput,
           storedCredentialId: account.credentialId,
@@ -198,7 +235,6 @@ export function AuthorizePage() {
         const dapp = resolveRegisteredDapp(data.clientId, event.origin);
         requestRef.current = { request: data, replyOrigin: dapp.origin };
 
-        setPhase("authenticating");
         const issuedAt = Math.floor(Date.now() / 1000);
         const loginInput: WalletLoginRequestInput = {
           policy: policyFromWire(data.policy),
@@ -208,21 +244,13 @@ export function AuthorizePage() {
           sessionChallenge: data.sessionChallenge,
           sessionExpiresAt: issuedAt + 300,
         };
-        const brokered = await tryWalletLoginThroughExistingSession(loginInput, {
-          onBrokerSelected: () => setPhase("authenticating"),
-        });
-        const pending = { request: data, replyOrigin: dapp.origin, loginInput };
-        if (brokered.handled) {
-          await completeAuthorization(pending, brokered.outcome);
-          return;
-        }
-
         const rpId = window.location.hostname || "localhost";
         const eligible = authorizeWalletsForOrigin(
           loadStoredWebAuthnAccounts(window.localStorage),
           rpId,
           window.location.origin,
         );
+        const pending = { request: data, replyOrigin: dapp.origin, loginInput };
         if (eligible.length === 0) {
           throw new Error("No Magna passkeys are stored for this wallet site. Open the management app and create or restore a wallet first.");
         }

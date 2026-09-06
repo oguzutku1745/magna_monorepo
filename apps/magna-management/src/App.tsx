@@ -36,6 +36,7 @@ import {
   type StoredWebAuthnAccount,
   type WalletSession,
   SCOPED_GHOST_DERIVATION_VERSION,
+  withWebAuthnAssertionDelegate,
 } from "@magna/wallet";
 import { AuthorizePage } from "./AuthorizePage";
 import { Threads } from "./components/Threads";
@@ -53,12 +54,14 @@ import {
   loadRecoveryTargetProfile,
   loadWalletProfile,
   hydratePassportA2Witness,
-  reconcileStoredChainFingerprint,
-  refsForOwner,
+  commitStoredChainFingerprint,
+  replaceCredentialRefsForOwnerFromChain,
   saveWalletProfile,
+  saveCredentialPrivateWitness,
   saveCredentialRefs,
   savePendingRecoveryV3Finalization,
   saveRecoveryTargetProfile,
+  storedChainFingerprintChanged,
   upsertCredentialRef,
   type PendingRecoveryV3Finalization,
   type PassportCommittedClaimsV2LocalWitness,
@@ -173,12 +176,19 @@ export function boundWalletProfileRecoveryBundle(profile: WalletProfile): string
   }
 }
 
-function fingerprintFromChainContext(chain: { chainId: string; version: string }, env: ManagementEnv): string {
+function fingerprintFromChainContext(
+  chain: { chainId: string; version: string; genesisBlockHash: string },
+  env: ManagementEnv,
+): string {
   return JSON.stringify({
+    // Bump whenever the browser PXE identity/cleanup contract changes. This
+    // forces one safe disposal for stores accepted by an older implementation.
+    pxeCacheIdentityVersion: 2,
     aztecNodeUrl: env.aztecNodeUrl,
     deploymentInstanceId: env.deploymentInstanceId ?? "",
     chainId: chain.chainId,
     version: chain.version,
+    genesisBlockHash: chain.genesisBlockHash,
     issuerAddress: env.issuerAddress ?? "",
     orchestratorAddress: env.orchestratorAddress ?? "",
     activeCompanySponsorAddress: env.activeCompanySponsorAddress ?? "",
@@ -463,7 +473,10 @@ export function App() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [session, setSession] = useState<WalletSession | null>(null);
   const [walletProfile, setWalletProfile] = useState<WalletProfile | null>(() => loadWalletProfile());
-  const [credentials, setCredentials] = useState<StoredCredentialRef[]>(() => loadCredentialRefs());
+  // Credential existence is established by PXE discovery after the wallet is
+  // opened. The persisted records are private-witness sidecars, not a dashboard
+  // or authorization source of truth.
+  const [credentials, setCredentials] = useState<StoredCredentialRef[]>([]);
   const [credentialHints, setCredentialHints] = useState<Record<string, CredentialHintState>>({});
   const [zkRequest, setZkRequest] = useState<ActiveZkPassportRequest | null>(null);
   const [zkStage, setZkStage] = useState("idle");
@@ -517,7 +530,10 @@ export function App() {
 
   const activeAddress = walletIdentityAddress(session, walletProfile, env);
   const activeCredentialRefs = useMemo(
-    () => refsForOwner(activeAddress, { issuerAddress: env.issuerAddress }),
+    () => credentials.filter(ref =>
+      normalizeAddress(ref.ownerAddress) === normalizeAddress(activeAddress) &&
+      normalizeAddress(ref.issuerAddress) === normalizeAddress(env.issuerAddress),
+    ),
     [activeAddress, credentials, env.issuerAddress],
   );
   // This record is only a locator for the destination credential. Its presence
@@ -592,7 +608,7 @@ export function App() {
 
   useEffect(() => {
     if (!session || session.kind !== "passkey" || route.path === "/authorize") return;
-    return registerWalletSessionLoginBroker(async input => {
+    return registerWalletSessionLoginBroker(async (input, execution) => {
       if (busyRef.current) {
         throw new Error(`The open Magna wallet is busy with: ${busyRef.current}.`);
       }
@@ -601,18 +617,31 @@ export function App() {
       setBusy(label);
       appendLog("Accepted Login with Magna through the existing wallet/PXE session.");
       try {
-        return await runWalletLoginForRequestWithSession(
-          {
-            ...input,
-            onVerifying: () => appendLog("Running brokered private verification through the registered gateway."),
+        return await withWebAuthnAssertionDelegate(
+          async (registration, challenge) => {
+            const activeCredentialId = session.metadata?.credentialId;
+            const registrationCredentialId = btoa(String.fromCharCode(...registration.credentialId))
+              .replace(/\+/g, "-")
+              .replace(/\//g, "_")
+              .replace(/=+$/g, "");
+            if (!activeCredentialId || registrationCredentialId !== activeCredentialId) {
+              throw new Error("The popup passkey does not match the active Magna wallet account.");
+            }
+            return execution.requestWebAuthnAssertion(challenge);
           },
-          session,
+          () => runWalletLoginForRequestWithSession(
+            {
+              ...input,
+              onVerifying: () => appendLog("Running brokered private verification through the registered gateway."),
+            },
+            session,
+          ),
         );
       } finally {
         busyRef.current = null;
         setBusy(null);
       }
-    });
+    }, { credentialId: session.metadata?.credentialId });
   }, [appendLog, route.path, session]);
 
   useEffect(() => {
@@ -700,30 +729,44 @@ export function App() {
           {
             chainId: info.chainId.toString(),
             version: info.version.toString(),
+            genesisBlockHash: info.genesisBlockHash,
           },
           env,
         );
-        if (!reconcileStoredChainFingerprint(nextFingerprint)) return;
-        await clearEmbeddedPxeCacheForNode(env.aztecNodeUrl);
-        setSession(null);
-        setWalletProfile(null);
-        setRecoveryTarget(null);
-        setCredentials(loadCredentialRefs());
-        setCredentialHints({});
-        setNotice({
-          tone: "warning",
-          text: "Detected a chain/deployment change. Cleared local credential metadata; re-issue credentials for this chain.",
-        });
-        appendLog("Detected chain/deployment change; cleared local wallet metadata.");
-        if (route.path.startsWith("/user") && route.path !== "/user/login") {
-          route.go("/user/login");
+        const chainChanged = storedChainFingerprintChanged(nextFingerprint);
+        if (chainChanged) {
+          // Do not commit the replacement fingerprint until the obsolete OPFS
+          // databases are actually gone. If another tab holds the store open,
+          // the next reload must retry instead of accepting stale PXE cursors.
+          await clearEmbeddedPxeCacheForNode(env.aztecNodeUrl);
+          commitStoredChainFingerprint(nextFingerprint, true);
+          setSession(null);
+          setWalletProfile(null);
+          setRecoveryTarget(null);
+          setCredentials([]);
+          setCredentialHints({});
+          setNotice({
+            tone: "warning",
+            text: "Detected a new Aztec chain instance. Cleared the obsolete local PXE cache; reopen your named passkey wallet.",
+          });
+          appendLog("Detected a new Aztec genesis block; cleared the obsolete PXE and wallet databases.");
+          if (route.path.startsWith("/user") && route.path !== "/user/login") {
+            route.go("/user/login");
+          }
+        } else {
+          // First visit or an unchanged chain. No PXE disposal is required.
+          commitStoredChainFingerprint(nextFingerprint, false);
         }
+        if (!cancelled) setChainContextReady(true);
       })
       .catch(error => {
-        appendLog(`Chain fingerprint check skipped: ${errorMessage(error)}`);
-      })
-      .finally(() => {
-        if (!cancelled) setChainContextReady(true);
+        if (cancelled) return;
+        const message = errorMessage(error);
+        setNotice({
+          tone: "danger",
+          text: "Could not prepare the browser wallet for the current Aztec chain. Close other Magna tabs and reload; wallet restore remains blocked so stale PXE state cannot be used.",
+        });
+        appendLog(`Chain-instance preparation failed: ${message}`);
       });
     return () => {
       cancelled = true;
@@ -941,42 +984,32 @@ export function App() {
   async function refreshCredentialRefsFromPxe(nextSession: WalletSession): Promise<StoredCredentialRef[]> {
     const ownerAddress = requireSessionIdentityAddress(nextSession, env);
     if (!env.issuerAddress) {
-      return refsForOwner(ownerAddress);
+      return [];
     }
     try {
       const client = new MagnaBrowserClient(nextSession.wallet, env, ownerAddress);
       const discovered = await client.discoverCredentialRefs(ownerAddress);
-      if (discovered.length === 0) {
-        return refsForOwner(ownerAddress, { issuerAddress: env.issuerAddress });
-      }
-
       const currentRefs = loadCredentialRefs();
-      const nextById = new Map(currentRefs.map(ref => [ref.id, ref]));
-      for (const ref of discovered) {
-        const id = credentialId({
-          ownerAddress: ref.ownerAddress,
-          kind: ref.kind,
-          claimsHash: ref.claimsHash,
-          issuerAddress: env.issuerAddress,
-          mode: ref.mode,
-          rootCommitment: ref.rootCommitment,
-        });
+      const nextRefs = discovered.map(ref => {
+        const matching = currentRefs.filter(existingRef => hasSameCredentialClaims(existingRef, ref));
         const existing =
-          nextById.get(id) ??
-          currentRefs.find(existingRef => matchesDiscoveredCredentialRef(existingRef, ref)) ??
-          currentRefs.find(existingRef => hasSameCredentialClaims(existingRef, ref));
-        if (existing?.id && existing.id !== id) {
-          nextById.delete(existing.id);
-        }
-        nextById.set(id, storedRefFromDiscovered(ref, existing));
-      }
-      const nextRefs = Array.from(nextById.values());
-      saveCredentialRefs(nextRefs);
+          matching.find(existingRef => matchesDiscoveredCredentialRef(existingRef, ref)) ??
+          matching.find(existingRef =>
+            Boolean(existingRef.passportCommittedClaimsV2Witness || existingRef.handleBlind),
+          ) ??
+          matching[0];
+        return storedRefFromDiscovered(ref, existing);
+      });
+      const authoritativeRefs = replaceCredentialRefsForOwnerFromChain(
+        ownerAddress,
+        env.issuerAddress,
+        nextRefs,
+      );
       appendLog(`Discovered ${discovered.length} credential reference${discovered.length === 1 ? "" : "s"} from PXE notes.`);
-      return refsForOwner(ownerAddress, { issuerAddress: env.issuerAddress });
+      return authoritativeRefs;
     } catch (error) {
       appendLog(`Credential note discovery skipped: ${errorMessage(error)}`);
-      return refsForOwner(ownerAddress, { issuerAddress: env.issuerAddress });
+      return [];
     }
   }
 
@@ -999,15 +1032,14 @@ export function App() {
 
   async function syncAfterLogin(nextSession: WalletSession, role: Role) {
     if (role === "company") {
-      setCredentials(loadCredentialRefs());
+      setCredentials([]);
       route.go("/company");
       return;
     }
 
     const refs = await refreshCredentialRefsFromPxe(nextSession);
-    const storedRefs = loadCredentialRefs();
-    setCredentials(storedRefs);
-    const recoveredCandidates = storedRefs.filter(
+    setCredentials(refs);
+    const recoveredCandidates = refs.filter(
       ref =>
         ref.kind === "passport" &&
         ref.mode === "rooted" &&
@@ -1184,7 +1216,7 @@ export function App() {
     }
     if (options.stayOnCurrentPage) {
       const refs = await refreshCredentialRefsFromPxe(next.nextSession);
-      setCredentials(loadCredentialRefs());
+      setCredentials(refs);
       await loadHintsForCredentialRefs(next.nextSession, refs);
       setNotice({
         tone: "success",
@@ -1418,8 +1450,12 @@ export function App() {
           ghostDerivationVersion: issued.ghostDerivationVersion,
           passportCommittedClaimsV2Witness,
         };
-        setCredentials(upsertCredentialRef(ref));
-        await loadHintsForCredentialRefs(activeSession, [ref]);
+        // Persist the private A2 witness, but show only the credential note
+        // rediscovered from the current Aztec/PXE state.
+        saveCredentialPrivateWitness(ref);
+        const chainRefs = await refreshCredentialRefsFromPxe(activeSession);
+        setCredentials(chainRefs);
+        await loadHintsForCredentialRefs(activeSession, chainRefs);
         setNotice({
           tone: "success",
           text: "Passport A2 credential issued and stored for this wallet. Its committed-claims witness remains on this device.",
@@ -1518,6 +1554,7 @@ export function App() {
           kind: "instagram",
           claimsHash: issued.claimsHash,
           issuerAddress: issued.issuerAddress,
+          mode: "passport",
         }),
         ownerAddress: activeOwner,
         kind: "instagram",
@@ -1526,6 +1563,7 @@ export function App() {
         createdAt: new Date().toISOString(),
         issuanceTxHash: issued.issuanceTxHash,
         issuerAddress: issued.issuerAddress,
+        mode: "passport",
         orchestratorAddress: issued.orchestratorAddress,
         ghostOwner: issued.ghostOwner,
         ghostDerivationVersion: issued.ghostDerivationVersion,
@@ -1533,8 +1571,12 @@ export function App() {
         handleHash: handleHash.toString(),
         handleBlind: handleBlind.toString(),
       };
-      setCredentials(upsertCredentialRef(ref));
-      await loadHintsForCredentialRefs(activeSession, [ref]);
+      // Persist only the private Instagram witness, then derive the visible
+      // credential set from the notes PXE actually discovers on Aztec.
+      saveCredentialPrivateWitness(ref);
+      const chainRefs = await refreshCredentialRefsFromPxe(activeSession);
+      setCredentials(chainRefs);
+      await loadHintsForCredentialRefs(activeSession, chainRefs);
       setInstagramHandle("");
       setInstagramEmailFile(null);
       setNotice({ tone: "success", text: "Instagram credential issued and stored for this wallet." });

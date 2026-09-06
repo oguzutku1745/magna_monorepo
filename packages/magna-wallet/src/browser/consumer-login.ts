@@ -246,7 +246,13 @@ export async function runMagnaConsumerLogin(input: {
   // wallet's pre-flight stub simulation cannot decode the custom WebAuthn account's note and skips
   // it, which would otherwise leave `is_valid_impl` unable to read it during proving ("Failed to
   // get a note"). Discovering it here against the real account artifact populates the note store.
-  await hintClient.ensureAccountAuthNoteDiscovered(input.activeAddress);
+  const accountAuthNoteCount = await hintClient.ensureAccountAuthNoteDiscovered(input.activeAddress);
+  if (accountAuthNoteCount === 0) {
+    throw new Error(
+      "PASSKEY_ACCOUNT_AUTH_NOTE_MISSING: PXE synchronized the active passkey account contract but did not " +
+        "discover its signing-key note.",
+    );
+  }
   const issuer = MagnaIssuerContract.at(toAddress(input.env.issuerAddress), input.wallet);
   const sponsor = MagnaCompanySponsorContract.at(toAddress(sponsorAddress), input.wallet);
   const activeAddress = toAddress(input.activeAddress);

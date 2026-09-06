@@ -121,7 +121,16 @@ describe("runWalletLoginForRequest", () => {
     testState.createWebAuthnWalletSession.mockClear();
     testState.computeInstagramHandleHash.mockClear();
     testState.discoverCredentialRefs.mockReset();
-    testState.discoverCredentialRefs.mockResolvedValue([]);
+    testState.discoverCredentialRefs.mockImplementation(async () =>
+      loadCredentialRefs().map(ref => ({
+        ownerAddress: ref.ownerAddress,
+        kind: ref.kind,
+        mode: ref.mode ?? "passport",
+        claimsHash: ref.claimsHash,
+        rootCommitment: ref.rootCommitment,
+        issuanceTxHash: ref.issuanceTxHash,
+      })),
+    );
     testState.disconnect.mockClear();
     testState.runMagnaConsumerLogin.mockReset();
     testState.runMagnaConsumerLogin.mockResolvedValue({ verified: true, receipt: "0xlogin", authorizationContract: "0xsponsor" });
@@ -144,6 +153,24 @@ describe("runWalletLoginForRequest", () => {
     ).rejects.toThrow("No active Magna passport credential is available in this wallet session.");
 
     expect(testState.disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("does not authorize a browser-only credential that PXE does not discover", async () => {
+    saveCredentialRefs([passportRef()]);
+    testState.discoverCredentialRefs.mockResolvedValueOnce([]);
+
+    await expect(
+      runWalletLoginForRequest({
+        policy,
+        consumerGatewayAddress: "0xconsumer",
+        sessionRequestId: "11".repeat(16),
+        sessionChallenge: `00${"22".repeat(31)}`,
+        sessionExpiresAt: 1_800_000_000,
+      }),
+    ).rejects.toThrow("No active Magna passport credential is available in this wallet session.");
+
+    expect(testState.runMagnaConsumerLogin).not.toHaveBeenCalled();
+    expect(loadCredentialRefs()).toEqual([]);
   });
 
   it("reuses an already-open wallet session without opening or disconnecting PXE", async () => {
@@ -189,7 +216,10 @@ describe("runWalletLoginForRequest", () => {
     });
 
     expect(testState.createWebAuthnWalletSession).toHaveBeenCalledWith(
-      expect.objectContaining({ storedCredentialId: "selected-passkey-id" }),
+      expect.objectContaining({
+        ephemeral: true,
+        storedCredentialId: "selected-passkey-id",
+      }),
     );
     expect(testState.disconnect).toHaveBeenCalledOnce();
   });
@@ -294,7 +324,7 @@ describe("runWalletLoginForRequest", () => {
     expect(testState.disconnect).toHaveBeenCalledOnce();
   });
 
-  it("keeps local refs and asks for PXE resync when hinted notes are still missing after rediscovery", async () => {
+  it("asks for PXE resync without retaining credential refs when hinted notes are missing", async () => {
     saveCredentialRefs([passportRef()]);
     testState.runMagnaConsumerLogin.mockRejectedValueOnce(
       new Error(
@@ -314,7 +344,7 @@ describe("runWalletLoginForRequest", () => {
     ).rejects.toThrow("PXE could not read the matching private notes");
 
     expect(testState.discoverCredentialRefs).toHaveBeenCalledWith(testState.activeAddress);
-    expect(loadCredentialRefs()).toHaveLength(1);
+    expect(loadCredentialRefs()).toEqual([]);
     expect(testState.disconnect).toHaveBeenCalledOnce();
   });
 
@@ -350,7 +380,7 @@ describe("runWalletLoginForRequest", () => {
       claimsHash: "123",
       rootCommitment: "99",
     });
-    expect(loadCredentialRefs().some(ref => ref.claimsHash === "123" && ref.issuanceTxHash === "0xissue")).toBe(true);
+    expect(loadCredentialRefs()).toEqual([]);
     expect(testState.disconnect).toHaveBeenCalledOnce();
   });
 
@@ -477,7 +507,7 @@ describe("runWalletLoginForRequest", () => {
       {
         ownerAddress: testState.activeAddress,
         kind: "instagram",
-        mode: undefined,
+        mode: "passport",
         claimsHash: "456",
       },
     ]);

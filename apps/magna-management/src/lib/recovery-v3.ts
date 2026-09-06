@@ -98,9 +98,17 @@ export async function preflightRecoveryV3LocalClock(
     );
   }
   const latestBlock = await client.getBlock();
+  const wallTimestamp = BigInt(Math.floor(Date.now() / 1_000));
+  console.info("[recovery-v3:local-clock]", {
+    l1RpcUrl,
+    blockNumber: latestBlock.number?.toString(),
+    l1Timestamp: latestBlock.timestamp.toString(),
+    hostTimestamp: wallTimestamp.toString(),
+    driftSeconds: (latestBlock.timestamp - wallTimestamp).toString(),
+  });
   return assertLocalRecoveryClockReadyForScan(
     latestBlock.timestamp,
-    BigInt(Math.floor(Date.now() / 1_000)),
+    wallTimestamp,
     actualChainId,
   );
 }
@@ -219,6 +227,12 @@ export async function waitForRecoveryV3InboxMessage(input: {
   const messageLeaf = Fr.fromHexString(input.inboxLeaf);
   const attempts = input.attempts ?? 180;
   const pollMs = input.pollMs ?? 2_000;
+  const localDeadline = input.enableLocalCheckpointAdvancement ? Date.now() + 180_000 : Infinity;
+  const assertWithinLocalDeadline = () => {
+    if (Date.now() >= localDeadline) {
+      throw new Error("Recovery Inbox wait exceeded three minutes. Check local node health. This timeout does not cancel the submitted portal transaction.");
+    }
+  };
   let lastError: unknown;
 
   const assertWitnessIndex = (
@@ -255,6 +269,7 @@ export async function waitForRecoveryV3InboxMessage(input: {
     const debug = createAztecNodeDebugClient(input.aztecNodeUrl);
     const advanceClockPacedCheckpoint = async () => {
       while (true) {
+        assertWithinLocalDeadline();
         const latestBlock = await l1.getBlock();
         const wallTimestamp = BigInt(Math.floor(Date.now() / 1_000));
         const drift = latestBlock.timestamp - wallTimestamp;
@@ -279,6 +294,7 @@ export async function waitForRecoveryV3InboxMessage(input: {
       }
     };
     for (let advanced = 0; advanced <= advanceLimit; advanced += 1) {
+      assertWithinLocalDeadline();
       const witness = await node.getL1ToL2MessageMembershipWitness("latest", messageLeaf);
       assertWitnessIndex(witness);
       if (witness) return { localCheckpointsAdvanced: advanced };
@@ -289,6 +305,7 @@ export async function waitForRecoveryV3InboxMessage(input: {
   }
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
+    assertWithinLocalDeadline();
     let witness: Awaited<ReturnType<typeof node.getL1ToL2MessageMembershipWitness>>;
     try {
       witness = await node.getL1ToL2MessageMembershipWitness("latest", messageLeaf);

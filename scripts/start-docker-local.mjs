@@ -7,6 +7,7 @@ import { join } from "node:path";
 
 const composeProjectImage = "magna-local-app:aztec-5.1.0";
 const cleanBuilderName = "magna-local-clean-builder";
+const magnaImageLabel = "io.magna.local-app";
 const imageExportDir = mkdtempSync(join(tmpdir(), "magna-local-image-"));
 const imageExportPath = join(imageExportDir, "magna-local-app.tar");
 
@@ -28,21 +29,75 @@ function run(label, command, args, { allowFailure = false } = {}) {
   }
 }
 
-// The default local acceptance run must never inherit an old L1/L2 chain,
-// generated deployment manifest, runtime frontend bundle, or service container.
-run("remove the previous Magna containers, chain volumes, and runtime volumes", "docker", [
-  "compose",
-  "down",
-  "--volumes",
-  "--remove-orphans",
-]);
+function capture(command, args, { allowFailure = false } = {}) {
+  const result = spawnSync(command, args, {
+    encoding: "utf8",
+    shell: false,
+  });
+  if (result.error) {
+    if (allowFailure) return "";
+    throw new Error(`${command} ${args.join(" ")} could not start: ${result.error.message}`);
+  }
+  if (!allowFailure && (result.status ?? 1) !== 0) {
+    throw new Error(
+      `${command} ${args.join(" ")} failed with ${result.signal ? `signal ${result.signal}` : `exit code ${result.status ?? 1}`}: ${result.stderr?.trim() ?? ""}`,
+    );
+  }
+  return result.stdout?.trim() ?? "";
+}
 
-// Remove the prior tagged application image. Build through a dedicated ephemeral
-// BuildKit instance so Magna can clear all of its own cached layers without touching
-// the default builder or any unrelated Docker project.
-run("remove the previous Magna application image", "docker", ["image", "rm", "--force", composeProjectImage], {
-  allowFailure: true,
-});
+function lines(value) {
+  return value.split(/\r?\n/u).map(line => line.trim()).filter(Boolean);
+}
+
+function isMagnaLocalImage(image) {
+  const config = image.Config ?? {};
+  const labels = config.Labels ?? {};
+  if (labels[magnaImageLabel] === "true") return true;
+
+  // Images exported before the explicit label was introduced have this exact
+  // Magna-only runtime signature. Keep this compatibility branch until those
+  // old local images have naturally been removed from developer machines.
+  return (
+    config.WorkingDir === "/workspace" &&
+    JSON.stringify(config.Cmd ?? []) ===
+      JSON.stringify(["node", "./scripts/start-docker-service.mjs", "management"])
+  );
+}
+
+function removeUnusedMagnaImages({ except = [] } = {}) {
+  const imageIds = [...new Set(lines(capture("docker", ["image", "ls", "--all", "--quiet", "--no-trunc"])))];
+  if (imageIds.length === 0) return;
+
+  const containerIds = lines(capture("docker", ["container", "ls", "--all", "--quiet", "--no-trunc"]));
+  const usedImageIds = new Set(
+    containerIds.length === 0
+      ? []
+      : lines(capture("docker", ["container", "inspect", "--format", "{{.Image}}", ...containerIds])),
+  );
+  const exceptIds = new Set(except);
+  const inspected = JSON.parse(capture("docker", ["image", "inspect", ...imageIds]));
+  const removable = inspected
+    .filter(image => isMagnaLocalImage(image))
+    .map(image => image.Id)
+    .filter(imageId => !usedImageIds.has(imageId) && !exceptIds.has(imageId));
+
+  if (removable.length === 0) return;
+  run(`remove ${removable.length} unused prior Magna application image(s)`, "docker", [
+    "image",
+    "rm",
+    ...removable,
+  ]);
+}
+
+// Reclaim only old Magna-owned images which are not backing a container. Do not
+// prune the global Docker image or builder stores: they can belong to other projects.
+removeUnusedMagnaImages();
+
+// Build through a dedicated ephemeral BuildKit instance so Magna can clear its
+// own intermediate layers without touching the default builder or another project.
+// Crucially, the current Compose stack remains intact until the new image has
+// built and loaded successfully.
 try {
   run("remove any abandoned Magna clean builder", "docker", [
     "buildx",
@@ -96,6 +151,18 @@ try {
 } finally {
   rmSync(imageExportDir, { recursive: true, force: true });
 }
+
+const loadedImageId = capture("docker", ["image", "inspect", "--format", "{{.Id}}", composeProjectImage]);
+
+// The replacement image is now available. Only at this commit point may the
+// default clean run destroy the old disposable chain and runtime state.
+run("remove the previous Magna containers, chain volumes, and runtime volumes", "docker", [
+  "compose",
+  "down",
+  "--volumes",
+  "--remove-orphans",
+]);
+removeUnusedMagnaImages({ except: [loadedImageId] });
 
 run("start the freshly built stack and perform a new deployment", "docker", [
   "compose",

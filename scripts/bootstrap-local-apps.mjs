@@ -292,6 +292,9 @@ async function warpForwardSeconds({ l1RpcUrls, l1Mnemonic, label, seconds, walle
   const l1Client = createExtendedL1Client(l1RpcUrls, l1Mnemonic);
   const currentTimestamp = BigInt((await l1Client.getBlock()).timestamp);
   const targetTimestamp = currentTimestamp + seconds + 1n;
+  if (process.env.MAGNA_LOCAL_CLOCK_CONTROL_URL && targetTimestamp > BigInt(Math.floor(Date.now() / 1000))) {
+    throw new Error(`${label}: historical bootstrap headroom exhausted; refusing to advance L1 into the future.`);
+  }
   const cheatCodes = new EthCheatCodes(
     l1RpcUrls,
     new TestDateProvider(),

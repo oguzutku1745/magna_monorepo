@@ -21,6 +21,16 @@ A working end-to-end example lives in `apps/reference-dapp` — in particular
 Install `@magna/client` and pin the wallet origin, Aztec node, registered dApp gateway, and active
 Magna session-authorization contract:
 
+```sh
+npm install @magna/client@0.2.0
+```
+
+Use Node.js 24.12+ for tooling. The ESM package includes TypeScript declarations
+and installs `@magna/core` automatically. Until registry publication is confirmed,
+use the tested tarballs described in the [release procedure](sdk-release.md).
+The reference dApp's Vite configuration shows the required Node polyfills for
+the read-only Aztec verification dependencies.
+
 ```ts
 import { MagnaClient } from "@magna/client";
 

@@ -10,6 +10,7 @@ if (nodeMajor < 24) {
 }
 
 const checks = [
+  ["local clock diagnostic", ["run", "test:localnet:drift"]],
   ["passport issuer constraints", ["run", "test:contracts:issuer"]],
   ["chain-bound session authorization contract", ["run", "test:contracts:company-sponsor"]],
   ["protocol authorization hash vectors", ["run", "test:core"]],

@@ -142,7 +142,21 @@ if (Number.parseInt(process.versions.node.split(".")[0] ?? "0", 10) < 24) {
 mkdirSync(dirname(manifestPath), { recursive: true });
 mkdirSync(runtimeDir, { recursive: true });
 
+async function activateRealTimeClock() {
+  const url = process.env.MAGNA_LOCAL_CLOCK_CONTROL_URL;
+  if (!url) throw new Error("Docker bootstrap requires the managed local clock control URL.");
+  const response = await fetch(`${url}/activate`, {
+    method: "POST", signal: AbortSignal.timeout(180_000),
+  });
+  const status = await response.json();
+  if (!response.ok || status.phase !== "realtime") {
+    throw new Error(`Local clock is not ready: ${JSON.stringify(status)}`);
+  }
+  console.info(`[docker-bootstrap] real-time clock ready: ${JSON.stringify(status)}`);
+}
+
 if (await existingBootstrapIsValid()) {
+  await activateRealTimeClock();
   ensureLocalInstagramDkimTrustConfig();
   configureDockerFrontendProfile(existingDeploymentInstanceId() ?? randomUUID());
   console.info("[docker-bootstrap] existing manifest, runtime configuration, and L1 portal are valid; bootstrap is already complete.");
@@ -214,6 +228,7 @@ writeFileSync(
   "utf8",
 );
 
+await activateRealTimeClock();
 configureDockerFrontendProfile(randomUUID());
 
 const manifestSha256 = createHash("sha256").update(readFileSync(manifestPath)).digest("hex");
