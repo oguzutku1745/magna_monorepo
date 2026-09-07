@@ -16,7 +16,7 @@ The bootstrap uses Docker-internal URLs for deployment processes and writes sepa
 
 ## Clean start (the default)
 
-Stop any host processes already using ports `8080`, `18545`, `4310`, `5174`, or `5175`, and make sure Docker Desktop is running. Then run:
+Stop any host processes already using ports `8080`, `18545`, `4310`, `5174`, or `5175`, and make sure Docker Desktop is running. The clean builder checks for at least 12 GiB free inside Docker and 8 GiB on the host temporary filesystem before compilation. These are separate disks on Docker Desktop. Then run:
 
 ```bash
 npm run docker:local
@@ -30,6 +30,16 @@ This is intentionally a destructive reset of **only the `magna-local` Compose pr
 4. removes the now-unused previous Magna image and starts new L1/L2 processes for a completely new application and Recovery V3 deployment.
 
 If image construction fails, the command removes its temporary builder and export file but leaves an already-running Magna stack and its chain volumes untouched. This prevents a compiler, network, or storage failure from destroying the last usable local environment.
+
+To verify a fresh image without resetting or starting the stack, use
+`npm run docker:local -- --build-only`. This uses the same isolated builder,
+space checks, export and cleanup path, then stops after loading the image.
+Avoid ad hoc builds on Docker's shared builder: their retained intermediate
+cache can consume the space required by the next clean build. The preflight
+does not globally prune caches, containers or volumes; if it reports low space,
+inspect `docker system df` and remove only cache you can identify or increase
+Docker Desktop's disk allocation. Its 12 GiB reserve is an early guard, not a
+guarantee against concurrent disk use by other projects.
 
 The command cannot and must not delete the user's OS/cloud passkey credentials. Each fresh bootstrap does, however, generate a new deployment-instance ID. On the next page load, the management and login apps detect that ID, clear the prior Aztec `pxe_data` and `wallet_data` SQLite-OPFS stores for this local network, and discard chain-specific credential metadata before allowing automatic wallet restoration. The underlying passkey remains available and can be used to deploy the same user-controlled address on the fresh chain, or the tester can create a new passkey.
 

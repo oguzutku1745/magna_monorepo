@@ -1,9 +1,14 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, statfsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { availableBytesFromDf, requireBuildSpace } from "./docker-build-space.mjs";
+
+const args = process.argv.slice(2);
+if (args.some(arg => arg !== "--build-only")) throw new Error("Usage: npm run docker:local -- [--build-only]");
+const buildOnly = args.includes("--build-only");
 
 const composeProjectImage = "magna-local-app:aztec-5.1.0";
 const cleanBuilderName = "magna-local-clean-builder";
@@ -105,6 +110,12 @@ try {
     "--force",
     cleanBuilderName,
   ], { allowFailure: true });
+  const compose = JSON.parse(capture("docker", ["compose", "config", "--format", "json"]));
+  const dockerFree = availableBytesFromDf(capture("docker", [
+    "run", "--rm", "--entrypoint", "df", compose.services.anvil.image, "-Pk", "/",
+  ]));
+  const hostFs = statfsSync(imageExportDir);
+  console.info(`[docker-local] ${requireBuildSpace(dockerFree, hostFs.bavail * hostFs.bsize)}`);
   run("create an isolated empty builder for Magna", "docker", [
     "buildx",
     "create",
@@ -153,6 +164,11 @@ try {
 }
 
 const loadedImageId = capture("docker", ["image", "inspect", "--format", "{{.Id}}", composeProjectImage]);
+
+if (buildOnly) {
+  console.info(`[docker-local] Build complete: ${loadedImageId}. Existing containers and chain volumes were not reset.`);
+  process.exit(0);
+}
 
 // The replacement image is now available. Only at this commit point may the
 // default clean run destroy the old disposable chain and runtime state.
