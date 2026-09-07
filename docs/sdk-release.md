@@ -45,8 +45,10 @@ its registry URLs, versions, integrity values and absence of workspace symlinks.
 It uses the directory recorded in ignored `artifacts/sdk/consumer.json`.
 Keep this terminal running. If the port is already served by a previous external
 consumer, stop that server first. To recreate a removed temporary consumer,
-repeat the installation command. The normal Docker reference service continues
-to use workspace packages for development.
+repeat the installation command. The normal Docker reference service and
+`npm run -w @magna/reference-dapp dev` also use the published packages: the app
+pins registry tarballs in its manifest and rejects workspace SDK resolution.
+The external consumer remains an additional installation-isolation check.
 
 ## Publish the tested tarballs
 

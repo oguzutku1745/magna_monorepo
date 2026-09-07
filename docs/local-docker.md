@@ -78,6 +78,11 @@ Open:
 
 - Management: <http://localhost:5174>
 - Reference dApp: <http://localhost:5175>
+
+The reference dApp installs the published `@magna-protocol/client@0.2.0` and
+`@magna-protocol/core@0.1.0` registry tarballs. Startup checks reject SDK workspace
+resolution. After changing its pinned SDK versions, rebuild the application
+image before recreating the reference frontend.
 - Verification API health: <http://localhost:4310/health>
 
 When the reference dApp opens `http://localhost:5174/authorize`, the authorization popup first

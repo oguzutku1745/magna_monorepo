@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@magna-protocol/client": "0.2.0",
+    "@magna-protocol/client": "https://registry.npmjs.org/@magna-protocol/client/-/client-0.2.0.tgz",
+    "@magna-protocol/core": "https://registry.npmjs.org/@magna-protocol/core/-/core-0.1.0.tgz",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
@@ -18,9 +19,12 @@
     "vitest": "^3.2.4"
   },
   "scripts": {
+    "predev": "node check-sdk.mjs",
     "dev": "vite --port 5175",
+    "prebuild": "node check-sdk.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 4175",
+    "pretest": "node check-sdk.mjs",
     "test": "vitest run",
     "lint": "npm run build"
   }

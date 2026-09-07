@@ -12,7 +12,7 @@ const output = resolve('artifacts/sdk');
 const release = JSON.parse(readFileSync(join(output, 'release.json'), 'utf8'));
 const consumer = mkdtempSync(join(tmpdir(), 'magna-sdk-consumer-'));
 const app = resolve('apps/reference-dapp');
-for (const file of ['src', 'index.html', 'tsconfig.json', 'vite.config.mjs']) {
+for (const file of ['src', 'index.html', 'tsconfig.json', 'vite.config.mjs', 'check-sdk.mjs']) {
   cpSync(join(app, file), join(consumer, file), { recursive: true });
 }
 const manifest = JSON.parse(readFileSync(join(app, 'package.json'), 'utf8'));

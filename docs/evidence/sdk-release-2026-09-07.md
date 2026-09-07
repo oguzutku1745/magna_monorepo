@@ -45,7 +45,7 @@ The successful installation used `npm_config_prefer_online=true` and
 `npm_config_full_metadata=true`; both published versions and their integrities
 were independently checked against the registry.
 
-The installed consumer now serves `http://localhost:5175`, with the active
+The initial installed-consumer check served `http://localhost:5175`, with the active
 Docker deployment's public reference environment. Its landing and eligibility
 screens were checked in a real browser, including the Instagram field and
 Login with Magna control. This is not a new end-to-end passkey login result.
@@ -57,12 +57,14 @@ name, so the verified core distribution was added to that container. Management
 source-module loading and API health returned HTTP 200. A future rebuilt image
 resolves the renamed workspace through the committed package metadata normally.
 
-The active consumer directory is recorded locally in
+The external consumer directory is recorded locally in
 `artifacts/sdk/consumer.json`. Use `npm run reference-dapp:published` to restart
 it after stopping the process already occupying 5175. Recreate the consumer if
-its OS temporary directory has been removed. The standard Docker reference
-service remains the workspace development mode; the published-consumer command
-is the explicit npm integration mode. See [the release procedure](../sdk-release.md).
+its OS temporary directory has been removed. The reference app now also pins
+both published npm tarballs in its own manifest and lockfile. Its normal local
+and Docker commands reject workspace SDK resolution, including the client's
+transitive core dependency. The external consumer is an additional isolation
+check. See [the release procedure](../sdk-release.md).
 
 ## Regression evidence and source boundary
 
