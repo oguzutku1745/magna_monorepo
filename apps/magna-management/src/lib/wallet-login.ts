@@ -5,7 +5,7 @@ import {
   instagramHandleEqConstraint,
   type LoginRequirement,
   type Policy,
-} from "@magna/core";
+} from "@magna-protocol/core";
 import {
   computeInstagramHandleHash,
   createWebAuthnWalletSession,

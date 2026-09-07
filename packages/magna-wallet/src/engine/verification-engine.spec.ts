@@ -2,8 +2,8 @@ import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
 import { MagnaVerificationEngine } from "./verification-engine.js";
 import { computeInstagramClaimsHash, computePassportClaimsHash, poseidon2FieldHasher } from "./encoding.js";
-import { ClaimId, ConstraintOp, CredentialType } from "@magna/core";
-import { normalizePolicy } from "@magna/core";
+import { ClaimId, ConstraintOp, CredentialType } from "@magna-protocol/core";
+import { normalizePolicy } from "@magna-protocol/core";
 import { Fr } from "@aztec/aztec.js/fields";
 
 describe("MagnaVerificationEngine login flows", () => {

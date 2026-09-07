@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { AztecAddress } from "@aztec/aztec.js/addresses";
 import { MagnaVerificationEngine } from "./verification-engine.js";
 import { buildCompanySponsorFeeConfig, buildSponsoredFeeConfig } from "./sponsorship.js";
-import { CredentialType } from "@magna/core";
+import { CredentialType } from "@magna-protocol/core";
 
 describe("company sponsor fee config", () => {
   it("attaches an external fee payer when logging in via the company sponsor gateway", async () => {

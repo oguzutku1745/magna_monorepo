@@ -1,4 +1,4 @@
-import { CredentialType } from "@magna/core";
+import { CredentialType } from "@magna-protocol/core";
 import {
   MAGNA_ROOT_DS,
   computePassportCommittedClaimsHash,

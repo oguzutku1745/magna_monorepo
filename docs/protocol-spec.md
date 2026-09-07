@@ -423,7 +423,7 @@ root-linked schema-v1 Passport, schema-v2 Passport, and Instagram witnesses. Eac
    private nullifier siloed to the active sponsor contract.
 
 The transport response is a version-2 envelope carrying the original request bindings and the Aztec
-transaction hash for each requirement. It is not trusted as a browser signature. `@magna/client`
+transaction hash for each requirement. It is not trusted as a browser signature. `@magna-protocol/client`
 recomputes the expected inner nullifier from its own in-flight request, uses Aztec's official
 `siloNullifier` construction with its pinned sponsor address, fetches each transaction receipt from
 its configured Aztec node, and accepts only a mined successful effect containing that exact

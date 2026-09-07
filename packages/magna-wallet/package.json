@@ -22,7 +22,7 @@
     "@aztec/noir-contracts.js": "5.1.0",
     "@aztec/stdlib": "5.1.0",
     "@magna/contracts-bindings": "0.1.0",
-    "@magna/core": "0.1.0",
+    "@magna-protocol/core": "0.1.0",
     "@aztec/wallet-sdk": "5.1.0",
     "@zkpassport/utils": "0.37.3",
     "viem": "npm:@aztec/viem@2.38.2"

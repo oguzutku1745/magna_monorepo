@@ -5,7 +5,7 @@ import {
 } from "./encoding.js";
 import { deriveGhostKeyMaterial } from "./ghost.js";
 import { deriveRootCommitment } from "./root.js";
-import { CredentialType, normalizePolicy } from "@magna/core";
+import { CredentialType, normalizePolicy } from "@magna-protocol/core";
 import { AztecAddress } from "@aztec/aztec.js/addresses";
 import { Fr } from "@aztec/aztec.js/fields";
 import { prepareGhostAccountOnWallet, type GhostAccountLifecycleOptions, type GhostAccountLifecycleResult } from "../embedded/lifecycle.js";

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
 import { MagnaVerificationEngine } from "./verification-engine.js";
-import { CredentialType } from "@magna/core";
+import { CredentialType } from "@magna-protocol/core";
 import type { PassportCanonicalClaims } from "./types.js";
 import {
   MAGNA_GHOST_DS,

@@ -17,7 +17,7 @@ import {
   type Policy,
   type SessionVerificationReceipt,
   type SessionAssertion,
-} from "@magna/core";
+} from "@magna-protocol/core";
 import { AztecAddress } from "@aztec/aztec.js/addresses";
 import { Fr } from "@aztec/aztec.js/fields";
 import { createAztecNodeClient } from "@aztec/aztec.js/node";

@@ -36,7 +36,7 @@ pub struct Policy {
 }
 
 /// Request- and policy-bound authorization emitted only after verification succeeds.
-/// Keep this preimage aligned with @magna/core sessionAuthorizationFields.
+/// Keep this preimage aligned with @magna-protocol/core sessionAuthorizationFields.
 pub fn compute_session_authorization(
     consumer_gateway: AztecAddress,
     request_id: Field,

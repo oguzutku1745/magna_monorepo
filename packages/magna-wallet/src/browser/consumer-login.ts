@@ -1,4 +1,4 @@
-import { ClaimId, ConstraintOp, CredentialType, type Policy } from "@magna/core";
+import { ClaimId, ConstraintOp, CredentialType, type Policy } from "@magna-protocol/core";
 import { AztecAddress } from "@aztec/aztec.js/addresses";
 import type { Wallet } from "@aztec/aztec.js/wallet";
 import { MagnaCompanySponsorContract, MagnaConsumerContract, MagnaIssuerContract } from "@magna/contracts-bindings";

@@ -1,4 +1,4 @@
-import { ClaimId, ConstraintOp, CredentialType } from "@magna/core";
+import { ClaimId, ConstraintOp, CredentialType } from "@magna-protocol/core";
 import { describe, expect, it, vi } from "vitest";
 import {
   registerWalletSessionLoginBroker,

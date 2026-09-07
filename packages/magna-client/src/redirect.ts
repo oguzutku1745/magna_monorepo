@@ -7,7 +7,7 @@ import {
   randomHex,
   type LoginRequest,
   type Policy,
-} from "@magna/core";
+} from "@magna-protocol/core";
 import {
   validateLoginResponse,
   type MagnaClientConfig,

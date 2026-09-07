@@ -8,7 +8,7 @@ import type { WireLoginRequirement } from "./connector-protocol.js";
  * byte encoding of the normalized policy. This binds the dApp's request to the
  * wallet's response envelope. It is intentionally NOT the on-chain poseidon
  * hash; the wallet maps the policy to contract types separately, keeping
- * @magna/core (and therefore @magna/client) free of Aztec dependencies.
+ * @magna-protocol/core (and therefore @magna-protocol/client) free of Aztec dependencies.
  */
 export async function computePolicyHash(policy: Policy): Promise<string> {
   const normalized = normalizePolicy(policy);

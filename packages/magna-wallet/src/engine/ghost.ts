@@ -1,4 +1,4 @@
-import { CredentialType } from "@magna/core";
+import { CredentialType } from "@magna-protocol/core";
 import type { GhostDerivationInput, GhostDerivationVersion, GhostKeyMaterial } from "./types.js";
 import { MAGNA_GHOST_DS, poseidon2FieldHasher } from "./encoding.js";
 

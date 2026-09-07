@@ -1,8 +1,8 @@
-import { CredentialType } from "@magna/core";
-import type { Policy } from "@magna/core";
+import { CredentialType } from "@magna-protocol/core";
+import type { Policy } from "@magna-protocol/core";
 
-export { ClaimId, ConstraintOp, CredentialType } from "@magna/core";
-export type { Constraint, Policy } from "@magna/core";
+export { ClaimId, ConstraintOp, CredentialType } from "@magna-protocol/core";
+export type { Constraint, Policy } from "@magna-protocol/core";
 
 export type PassportCanonicalClaims = {
   schemaVersion: number;

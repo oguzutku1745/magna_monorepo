@@ -60,7 +60,7 @@ const aztecBrowserDependencies = [
 
 const magnaWorkspaceDependencies = [
   "@magna/contracts-bindings",
-  "@magna/core",
+  "@magna-protocol/core",
   "@magna/instagram-proof",
   "@magna/wallet",
 ];

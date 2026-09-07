@@ -31,13 +31,13 @@ import {
   computePassportCommittedClaimsHashFromWitness,
   poseidon2FieldHasher,
 } from "../engine/encoding.js";
-import type { Policy } from "@magna/core";
+import type { Policy } from "@magna-protocol/core";
 import {
   ClaimId,
   ConstraintOp,
   CredentialType,
-} from "@magna/core";
-import { normalizePolicy } from "@magna/core";
+} from "@magna-protocol/core";
+import { normalizePolicy } from "@magna-protocol/core";
 import {
   bindCompanySponsorContract,
   bindIssuerContract,

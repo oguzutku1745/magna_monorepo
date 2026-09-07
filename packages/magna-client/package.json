@@ -1,5 +1,5 @@
 {
-  "name": "@magna/client",
+  "name": "@magna-protocol/client",
   "version": "0.2.0",
   "description": "Login with Magna connector with chain-bound Aztec authorization verification",
   "type": "module",
@@ -23,7 +23,7 @@
     "@aztec/aztec.js": "5.1.0",
     "@aztec/constants": "5.1.0",
     "@aztec/foundation": "5.1.0",
-    "@magna/core": "0.1.0"
+    "@magna-protocol/core": "0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.7.3"

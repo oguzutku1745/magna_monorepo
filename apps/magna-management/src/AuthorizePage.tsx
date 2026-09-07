@@ -6,7 +6,7 @@ import {
   type LoginRequest,
   type LoginRequirement,
   type SessionAssertion,
-} from "@magna/core";
+} from "@magna-protocol/core";
 import {
   assertStoredWebAuthnAccount,
   loadStoredWebAuthnAccounts,
@@ -216,7 +216,7 @@ export function AuthorizePage() {
   useEffect(() => {
     const opener = window.opener as Window | null;
     if (!opener) {
-      setError("This page must be opened by a dApp using @magna/client.");
+      setError("This page must be opened by a dApp using @magna-protocol/client.");
       setPhase("error");
       return;
     }

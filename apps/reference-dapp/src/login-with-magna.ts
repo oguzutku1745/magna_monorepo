@@ -7,7 +7,7 @@ import {
   type MagnaLoginResult,
   type MagnaLoginRequirement,
   type Policy,
-} from "@magna/client";
+} from "@magna-protocol/client";
 
 export type { MagnaLoginResult };
 

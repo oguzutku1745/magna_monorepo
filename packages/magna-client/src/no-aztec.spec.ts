@@ -4,7 +4,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-test("@magna/client ships only chain-verification Aztec dependencies and leaks no wallet internals", () => {
+test("@magna-protocol/client ships only chain-verification Aztec dependencies and leaks no wallet internals", () => {
   const distDir = dirname(fileURLToPath(import.meta.url));
   const pkg = JSON.parse(readFileSync(join(distDir, "..", "package.json"), "utf8"));
   const allDeps = { ...pkg.dependencies, ...pkg.peerDependencies };

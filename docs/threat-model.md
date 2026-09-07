@@ -230,7 +230,7 @@ uniqueness, not global biological-human uniqueness across multiple or replacemen
 
 **Risk:** an integrating dApp tries to extract more than a policy answer.
 
-**Mitigation:** the dApp only ever holds `@magna/client`. Passkeys, PXE, notes, note hints, raw
+**Mitigation:** the dApp only ever holds `@magna-protocol/client`. Passkeys, PXE, notes, note hints, raw
 claims, and contract bindings stay inside the wallet origin. The holder's WebAuthn Aztec account
 authorizes the private verification transaction. In that same transaction the active sponsor emits
 a nullifier binding the consumer gateway, request ID, session challenge, expiry, requirement index,
@@ -396,7 +396,7 @@ envelopes, not trusted signatures. For every requested requirement the user's We
 submits the actual private verification. Only after the issuer verification succeeds does the active
 company sponsor emit the exact session-authorization nullifier. The preimage binds domain `MSA2`,
 consumer gateway, request ID, challenge, expiry, requirement index, and normalized policy; Aztec
-silos the nullifier to the sponsor contract. `@magna/client` derives the same value from the request,
+silos the nullifier to the sponsor contract. `@magna-protocol/client` derives the same value from the request,
 pins both the gateway and sponsor, fetches each receipt from the configured Aztec node, and requires a
 mined successful transaction effect containing that value. Mutation and missing/failed-receipt tests
 cover this boundary.

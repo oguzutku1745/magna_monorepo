@@ -2,7 +2,7 @@
 
 Magna turns a real-world proof into a reusable private credential. This monorepo
 contains the Aztec/Noir contracts, Passport A2 and Instagram V2 proof adapters,
-Recovery V3, the management wallet, and the `@magna/client` dApp connector.
+Recovery V3, the management wallet, and the `@magna-protocol/client` dApp connector.
 
 ## Review starting points
 
@@ -74,7 +74,7 @@ credential witnesses, passkey secrets, and email/passport data stay in the walle
 
 ## SDK and validation
 
-`@magna/client` re-exports `@magna/core` and includes the read-only Aztec primitives
+`@magna-protocol/client` re-exports `@magna-protocol/core` and includes the read-only Aztec primitives
 needed to verify chain authorization. It does not ship the wallet engine or
 contract bindings. See the [package README](packages/magna-client/README.md).
 

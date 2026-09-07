@@ -13,7 +13,7 @@ import {
   poseidon2FieldHasher,
 } from "./encoding.js";
 import { GOLDEN_DS, GOLDEN_INPUTS, GOLDEN_OUTPUTS } from "./generated-golden-vectors.js";
-import { CredentialType } from "@magna/core";
+import { CredentialType } from "@magna-protocol/core";
 import type { PassportCanonicalClaims } from "./types.js";
 
 describe("Noir↔TS golden vectors", () => {

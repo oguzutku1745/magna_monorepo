@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ClaimId, ConstraintOp, CredentialType, type Policy } from "@magna/core";
+import { ClaimId, ConstraintOp, CredentialType, type Policy } from "@magna-protocol/core";
 import { loadCredentialRefs, saveCredentialRefs, savePassportA2Witness, type StoredCredentialRef } from "./storage";
 
 const testState = vi.hoisted(() => {

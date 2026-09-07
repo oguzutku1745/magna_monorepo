@@ -1,11 +1,11 @@
 # Magna Reference dApp
 
-This app demonstrates the thin `@magna/client` Login with Magna integration. It intentionally avoids
+This app demonstrates the thin `@magna-protocol/client` Login with Magna integration. It intentionally avoids
 wallet-engine and contract-binding dependencies; the SDK performs the required read-only Aztec
 transaction-effect check against the configured node.
 
 It is a relying-party login app, not an issuance app. It asks for the Instagram
-handle that must be proved and sends that requirement through `@magna/client`.
+handle that must be proved and sends that requirement through `@magna-protocol/client`.
 The signed Instagram `.eml`, DKIM proof generation, and credential issuance
 remain in the Magna management wallet at `http://localhost:5174/user/issue`.
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
-import { CredentialType, ClaimId, ConstraintOp } from "@magna/core";
+import { CredentialType, ClaimId, ConstraintOp } from "@magna-protocol/core";
 import { ContractInitializationStatus } from "@aztec/aztec.js/wallet";
 import { MagnaCompanySponsorContract, MagnaConsumerContract, MagnaIssuerContract } from "@magna/contracts-bindings";
 import { runMagnaConsumerLogin } from "./consumer-login.js";

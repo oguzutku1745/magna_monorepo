@@ -1,6 +1,6 @@
 # Login with Magna — Integration Guide
 
-This guide covers the dApp-facing connector. A third-party dApp uses `@magna/client` only. Passkeys,
+This guide covers the dApp-facing connector. A third-party dApp uses `@magna-protocol/client` only. Passkeys,
 PXE, Aztec contracts, note discovery, and verification execution all stay inside the Magna wallet
 origin, which is served by **`apps/magna-management`**.
 
@@ -18,21 +18,21 @@ A working end-to-end example lives in `apps/reference-dapp` — in particular
 
 ## 1. Configure the connector
 
-Install `@magna/client` and pin the wallet origin, Aztec node, registered dApp gateway, and active
+Install `@magna-protocol/client` and pin the wallet origin, Aztec node, registered dApp gateway, and active
 Magna session-authorization contract:
 
 ```sh
-npm install @magna/client@0.2.0
+npm install @magna-protocol/client@0.2.0
 ```
 
 Use Node.js 24.12+ for tooling. The ESM package includes TypeScript declarations
-and installs `@magna/core` automatically. Until registry publication is confirmed,
+and installs `@magna-protocol/core` automatically. Until registry publication is confirmed,
 use the tested tarballs described in the [release procedure](sdk-release.md).
 The reference dApp's Vite configuration shows the required Node polyfills for
 the read-only Aztec verification dependencies.
 
 ```ts
-import { MagnaClient } from "@magna/client";
+import { MagnaClient } from "@magna-protocol/client";
 
 const magna = new MagnaClient({
   clientId: "dapp_reference",
@@ -53,10 +53,10 @@ origins.
 
 ## 2. Build a policy
 
-Policies are pure data from `@magna/core`, re-exported by `@magna/client`:
+Policies are pure data from `@magna-protocol/core`, re-exported by `@magna-protocol/client`:
 
 ```ts
-import { ClaimId, ConstraintOp, CredentialType, packAlpha3, type Policy } from "@magna/client";
+import { ClaimId, ConstraintOp, CredentialType, packAlpha3, type Policy } from "@magna-protocol/client";
 
 const passportGate: Policy = {
   credentialType: CredentialType.Passport,
@@ -99,7 +99,7 @@ To gate on more than one credential — say an adult passport *and* a specific I
 them as requirements so the user sees a single approval:
 
 ```ts
-import type { MagnaLoginRequirement } from "@magna/client";
+import type { MagnaLoginRequirement } from "@magna-protocol/client";
 
 const requirements: MagnaLoginRequirement[] = [
   { id: "passport", kind: "policy", policy: passportGate },
@@ -119,7 +119,7 @@ satisfied.
 Use redirect mode when popups are blocked or on mobile:
 
 ```ts
-import { completeRedirectLogin, loginWithRedirect } from "@magna/client";
+import { completeRedirectLogin, loginWithRedirect } from "@magna-protocol/client";
 
 await loginWithRedirect(
   {

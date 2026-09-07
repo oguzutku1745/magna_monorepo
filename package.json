@@ -53,7 +53,7 @@
     "test:contracts:company-sponsor": "node ./scripts/aztec-tooling.mjs test ./contracts/magna-company-sponsor",
     "test:contracts:webauthn": "node ./scripts/aztec-tooling.mjs test ./contracts/magna-webauthn",
     "test:contracts:webauthn-account": "node ./scripts/aztec-tooling.mjs test ./contracts/magna-webauthn-account",
-    "test:client": "npm run -w @magna/client test",
+    "test:client": "npm run -w @magna-protocol/client test",
     "test:wallet": "npm run -w @magna/wallet test",
     "test:recovery-v3": "npm run -w @magna/recovery-v3 test && npm run -w @magna/recovery-v3 test:noir",
     "test:recovery-portal": "cd contracts/magna-recovery-portal && forge test",
@@ -72,7 +72,7 @@
     "codegen:verify-meter-hook-instant": "node ./scripts/aztec-tooling.mjs codegen ./contracts/magna-verify-meter-hook-instant ./packages/contracts-bindings/src",
     "codegen:rights-purchase-l2": "node ./scripts/aztec-tooling.mjs codegen ./contracts/magna-rights-purchase-l2 ./packages/contracts-bindings/src",
     "codegen:contracts": "npm run codegen:issuer && npm run codegen:company-rights-registry && npm run codegen:company-sponsor && npm run codegen:verify-meter-hook && npm run codegen:consumer && npm run codegen:verify-meter-hook-instant && npm run codegen:rights-purchase-l2 && npm run codegen:webauthn-account",
-    "test:core": "npm run -w @magna/core test"
+    "test:core": "npm run -w @magna-protocol/core test"
   },
   "engines": {
     "node": ">=24.12.0"

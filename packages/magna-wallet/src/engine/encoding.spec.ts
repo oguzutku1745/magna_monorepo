@@ -13,7 +13,7 @@ import {
   packAlpha3,
   poseidon2FieldHasher,
 } from "./encoding.js";
-import { CredentialType } from "@magna/core";
+import { CredentialType } from "@magna-protocol/core";
 
 describe("packAlpha3", () => {
   it("packs USA deterministically", () => {

@@ -1,13 +1,13 @@
-# `@magna/client`
+# `@magna-protocol/client`
 
 Relying-party connector for Login with Magna.
 
 ```sh
-npm install @magna/client@0.2.0
+npm install @magna-protocol/client@0.2.0
 ```
 
 ESM with TypeScript declarations. Use Node.js 24.12+ for tooling and a modern
-browser with Web Crypto. `@magna/core@0.1.0` is installed automatically. Aztec
+browser with Web Crypto. `@magna-protocol/core@0.1.0` is installed automatically. Aztec
 read-only verification dependencies are pinned to 5.1.0. Vite applications need
 Node global/module polyfills, as configured in `apps/reference-dapp/vite.config.mjs`
 in the source repository.
@@ -19,7 +19,7 @@ returned by the wallet.
 ## Configuration
 
 ```ts
-import { CredentialType, MagnaClient, ageGteConstraint } from "@magna/client";
+import { CredentialType, MagnaClient, ageGteConstraint } from "@magna-protocol/client";
 
 const magna = new MagnaClient({
   clientId: "dapp_reference",

@@ -1,5 +1,5 @@
 {
-  "name": "@magna/core",
+  "name": "@magna-protocol/core",
   "version": "0.1.0",
   "description": "Dependency-free policy and connector protocol primitives for Magna",
   "type": "module",

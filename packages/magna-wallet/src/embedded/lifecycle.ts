@@ -24,7 +24,7 @@ import {
   deriveGhostKeyMaterial,
 } from "../engine/ghost.js";
 import type { GhostDerivationVersion } from "../engine/types.js";
-import type { CredentialType } from "@magna/core";
+import type { CredentialType } from "@magna-protocol/core";
 
 export type WalletSessionKind = "external" | "managed" | "passkey";
 export type ManagedAccountFlavor = "schnorr" | "secp256r1";

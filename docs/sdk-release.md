@@ -1,6 +1,6 @@
 # SDK release procedure
 
-Release candidates: `@magna/core@0.1.0` and `@magna/client@0.2.0`.
+Release candidates: `@magna-protocol/core@0.1.0` and `@magna-protocol/client@0.2.0`.
 Publication is pending until the registry confirms both versions. The SDK is
 for the current Aztec 5.1.0 integration; no public Magna network is implied.
 
@@ -40,11 +40,11 @@ to publish the SDK.
 ```sh
 npm login --registry=https://registry.npmjs.org
 npm whoami --registry=https://registry.npmjs.org
-npm publish ./artifacts/sdk/magna-core-0.1.0.tgz --access public --registry=https://registry.npmjs.org
-npm publish ./artifacts/sdk/magna-client-0.2.0.tgz --access public --registry=https://registry.npmjs.org
+npm publish ./artifacts/sdk/magna-protocol-core-0.1.0.tgz --access public --registry=https://registry.npmjs.org
+npm publish ./artifacts/sdk/magna-protocol-client-0.2.0.tgz --access public --registry=https://registry.npmjs.org
 ```
 
-The account must own or have publishing access to the `@magna` scope. Complete
+The account must own or have publishing access to the `@magna-protocol` scope. Complete
 npm's browser/2FA prompt in your own terminal; do not share credentials. Interactive
 publishing requires account 2FA even after a successful login. If npm returns the 403
 "Two-factor authentication" error, enable 2FA under the npm website's Account
@@ -57,8 +57,8 @@ release manifest before taking further action.
 After publication:
 
 ```sh
-npm view @magna/core@0.1.0 dist.integrity --registry=https://registry.npmjs.org
-npm view @magna/client@0.2.0 dist.integrity --registry=https://registry.npmjs.org
+npm view @magna-protocol/core@0.1.0 dist.integrity --registry=https://registry.npmjs.org
+npm view @magna-protocol/client@0.2.0 dist.integrity --registry=https://registry.npmjs.org
 npm run test:sdk:consumer -- --from-registry
 ```
 

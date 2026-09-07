@@ -52,12 +52,12 @@ RUN forge build --root ./contracts/magna-recovery-portal && \
 RUN npm run compile:contracts
 RUN NARGO_BIN=/usr/local/bin/nargo-instagram npm run -w @magna/instagram-proof compile:circuit
 RUN npm run codegen:contracts
-RUN npm run -w @magna/core build
+RUN npm run -w @magna-protocol/core build
 RUN npm run -w @magna/recovery-v3 build
 RUN npm run -w @magna/wallet build
 RUN npm run -w @magna/passport-wrapper-proof build
 RUN npm run -w @magna/recovery-wrapper-proof build
-RUN npm run -w @magna/client build
+RUN npm run -w @magna-protocol/client build
 RUN npm run -w @magna/instagram-proof build
 # Leave room for the existing local stack while building its replacement on
 # Docker Desktop's 8 GiB VM. Both frontend production builds pass with 3 GiB.

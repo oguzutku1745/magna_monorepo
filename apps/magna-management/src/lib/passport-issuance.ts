@@ -1,6 +1,6 @@
 import { getSchnorrAccountContractAddress } from "@aztec/accounts/schnorr";
 import { Fq, Fr } from "@aztec/aztec.js/fields";
-import { CredentialType } from "@magna/core";
+import { CredentialType } from "@magna-protocol/core";
 import type {
   PassportA2Action,
   PassportWrapperLocalWitness,

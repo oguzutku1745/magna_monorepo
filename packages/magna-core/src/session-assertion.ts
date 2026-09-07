@@ -13,7 +13,7 @@ export type SessionVerificationReceipt = {
 };
 
 /**
- * v2 transport envelope. It is deliberately unsigned: @magna/client verifies
+ * v2 transport envelope. It is deliberately unsigned: @magna-protocol/client verifies
  * every receipt against Aztec instead of trusting a key shipped in frontend JS.
  */
 export type SessionAssertion = {
