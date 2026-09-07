@@ -45,8 +45,12 @@ npm publish ./artifacts/sdk/magna-client-0.2.0.tgz --access public --registry=ht
 ```
 
 The account must own or have publishing access to the `@magna` scope. Complete
-npm's browser/2FA prompt in your own terminal; do not share credentials. Publish
-core first because the client depends on it. A published version is immutable;
+npm's browser/2FA prompt in your own terminal; do not share credentials. Interactive
+publishing requires account 2FA even after a successful login. If npm returns the 403
+"Two-factor authentication" error, enable 2FA under the npm website's Account
+settings, register a passkey/security key, and save recovery codes privately.
+See [npm's 2FA setup instructions](https://docs.npmjs.com/configuring-two-factor-authentication/).
+Publish core first because the client depends on it. A published version is immutable;
 if either version already exists, compare its registry integrity with the
 release manifest before taking further action.
 

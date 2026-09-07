@@ -1,6 +1,6 @@
 # SDK release candidate verification — 2026-09-06
 
-Registry publication: **pending npm authentication and scope access**.
+Registry publication: **pending npm 2FA setup and verified scope access**.
 Packages: `@magna/core@0.1.0`, `@magna/client@0.2.0`.
 
 ## Package checks
@@ -88,6 +88,12 @@ Obsolete September 3 status and test-summary documents were consolidated there;
 distinct historical security/adapter evidence is retained with its dates.
 
 ## Publication completion
+
+On September 7, npm login was verified and both local tarball hashes matched
+the candidates above. Neither package existed publicly. Publishing the core
+tarball was rejected with HTTP 403 requiring 2FA; the authenticated account's
+profile confirmed 2FA was disabled. The organization lookup did not establish
+membership in `@magna`. Neither package was published by this attempt.
 
 Follow [the release procedure](../sdk-release.md): authenticate as a scope
 publisher, publish the tested core tarball followed by the client tarball,
