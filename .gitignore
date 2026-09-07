@@ -110,7 +110,6 @@ docs/evidence/*
 !docs/evidence/local-clock-docker-2026-09-06.md
 !docs/evidence/recovery-v3-mobile-2026-09-06.md
 !docs/evidence/sdk-release-2026-09-07.md
-.codex/
 .claude/
 .cursor/
 .worktrees/

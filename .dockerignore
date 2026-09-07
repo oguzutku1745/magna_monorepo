@@ -1,7 +1,7 @@
 .git
 .github
 .agents
-.codex
+.*/
 .cursor
 .worktrees
 node_modules
