@@ -1,6 +1,6 @@
 # Magna M1–M5 reviewer guide
 
-Current status: 2026-09-06. This is the canonical status and command index.
+Current status: 2026-09-07. This is the canonical status and command index.
 Dated evidence files record specific runs; older evidence is retained only when
 it establishes a distinct protocol or adapter acceptance result.
 
@@ -10,7 +10,7 @@ it establishes a distinct protocol or adapter acceptance result.
 | M2 | Complete | Issuer, credential and recovery contract tests |
 | M3 | Complete; receipt events explicitly descoped | Atomic verification/metering and request-bound authorization tests |
 | M4 | Complete for the agreed local developer scope | [Official mobile recovery](evidence/recovery-v3-mobile-2026-09-06.md), [clock](evidence/local-clock-docker-2026-09-06.md), [Instagram proof](evidence/instagram-proof-portability-2026-08-30.md) |
-| M5 | Implementation complete; package publication pending | [SDK release procedure](sdk-release.md) |
+| M5 | Implementation complete; package publication pending | [SDK validation](evidence/sdk-release-2026-09-06.md), [release procedure](sdk-release.md) |
 
 ## Original review findings
 
