@@ -1,7 +1,8 @@
 # SDK release procedure
 
-Release candidates: `@magna-protocol/core@0.1.0` and `@magna-protocol/client@0.2.0`.
-Publication is pending until the registry confirms both versions. The SDK is
+Published versions: `@magna-protocol/core@0.1.0` and `@magna-protocol/client@0.2.0`.
+Both versions are published and verified; do not publish these versions again.
+For a subsequent release, update versions and regenerate the candidates. The SDK is
 for the current Aztec 5.1.0 integration; no public Magna network is implied.
 
 ## Prepare and verify
@@ -30,6 +31,23 @@ registered reference origin. Stop only the existing reference-dApp server to
 free that port; keep the management wallet, API and chain running. Port 15175 is
 suitable for bundle/render smoke checks but is not a registered login origin.
 
+To run the published npm packages against an active Docker deployment:
+
+```sh
+docker compose cp management:/runtime/reference-dapp.env /tmp/magna-reference.env
+npm run test:sdk:consumer -- --from-registry --env-file /tmp/magna-reference.env
+docker compose stop reference-dapp
+npm run reference-dapp:published
+```
+
+The last command serves the verified external consumer on port 5175 and checks
+its registry URLs, versions, integrity values and absence of workspace symlinks.
+It uses the directory recorded in ignored `artifacts/sdk/consumer.json`.
+Keep this terminal running. If the port is already served by a previous external
+consumer, stop that server first. To recreate a removed temporary consumer,
+repeat the installation command. The normal Docker reference service continues
+to use workspace packages for development.
+
 ## Publish the tested tarballs
 
 Commit the reviewed source before final preparation. Require
@@ -43,6 +61,11 @@ npm whoami --registry=https://registry.npmjs.org
 npm publish ./artifacts/sdk/magna-protocol-core-0.1.0.tgz --access public --registry=https://registry.npmjs.org
 npm publish ./artifacts/sdk/magna-protocol-client-0.2.0.tgz --access public --registry=https://registry.npmjs.org
 ```
+
+If an older npm CLI crashes during browser authentication, use a temporary
+current CLI with Node.js 24.15+:
+`npm exec --yes --package=npm@12.0.2 -- npm publish <tested-tarball> --access public --registry=https://registry.npmjs.org --browser=false`.
+Open its fresh approval URL in your logged-in browser promptly.
 
 The account must own or have publishing access to the `@magna-protocol` scope. Complete
 npm's browser/2FA prompt in your own terminal; do not share credentials. Interactive

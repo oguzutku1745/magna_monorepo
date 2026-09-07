@@ -20,6 +20,7 @@
     "test:localnet:clock:docker": "node scripts/run-local-clock-integration.mjs",
     "sdk:prepare": "node scripts/prepare-sdk-release.mjs",
     "test:sdk:consumer": "node scripts/test-sdk-consumer.mjs",
+    "reference-dapp:published": "node scripts/start-sdk-consumer.mjs",
     "build": "npm run -ws build",
     "test": "npm run -ws test",
     "lint": "npm run -ws lint",

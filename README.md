@@ -15,8 +15,8 @@ Recovery V3, the management wallet, and the `@magna-protocol/client` dApp connec
 - [Clock implementation and measured timings](docs/evidence/local-clock-docker-2026-09-06.md)
 - [SDK release procedure](docs/sdk-release.md)
 
-M1–M4 implementation and local developer recovery evidence are complete. M5
-publication is pending. Public-network deployment, production custody and the
+M1–M5 are complete for the agreed local developer scope, including SDK
+publication and installation from npm. Public-network deployment, production custody and the
 supported-document `SALTED=1` run remain M6 work. The local developer proof uses
 the official zkPassport app with `NON_SALTED_MOCK=2`; it is not production
 identity/privacy evidence.
