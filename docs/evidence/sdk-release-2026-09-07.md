@@ -66,6 +66,28 @@ and Docker commands reject workspace SDK resolution, including the client's
 transitive core dependency. The external consumer is an additional isolation
 check. See [the release procedure](../sdk-release.md).
 
+### Default Docker reference service
+
+Commit `42021da` pins the published SDK tarballs for the normal reference app,
+including its transitive core dependency. The reference tests (5), TypeScript
+and production build passed both on the host and in the rebuilt Docker image.
+An additional negative check confirmed that the startup guard rejects the actual
+root SDK workspace. A fresh external registry consumer also passed.
+
+The application image was built from a clean Git archive of that commit:
+`sha256:19971ae5c4fc8f40d30eb19a3500711d3706a072038ff33aaa38f9f83cf34d79`.
+Only `reference-dapp` was recreated, using `docker compose up --no-build
+--detach --no-deps --force-recreate reference-dapp`. Its startup check and direct
+inspection confirmed installed SDK files under the app's own `node_modules`,
+with the registry URLs and integrity values above. The eligibility/login page
+rendered in a real browser at `http://localhost:5175/app`.
+
+At final verification, the other services were already stopped: management and
+API ended at approximately 14:09:57 UTC, and Anvil/Aztec at 14:09:59 UTC on
+September 7, before this reference-only deployment. They were not restarted or
+reset. No fresh full login or preserved live-chain state is claimed for this
+deployment; a new local bootstrap is required before exercising chain flows.
+
 ## Regression evidence and source boundary
 
 The clean Docker image built from runtime commit
