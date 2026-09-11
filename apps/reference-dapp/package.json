@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@magna-protocol/client": "https://registry.npmjs.org/@magna-protocol/client/-/client-0.2.0.tgz",
-    "@magna-protocol/core": "https://registry.npmjs.org/@magna-protocol/core/-/core-0.1.0.tgz",
+    "@magna-protocol/client": "https://registry.npmjs.org/@magna-protocol/client/-/client-0.2.1.tgz",
+    "@magna-protocol/core": "https://registry.npmjs.org/@magna-protocol/core/-/core-0.1.1.tgz",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },

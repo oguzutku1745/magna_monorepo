@@ -14,6 +14,7 @@ Recovery V3, the management wallet, and the `@magna-protocol/client` dApp connec
 - [September 6 official mobile recovery evidence](docs/evidence/recovery-v3-mobile-2026-09-06.md)
 - [Clock implementation and measured timings](docs/evidence/local-clock-docker-2026-09-06.md)
 - [SDK release procedure](docs/sdk-release.md)
+- [Apache-2.0 publication and clean-history evidence](docs/evidence/public-release-2026-09-12.md)
 
 M1–M5 are complete for the agreed local developer scope, including SDK
 publication and installation from npm. Public-network deployment, production custody and the

@@ -2,6 +2,7 @@
 
 Release versions: `@magna-protocol/core@0.1.1` and `@magna-protocol/client@0.2.1`.
 Patch release for Apache-2.0 metadata and bundled license text; application APIs are unchanged.
+Published and verified: see the [September 12 release evidence](evidence/public-release-2026-09-12.md).
 Only publish these versions if they do not already exist in the registry.
 For a subsequent release, update versions and regenerate the candidates. The SDK is
 for the current Aztec 5.1.0 integration; no public Magna network is implied.
