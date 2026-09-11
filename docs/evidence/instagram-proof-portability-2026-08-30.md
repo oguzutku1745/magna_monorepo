@@ -64,7 +64,7 @@ treated as a remediation attestation.
 
 ## Real input and proof path
 
-The committed fixture SHA-256 is
+The privately retained fixture SHA-256 is
 `da26e96d83a4c221539550b3098ba36835904889366360cbc139c1bb6914c01d`.
 It is a real DKIM-signed Instagram recovery email, not a generated witness. Tests verify it offline
 with ZK Email's DKIM verifier and a separately captured DNS TXT key for
@@ -87,6 +87,10 @@ nullifier, blinded claims commitment, expiry, active owner, issuer, and chain. T
 handle hash, and handle blind never leave the wallet origin.
 
 ## Reviewer commands
+
+The real email was removed from public history before publication. Supply it privately using
+the [fixture instructions](../../packages/magna-instagram-proof/fixtures/README.md); the same
+DKIM, mutation and proof checks still run. Application verification is unchanged.
 
 After building the clean pinned Docker image with `npm run docker:local`, run:
 

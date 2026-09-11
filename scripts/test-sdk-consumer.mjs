@@ -33,7 +33,10 @@ for (const pkg of release.packages) {
   const installed = join(consumer, 'node_modules', pkg.name);
   assert.equal(lstatSync(installed).isSymbolicLink(), false, `${pkg.name} resolved through a symlink`);
   assert.ok(realpathSync(installed).startsWith(realpathSync(consumer)));
-  assert.equal(JSON.parse(readFileSync(join(installed, 'package.json'), 'utf8')).version, pkg.version);
+  const installedManifest = JSON.parse(readFileSync(join(installed, 'package.json'), 'utf8'));
+  assert.equal(installedManifest.version, pkg.version);
+  assert.equal(installedManifest.license, 'Apache-2.0');
+  assert.equal(readFileSync(join(installed, 'LICENSE'), 'utf8'), readFileSync(resolve('LICENSE'), 'utf8'));
 }
 run(['test']);
 run(['run', 'build']);

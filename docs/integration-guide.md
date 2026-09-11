@@ -22,7 +22,7 @@ Install `@magna-protocol/client` and pin the wallet origin, Aztec node, register
 Magna session-authorization contract:
 
 ```sh
-npm install @magna-protocol/client@0.2.0
+npm install @magna-protocol/client@0.2.1
 ```
 
 Use Node.js 24.12+ for tooling. The ESM package includes TypeScript declarations

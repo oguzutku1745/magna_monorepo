@@ -16,7 +16,7 @@
     "@aztec/aztec.js": "5.1.0",
     "@aztec/foundation": "5.1.0",
     "@aztec/stdlib": "5.1.0",
-    "@magna-protocol/core": "0.1.0",
+    "@magna-protocol/core": "0.1.1",
     "@magna/instagram-proof": "0.1.0",
     "@magna/passport-wrapper-proof": "0.1.0",
     "@magna/recovery-v3": "0.1.0",

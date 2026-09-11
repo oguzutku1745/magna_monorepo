@@ -30,14 +30,15 @@ not a claim of global biological-human uniqueness across replacement documents.
 
 ## Automated checks
 
+Provide a private Instagram email using the [fixture instructions](../packages/magna-instagram-proof/fixtures/README.md).
+The full suite fails with setup instructions when that file is missing; it does not skip proof checks.
+
 After `npm run docker:local`, run the reviewer suite without a concurrent live
 E2E/proving process. The bounded worker/heap configuration below passed on an
 8 GiB Docker Desktop VM:
 
 ```sh
-docker run --rm -e NODE_OPTIONS=--max-old-space-size=3072 \
-  -e HARDWARE_CONCURRENCY=2 --entrypoint sh magna-local-app:aztec-5.1.0 \
-  -lc 'cd /workspace && npm run test:reviewer:critical'
+npm run test:reviewer:critical:docker
 ```
 
 The suite covers clock diagnostics and pinned-runtime integration; issuer and
@@ -72,5 +73,5 @@ Recovery rotates the rooted passport note set. Instagram V2 currently uses the
 rootless lane and is issued again from a fresh signed email on the new wallet.
 
 Production `SALTED=1`, production orchestrator custody/rotation, public-network
-deployment, public-repository/license decisions, benchmarks and a demo video
-remain M6 work. None is silently claimed complete by this local acceptance.
+deployment, benchmarks and a demo video
+remain separate from the local acceptance evidence. None is silently claimed complete by this local acceptance.

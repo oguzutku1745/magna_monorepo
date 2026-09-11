@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { InputMap, InputValue } from "@noir-lang/types";
 import { Noir } from "@noir-lang/noir_js";
-import { loadVerifiedInstagramFixture } from "./fixture-dkim.js";
+import { instagramFixtureHandle, loadVerifiedInstagramFixture } from "./fixture-dkim.js";
 import { generateInstagramCircuitInputsFromVerifiedDkim } from "./inputs.js";
 import { loadInstagramCircuitArtifact } from "./prove.js";
 
@@ -20,7 +20,7 @@ function incrementField(value: InputValue): string {
 describe("Instagram circuit dependency-diagnostic audit", () => {
   it("rejects or publicly binds mutations across every audited unsafe-witness boundary", async () => {
     const verifiedDkim = await loadVerifiedInstagramFixture();
-    const { inputs } = generateInstagramCircuitInputsFromVerifiedDkim(verifiedDkim, "akinspur", {
+    const { inputs } = generateInstagramCircuitInputsFromVerifiedDkim(verifiedDkim, instagramFixtureHandle, {
       handleBlind: 123456789n,
       expiryTs: 2_000_000_000n,
       activeOwner: 101n,

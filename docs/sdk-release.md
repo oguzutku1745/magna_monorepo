@@ -1,7 +1,8 @@
 # SDK release procedure
 
-Published versions: `@magna-protocol/core@0.1.0` and `@magna-protocol/client@0.2.0`.
-Both versions are published and verified; do not publish these versions again.
+Release versions: `@magna-protocol/core@0.1.1` and `@magna-protocol/client@0.2.1`.
+Patch release for Apache-2.0 metadata and bundled license text; application APIs are unchanged.
+Only publish these versions if they do not already exist in the registry.
 For a subsequent release, update versions and regenerate the candidates. The SDK is
 for the current Aztec 5.1.0 integration; no public Magna network is implied.
 
@@ -18,7 +19,7 @@ npm run test:sdk:consumer
 `sdk:prepare` runs package tests, rebuilds the distributable without test files,
 packs both packages, and checks every tarball entry. `artifacts/sdk/release.json`
 records the source commit, whether the worktree was dirty, and SHA-256/SRI hashes.
-Only JavaScript, TypeScript declarations, README and package metadata are shipped.
+Only JavaScript, TypeScript declarations, README, Apache-2.0 LICENSE and package metadata are shipped.
 
 The consumer check copies the reference dApp into a fresh OS temporary directory,
 installs the tarballs with ordinary npm resolution, rejects workspace symlinks,
@@ -60,8 +61,8 @@ to publish the SDK.
 ```sh
 npm login --registry=https://registry.npmjs.org
 npm whoami --registry=https://registry.npmjs.org
-npm publish ./artifacts/sdk/magna-protocol-core-0.1.0.tgz --access public --registry=https://registry.npmjs.org
-npm publish ./artifacts/sdk/magna-protocol-client-0.2.0.tgz --access public --registry=https://registry.npmjs.org
+npm publish ./artifacts/sdk/magna-protocol-core-0.1.1.tgz --access public --registry=https://registry.npmjs.org
+npm publish ./artifacts/sdk/magna-protocol-client-0.2.1.tgz --access public --registry=https://registry.npmjs.org
 ```
 
 If an older npm CLI crashes during browser authentication, use a temporary
@@ -82,8 +83,8 @@ release manifest before taking further action.
 After publication:
 
 ```sh
-npm view @magna-protocol/core@0.1.0 dist.integrity --registry=https://registry.npmjs.org
-npm view @magna-protocol/client@0.2.0 dist.integrity --registry=https://registry.npmjs.org
+npm view @magna-protocol/core@0.1.1 dist.integrity --registry=https://registry.npmjs.org
+npm view @magna-protocol/client@0.2.1 dist.integrity --registry=https://registry.npmjs.org
 npm run test:sdk:consumer -- --from-registry
 ```
 

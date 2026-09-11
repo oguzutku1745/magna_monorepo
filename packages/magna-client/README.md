@@ -3,11 +3,11 @@
 Relying-party connector for Login with Magna.
 
 ```sh
-npm install @magna-protocol/client@0.2.0
+npm install @magna-protocol/client@0.2.1
 ```
 
 ESM with TypeScript declarations. Use Node.js 24.12+ for tooling and a modern
-browser with Web Crypto. `@magna-protocol/core@0.1.0` is installed automatically. Aztec
+browser with Web Crypto. `@magna-protocol/core@0.1.1` is installed automatically. Aztec
 read-only verification dependencies are pinned to 5.1.0. Vite applications need
 Node global/module polyfills, as configured in `apps/reference-dapp/vite.config.mjs`
 in the source repository.
@@ -75,3 +75,7 @@ Privacy-preserving receipt events are formally descoped from M3. The relying par
 signed verification result and transaction hash; aggregate metering remains atomic. In the current
 v2 implementation, “signed verification result” is realized by the chain-authorized transaction
 effect rather than a separate application signing key.
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).

@@ -2,6 +2,7 @@
 .github
 .agents
 .*/
+**/*.eml
 .cursor
 .worktrees
 node_modules

@@ -5,7 +5,7 @@ import {
   normalizeInstagramHandle,
   packInstagramHandle,
 } from "./inputs.js";
-import { loadVerifiedInstagramFixture } from "./fixture-dkim.js";
+import { instagramFixtureHandle, loadVerifiedInstagramFixture } from "./fixture-dkim.js";
 
 const issuance = {
   handleBlind: 123456789n,
@@ -27,12 +27,12 @@ describe("Instagram input generation", () => {
 
   it("generates constrained inputs for the signed English Instagram ownership footer", async () => {
     const verifiedDkim = await loadVerifiedInstagramFixture();
-    const result = generateInstagramCircuitInputsFromVerifiedDkim(verifiedDkim, "akinspur", issuance);
-    assert.equal(result.metadata.normalizedHandle, "akinspur");
+    const result = generateInstagramCircuitInputsFromVerifiedDkim(verifiedDkim, instagramFixtureHandle, issuance);
+    assert.equal(result.metadata.normalizedHandle, instagramFixtureHandle);
     assert.equal(result.metadata.template, "english");
-    assert.equal(result.metadata.handleLen, 8);
-    assert.equal(result.metadata.handlePacked, 0x616b696e73707572n);
-    assert.equal(result.inputs.claimed_handle_len, "8");
+    assert.equal(result.metadata.handleLen, instagramFixtureHandle.length);
+    assert.equal(result.metadata.handlePacked, packInstagramHandle(instagramFixtureHandle));
+    assert.equal(result.inputs.claimed_handle_len, String(instagramFixtureHandle.length));
     assert.ok(Number(result.inputs.prefix_index) >= 0);
     assert.ok(result.inputs.body);
     assert.equal("decoded_body" in result.inputs, false);
@@ -56,7 +56,7 @@ describe("Instagram input generation", () => {
     const verifiedDkim = await loadVerifiedInstagramFixture();
     const unsupported = { ...verifiedDkim, format: "relaxed/relaxed" };
     assert.throws(
-      () => generateInstagramCircuitInputsFromVerifiedDkim(unsupported, "akinspur", issuance),
+      () => generateInstagramCircuitInputsFromVerifiedDkim(unsupported, instagramFixtureHandle, issuance),
       /Unsupported Instagram DKIM canonicalization/,
     );
   });

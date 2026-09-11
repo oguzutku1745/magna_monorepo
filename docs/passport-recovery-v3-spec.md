@@ -726,9 +726,10 @@ After Gate A and Gate B-dev pass:
 
 1. **Completed:** freeze the Gate A and Gate B-dev redacted evidence and hashes; the application retains only the outer-proof hash and structural metadata.
 2. **Completed:** add golden vectors for A2-compatible recovery identity, Bind encoding, authorization hashing, secret hashing, and Inbox serialization.
-3. **Implemented in source:** add the dedicated production wrapper and generated verifier, keeping
-   the developer verifier in an isolated test-only package/profile. Empirical production-profile
-   validation remains Gate B-production rather than source implementation work.
+3. **Pending:** implement the dedicated production recovery wrapper and generated verifier, keeping
+   the developer verifier in an isolated test-only package/profile. The generic passport A2 package
+   has a production wrapper; the dedicated recovery package currently contains only `circuit-dev`.
+   Implementation and end-to-end production validation both remain Gate B-production work.
 4. **Developer implementation completed:** implement `MagnaRecoveryPortal`; production audit remains a release gate.
 5. **Implemented:** replace the issuer authorization perimeter, preserve `recover_root_for_caller()` for root kill/rotation, and compose the existing root-authority and linked-passport mint helpers after it in the same V3 private transaction.
 6. **Implemented for the local developer profile:** direct browser portal submission, canonical Inbox-membership polling, transient Ghost submission, and destination note-set verification. Production permissionless-relayer UX remains open.

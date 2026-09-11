@@ -105,3 +105,9 @@ memory-intensive proof tests on an 8 GiB Docker VM.
 M3 receipt events are explicitly descoped. Verification and metering remain
 atomic; Login with Magna uses the passkey-authorized transaction effect rather
 than a Magna-held application signing key.
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE). Real Instagram test emails are supplied privately
+using the [fixture instructions](packages/magna-instagram-proof/fixtures/README.md);
+they are not included in Git or Docker images.
