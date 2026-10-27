@@ -576,7 +576,9 @@ Ghost owns        RootRecoveryNote
 Ghost owns        LinkedRecoveryNote(type = passport)
 ```
 
-The old root authority and linked notes are not individually spent. They remain unusable because linked verification requires an unrevoked owner-matched root status, and the old root status's kill-switch nullifier is emitted by `recover_root_for_caller()`. The new notes use fresh root, authority, and linked revocation secrets.
+The old root authority and linked notes are not individually spent. The old root status's kill-switch nullifier is emitted by `recover_root_for_caller()`. Linked Instagram additionally binds its status secret to that exact root secret, credential type and claims commitment; it cannot substitute fresh root status when recovery returns to an earlier wallet. The new Passport notes use fresh root, authority, and linked revocation secrets. Recovery restores Passport only; Instagram must be independently issued again and may then be linked. Never-linked credentials remain independent.
+
+Owner-root revocation uses a distinct nullifier domain and MUST NOT spend `RootRecoveryNote`. V3 recovery therefore remains possible after owner revocation without a duplicate-nullifier collision. There is no separate rootless recovery protocol or additional Passport activation step.
 
 Inbox consumption emits the protocol message nullifier and prevents reuse. No second application replay map is required unless the exact `5.1.0` spike disproves this behavior.
 
@@ -596,22 +598,22 @@ A user may initiate recovery after a year or many years by generating a fresh pr
 
 ## 14. Client and relayer flow
 
-1. Create or select the destination Aztec account. Before any recovery authorization is consumed, register and retain it as a secondary wallet-owned account in the active PXE so destination-owned notes can be decrypted and queried after recovery. This does not make the destination sign or authorize recovery and does not switch the active wallet session.
+1. Create or open the destination Aztec account without requiring the lost wallet, a saved source credential reference or its local claims witness. Use the destination as the working wallet/PXE; an existing active wallet may also retain the destination as an owned account. In either case destination-owned notes must be readable after recovery. This does not make the destination authorize the root transition: that authority remains the fresh bound proof and Ghost-owned recovery note.
    Newly created passkeys MUST use a user-visible, editable wallet name that distinguishes the recovery destination from older credentials in the platform passkey chooser. A website cannot rename an existing WebAuthn credential after registration.
 2. Generate `recovery_nonce` and `message_secret` locally with a CSPRNG.
 3. Derive `message_secret_hash` and `recovery_intent` with the exact Aztec `5.1.0` and V3 implementations.
 4. Complete a fresh SDK `0.16.1` salted query whose Bind predicate authenticates the pre-proof recovery intent. Use strict FaceMatch for production or regular FaceMatch only in the explicit developer profile.
 5. Confirm locally that the SDK-returned scoped identifier equals authenticated outer public input `10` before deriving V3 state. Production additionally confirms `SALTED = 1` and the pinned OPRF-key hash; development confirms `NON_SALTED_MOCK = 2` and a zero OPRF-key-hash field.
-6. Locally derive the V3 Ghost and claim witness, then generate the dedicated recovery-wrapper proof. Confirm that its public secret hash equals the locally computed value.
+6. Locally derive the V3 Ghost and claim witness from the fresh result, discover its recovery note directly rather than requiring old Ghost metadata, then generate the dedicated recovery-wrapper proof. Confirm that its public secret hash equals the locally computed value.
 7. Submit the same portal call directly, through Magna's relayer, or through any third-party relayer.
 8. Wait for the canonical Inbox message to be included in Aztec and obtain its global leaf index/witness through supported APIs.
 9. Import the transient Ghost account locally and discover its `RootRecoveryNote`.
    In the chain-31337 developer profile only, the client MAY fund the Ghost through the canonical Fee Juice portal using the disposable local Anvil faucet key. The client MUST perform the L1→L2 bridge and claim directly, MUST refuse non-local chains, and MUST NOT depend on the Magna API. Production recovery MUST use the reviewed production fee/sponsorship path and MUST NOT embed a faucet key.
-10. Before calling the irreversible L2 transition, persist a crash-resume finalization record containing only the destination profile, source credential reference, authenticated root/claims/expiry, and the destination's committed-claims witness. It MUST NOT contain the scoped identifier, Ghost keys, raw proof, proof witness, recovery nonce, or Inbox message secret.
+10. Before calling the irreversible L2 transition, persist a crash-resume finalization record containing only the destination profile, optional source credential reference, authenticated root/claims/expiry, and the destination's committed-claims witness. It MUST NOT contain the scoped identifier, Ghost keys, raw proof, proof witness, recovery nonce, or Inbox message secret.
 11. Call `recover_root_v3` from the Ghost and, after settlement, add the transaction hash to the finalization record.
 12. Dispose of the Ghost wallet, proof worker, scoped-identifier material, and message secret.
 13. Discover the complete usable rooted passport note set from the destination and Ghost wallets. Destination-side private hint simulation MUST execute from an account actually registered in the wallet/PXE; treating an arbitrary address as an owned account is invalid.
-14. Mark the recovered credential active and remove the finalization record only after the complete note set is available. If discovery or the browser fails after step 11, resume destination finalization from the stored non-secret record; do not blindly replay the already-consumed authorization. `recovery_pending` is an internal resumable state, not a successful V3 terminal state.
+14. Build the destination claims witness entirely from the fresh disclosures and artifact blinds. Mark the recovered Passport active and remove the finalization record only after the complete note set and chain validity are confirmed. If discovery or the browser fails after step 11, resume destination finalization from the stored non-secret record; do not blindly replay the already-consumed authorization. `recovery_pending` is an internal resumable state, not a successful V3 terminal state.
 
 Magna's backend MAY sponsor gas and report status. It MUST NOT generate the nonce, receive the scoped identifier, rewrite the call, or be the only submission route. A documented raw portal interface and reproducible alternative client MUST exist before production.
 

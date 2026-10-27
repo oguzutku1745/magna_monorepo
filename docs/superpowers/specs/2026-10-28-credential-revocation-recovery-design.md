@@ -1,6 +1,6 @@
 # Credential linking, revocation and Passport recovery
 
-Date: 2026-10-28. Status: revised design for review; no runtime implementation yet.
+Date: 2026-10-28. Status: approved by the user; implementation and verification in progress.
 
 ## Selected approach
 
@@ -105,4 +105,4 @@ Required verification:
 - Empty-browser recovery needs neither old passkey nor old claims witness, restores only Passport, uses fresh destination witness data and survives reload.
 - Existing proof/portal/Inbox replay tests, company-paid login and SDK receipt verification continue to pass.
 
-This is the revised design, not an implemented or end-to-end-tested feature. The root-version secret derivation, exact commitment guard, distinct owner-root revocation domain and five-minute anchor bound are engineering proposals for review. The earlier secret-keyed-cutoff synthetic checks are not acceptance evidence for this simpler design.
+The user approved this design and authorized implementation. Track actual contract, wallet and UI verification separately from the design. The earlier secret-keyed-cutoff synthetic checks are not acceptance evidence for this simpler approach; fresh contract/E2E evidence is required for implementation claims.

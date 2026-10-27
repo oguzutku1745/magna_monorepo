@@ -33,8 +33,8 @@ Magna currently names exactly two live adapters:
 1. **Passport A2** — recursive zkPassport verification, blinded passport claims, rooted issuance,
    private login, renewal/revocation, and destination-bound Root Recovery V3.
 2. **Instagram V2** — client-side proof of an authentic DKIM-signed Instagram recovery email,
-   blinded handle claims, governed historical/current DKIM key commitments, rootless issuance, and
-   private handle login. After Passport Root Recovery V3, the holder issues Instagram again on the
+   blinded handle claims, governed historical/current DKIM key commitments, independent issuance,
+   optional holder linking to Passport, and private handle login. After Passport Root Recovery V3, the holder issues Instagram again on the
    recovered wallet using a fresh signed Instagram security email.
 
 `X`, `StudentEmail`, and `WorkEmail` are reserved enum values only. They are not implemented
@@ -45,7 +45,9 @@ adapters and must not be presented as live. Instagram's evidence and exact seman
 
 ## 1. Note lineages
 
-Two credential modes exist. Root-linked is canonical; rootless is the compatibility path.
+Two credential modes exist. Passport uses root-linked issuance. Instagram can remain independent
+(rootless) or be linked to an existing Passport root by its holder. Root protection applies only to
+linked instances, even when the same wallet also holds independent credentials.
 
 Definitions live in `contracts/magna-issuer/src/types/`. Each is an `#[note]` struct, so the fields
 below are the declared payload only: note randomness is supplied by the Aztec note macro, and
@@ -53,7 +55,7 @@ ownership is a property of note delivery and discovery (surfaced as `HintedNote.
 is consumed) rather than a declared field. Note randomness is drawn from the Aztec randomness
 oracle and used only for note blinding — it never influences public state branching.
 
-### 1.1 Rootless notes (compatibility)
+### 1.1 Independent (rootless) notes
 
 | Note | Held by | Declared fields |
 | --- | --- | --- |
@@ -75,26 +77,42 @@ the same identity root without exposing the underlying identifier.
 | `LinkedStatusNote` | active wallet | `root_commitment`, `revocation_secret`, `claims_hash`, `credential_type` |
 | `LinkedRecoveryNote` | Ghost wallet | `root_commitment`, `revocation_secret`, `claims_hash`, `credential_type`, `expiry_ts` |
 
-`RootAuthorityNote.claims_hash` is the currently authoritative passport credential.
+`RootAuthorityNote.claims_hash` is the currently authoritative passport credential. Linked Instagram
+uses its own expiry and the root's revocation state; Passport authority expiry/renewal is not its
+validity condition. Holder-linked Instagram creates no `LinkedRecoveryNote` and is manually
+reissued after recovery.
+
+For Instagram, `LinkedStatusNote.revocation_secret` is derived as
+`H(MAGNA_LINKED_STATUS_SECRET_DS, root_revocation_secret, credential_type, claims_hash)`. Private
+verification recomputes this relation from the authenticated root status. This binds the credential
+to the root version even if recovery returns to the same wallet; the note layouts remain unchanged.
 
 ---
 
 ## 2. Revocation signals
 
-Revocation is a kill-switch nullifier emitted by *spending* a recovery note. There is no public
-revocation registry.
+Revocation uses opaque, contract-siloed kill-switch nullifiers. Owners may revoke a credential from
+its authenticated status note or revoke Passport's root from its root-status note. Recovery emits a
+separate root kill switch while consuming the Ghost's recovery note. There is no address-indexed
+public protection registry or wallet activation marker.
 
 | Lineage | Nullifier |
 | --- | --- |
 | Rootless credential | `N = H(MAGNA_REVOCATION_DS, revocation_secret, credential_type, claims_hash)` |
 | Linked credential | `N_linked = H(MAGNA_REVOCATION_DS, revocation_secret, credential_type, claims_hash)` |
-| Shared root | `N_root = H(MAGNA_ROOT_REVOCATION_DS, revocation_secret, root_commitment)` |
+| Shared root (recovery) | `N_root = H(MAGNA_ROOT_REVOCATION_DS, revocation_secret, root_commitment)` |
+| Shared root (owner revoke) | `N_owner_root = H(MAGNA_ROOT_OWNER_REVOCATION_DS, revocation_secret, root_commitment)` |
 | Root authority | `N_root_authority = H(MAGNA_ROOT_AUTHORITY_REVOCATION_DS, revocation_secret, root_commitment, claims_hash)` |
 
 Rootless `verify()` accepts only on proven non-inclusion of `N` at the anchor block header.
 
-Root-linked `verify_linked()` rejects if **any** of `N_linked`, `N_root`, or `N_root_authority`
-exists at the anchor header.
+Root-linked Passport verification rejects if any of `N_linked`, `N_root`, `N_owner_root`, or
+`N_root_authority` exists at the anchor header. Linked Instagram checks its own kill switch and both
+root kill switches, together with its root-version secret binding; it does not read Passport authority.
+Owner-root revoke never spends `RootRecoveryNote`, so it does not block subsequent V3 recovery.
+Historical absence is bounded by a 300-second anchor-to-expiration maximum, capped further by
+credential, authority and sponsorship deadlines; already anchored transactions may still settle
+within that window after a revoke.
 
 Separating the root domain from the credential domain is what makes selective revocation possible:
 revoking one linked credential does not kill siblings, while revoking the root kills all
@@ -104,7 +122,7 @@ descendants.
 
 ## 3. Issuance control boundary
 
-Issuer contract acceptance is a single immutable rule:
+Initial external credential issuance is restricted by the immutable orchestrator rule:
 
 ```
 assert(msg_sender == ORCHESTRATOR_ADDRESS)
@@ -117,8 +135,14 @@ into the account instance's immutable hash. It does **not** currently provide in
 rotation. Local-testnet use is expected; production requires a separately reviewed stable-address
 rotation/emergency design and production signer custody before deployment.
 
-This rule governs **who may call**. It says nothing about whether the claims being minted are
-truthful; that property comes from the proof pipeline in §5.
+This rule governs who may attest new claims; their truth comes from the proof pipeline in §5.
+Holder `link_credential_to_root(...)` is an authenticated conversion of already-issued notes. It
+spends the original credential/status, emits their individual kill switch, and mints linked notes
+with the same claims and expiry. It requires no fresh email proof or API authorization and cannot
+mint arbitrary claims. Instagram is rejected by the legacy orchestrator-only linked mint helper.
+Exact duplicate Instagram commitments are single-use per owner and mode; standalone/linked domains
+are separate to permit conversion. Fresh-blind reissuance remains allowed and does not replace other
+instances of the same handle.
 
 Renewal uses a two-step split of this boundary. The orchestrator calls
 `authorize_root_authority_refresh(...)`, which records an authorization commitment in public
@@ -392,6 +416,8 @@ Magna path uses the company sponsor's `_session` entrypoints described in §8.3.
 
 ### 8.2 Root-linked verify
 
+Passport verification follows these steps:
+
 1. Read `LinkedCredentialNote` + `LinkedStatusNote` + `RootStatusNote` + `RootAuthorityNote`.
 2. Enforce shared linkage across all four `root_commitment` values.
 3. Recompute `claims_hash` from the private witness; assert equality with the linked credential
@@ -401,12 +427,15 @@ Magna path uses the company sponsor's `_session` entrypoints described in §8.3.
 5. Evaluate policy constraints.
 6. Check validity against the minimum of linked credential `expiry_ts`, `authority_expiry_ts`, and
    the sponsored window end when sponsored mode is active.
-7. Compute `N_linked`, `N_root`, `N_root_authority`; prove all required non-inclusions.
+7. Compute `N_linked`, `N_root`, `N_owner_root`, `N_root_authority`; prove all required non-inclusions.
 8. Enqueue metering / sponsorship logic as in the rootless path.
 
-Rootless credentials never perform the root check. For Instagram-linked credentials, step 3
-recomputes the Instagram V2 `handle_commitment` and `claims_hash` from the private handle-hash and
-blind witness while the rooted passport authority note still gates validity.
+All hints must belong to this issuer and the expected note storage slot, with ownership and
+historical membership authenticated. Rootless credentials never perform a root check. Linked
+Instagram reads only linked credential/status and root status, recomputes the Instagram V2 claims
+and the root-version-bound status secret, and checks its own expiry/revocation and both root kill
+switches. It requires no `RootAuthorityNote`. Linking invalidates only the converted standalone
+instance; it does not disable other independent credentials.
 
 ### 8.3 Login with Magna session authorization
 
@@ -436,18 +465,22 @@ authority to a Magna backend is unnecessary.
 
 ### 9.1 Rootless recovery
 
-The generic rootless `recover(...)` entrypoint has been removed and is not part of the pre-release
-rooted passport product. A future rootless recovery design requires a
-separate proof source and threat-model review; it must not reuse Ghost possession as sole authority.
+Independent credentials have no separate recovery protocol. The generic rootless `recover(...)`
+entrypoint remains removed; Ghost possession alone is not recovery authority. A holder with wallet
+access can revoke an instance. Fresh evidence can issue a new instance, but does not automatically
+revoke another copy. If an independent-only wallet is lost, there is no Passport fallback revocation;
+its old credentials remain usable until expiry or another authorized revocation.
 
 ### 9.2 Instagram after passport recovery
 
-Instagram V2 uses the rootless credential lane. Passport Root Recovery V3 rotates the rooted
-passport note set only; it does not copy the prior wallet's Instagram notes. Once the recovered
+Passport Root Recovery V3 rotates only the Passport note set and invalidates its previous root
+version. Instagram linked to that version becomes unusable; never-linked Instagram remains
+independent. Recovery does not copy either form of Instagram into the destination. Once the recovered
 wallet is open, the holder obtains a fresh signed Instagram security email and uses the normal
 client-side Instagram issuance flow. The browser verifies the email, generates a new blinded-handle
 proof, and issues an active Instagram credential to the recovered wallet without sending the email
-or plaintext handle to Magna API.
+or plaintext handle to Magna API. The new Instagram instance can then be linked to the recovered
+Passport through the same holder operation.
 
 ### 9.3 Root recovery
 
@@ -487,19 +520,20 @@ Renewal is split so the orchestrator authorizes the refresh but never touches no
 4. The contract proves the shared root lineage is still live, emits `N_root_authority` for the
    previous authority note, mints a fresh `RootAuthorityNote`, and mints a fresh linked passport
    credential lineage under the same `root_commitment`.
-5. Contract-level linked credential lineages that already share the root can use the refreshed
-   authority note. The shipped Instagram V2 adapter is rootless and is not affected by this step.
+5. Linked Instagram remains bound to the same unchanged root secret and uses its own expiry. It
+   does not depend on the refreshed Passport authority note. A revoked root cannot be renewed.
 
 `refresh_root_authority(...)` remains available as the single-call variant for flows where the
 caller already holds the notes.
 
 ### 9.5 Outcome matrix
 
-| Event | Root | Linked descendants |
-| --- | --- | --- |
-| Passport nullified | dies | die |
-| Passport expired only | survives | paused until `refresh_root_authority(...)` |
-| Passport renewed/replaced | survives, same `root_commitment` | refreshed under existing root |
+| Event | Root | Linked Instagram | Independent credentials |
+| --- | --- | --- | --- |
+| Root revoked | revoked | invalid | unaffected |
+| Passport authority expired only | unchanged | own expiry/revocation still apply | unaffected |
+| Passport authority renewed | unchanged | unchanged | unaffected |
+| Passport root recovered | fresh root secret at destination | old version invalid; manually reissue | not recovered or automatically revoked |
 
 ---
 
