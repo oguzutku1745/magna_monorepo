@@ -1,185 +1,108 @@
-# Credential revocation and Passport recovery design
+# Credential linking, revocation and Passport recovery
 
-Date: 2026-10-28. Status: draft for review. Product scope selected by the user; engineering choices below remain proposed until this design is accepted.
+Date: 2026-10-28. Status: revised design for review; no runtime implementation yet.
 
-Validation update: the address-derived public cutoff is withdrawn. The private-keyed alternative below is supported by the pinned Aztec 5.1.0 primitives and code-flow review, but requires holder activation after issuance/recovery. It has not been implemented or tested as a Noir/network flow.
+## Selected approach
 
-Magna will retain its existing credential notes, proof adapters and Recovery V3 transport. A wallet owner can revoke Instagram alone or revoke the Passport root protecting its credentials. Passport recovery restores Passport and disables credentials attached to the old root; Instagram must be issued again manually.
+Keep Passport issuance and Recovery V3. Add one private holder operation to link an independently issued credential to an existing Passport root, plus owner revocation and the existing lost-wallet UI repair. This replaces the earlier wallet-wide cutoff/activation design.
 
-## Scope and approaches
+Passport root revocation protects **linked credentials only**. A credential never linked remains independent, even if its wallet also holds Passport. Linking is irreversible for that issued instance: the original standalone copy is invalidated. Reissuing the same Instagram handle as a new independent credential remains allowed and does not revoke other instances.
 
-The selected approach extends the existing standalone and linked credential paths. The user rejected a shared wallet protection record and external private handle matching through an OPRF network or TEE. Those alternatives would add infrastructure or replace more of the existing lifecycle than this task requires.
+The user selected per-credential linking over wallet-wide enforcement. There is no new public or secret-keyed wallet marker, Passport activation transaction, one-root-per-wallet restriction, shared protection record, handle registry, external matching service or recovery backup. Gas/onboarding policy remains separate work.
 
-This work covers owner revocation, optional Passport attachment for Instagram, wallet/login routing and recovery without the lost wallet. It does not change credential pricing, gas sponsorship, deployment subsidies, account signing keys, proof circuits, the Ethereum portal ABI or recovery authorization format. No Instagram handle registry or new recovery backup is introduced.
+## Product behavior
 
-The supported implementation target remains the repository's existing developer proof profile. Production proof-profile graduation and production L1 payment integration are separate work. Existing profile and proof-bound recovery checks must remain intact.
-
-## Required behavior
-
-| Situation | Result |
+| Action | Result |
 | --- | --- |
-| Instagram issued without Passport | Existing standalone credential path; the holder can revoke it |
-| Instagram issued with Passport protection | Linked credential path; its own expiry and revocation apply, together with root revocation |
-| Passport added after Instagram | Earlier Instagram credentials are converted to linked notes without changing claims or expiry; their standalone copies become unusable |
-| Instagram revoked | Passport and other credentials remain valid |
-| Passport root revoked | Every credential protected by that root version becomes unusable |
-| Passport recovered after owner revocation | Recovery remains possible and creates fresh root status for the destination |
-| Passport renewed | Instagram keeps its own credential and expiry |
-| Wallet lost with Passport protection | Fresh Passport proof recovers Passport; old protected Instagram stays invalid |
-| Wallet lost without Passport protection | Magna has no fallback revocation authority; old credentials expire normally |
+| Issue Passport | Existing rooted Passport A2 flow, usable without another activation |
+| Issue Instagram independently | Existing API/proof flow; no Passport required |
+| Link Instagram | Convert that instance to linked notes; preserve claims and expiry; invalidate its standalone copy |
+| Add Passport later | Offer the same link operation for existing independent credentials |
+| Revoke Instagram | Only that credential stops working |
+| Revoke Passport root | Passport and all credentials attached to that root version stop working |
+| Renew Passport authority | Linked Instagram keeps its own validity and expiry |
+| Recover Passport | Recovery V3 restores Passport; old linked Instagram stays invalid and needs manual reissuance |
+| Lose an independent-only wallet | No Passport fallback; credentials remain valid until their own revocation or expiry |
 
-These are credential-instance revocation rules. Issuing the same Instagram handle elsewhere does not automatically replace another credential. The current Instagram adapter continues to prove possession of its supported signed email; live account-control checks and email freshness policy are outside this design.
+## 1. One private linking endpoint
 
-## Existing components to retain
+Add `link_credential_to_root(hinted_credential, hinted_status, hinted_root_status)` to `contracts/magna-issuer/src/main.nr`. Initially support Instagram; reject Passport and unsupported credential types. Future independent adapters can reuse this operation when explicitly supported.
 
-- `contracts/magna-issuer/src/types/`: retain the existing credential, status, root and linked note formats.
-- `packages/magna-instagram-proof`: retain the blinded handle commitment, circuit and seven public outputs.
-- `packages/magna-passport-wrapper-proof`: retain Passport A2 and its owner/action/deployment bindings.
-- `packages/magna-recovery-wrapper-proof`, `packages/magna-recovery-v3` and `contracts/magna-recovery-portal`: retain the fresh destination-bound proof, portal verification, canonical Inbox message and replay protection.
-- `contracts/magna-company-sponsor` and the public SDK: retain company-paid verification, rights consumption and request-bound session receipts.
+The contract authenticates genuine caller-owned notes against this issuer and the expected storage slots. Check the standalone credential/status claims and type, credential expiry, individual revocation, and both root-revocation markers. No Instagram handle, local claims witness, fresh email proof or API authorization is required: the existing issued notes establish the claims.
 
-## Owner revocation
+In one transaction:
 
-Add three private owner entrypoints to `contracts/magna-issuer/src/main.nr`:
+1. Spend the standalone credential and status notes.
+2. Emit the existing individual revocation nullifier for the old status. Spending alone is insufficient because today's standalone verifier proves historical note membership and checks this explicit kill switch.
+3. Mint the existing `LinkedCredentialNote` and `LinkedStatusNote` to the same owner, preserving `claims_hash`, type and expiry, with the root binding below.
 
-| Entrypoint | Authority and effect |
-| --- | --- |
-| `revoke_credential(hinted_status)` | Prove a genuine caller-owned `StatusNote`, reject Passport type, emit the existing credential revocation nullifier |
-| `revoke_linked_credential_as_owner(hinted_status)` | Prove a genuine caller-owned `LinkedStatusNote`, reject Passport type, emit the existing credential revocation nullifier |
-| `revoke_root_as_owner(hinted_root_status)` | Prove a genuine caller-owned `RootStatusNote`, emit a separate owner-root revocation nullifier |
+The contract enforces conversion of this instance, including raw direct/sponsored calls. It does not disable other independent credentials in the wallet. A failed transaction leaves the source usable; a successful link cannot fall back to its standalone source. Previously anchored proofs have the bounded timing limitation below.
 
-A supplied hint must be authenticated against this issuer and its expected storage slot, not accepted merely because its owner field matches. Root and linked status notes remain readable so chain-status inspection can explain why a credential was revoked. Repeating the same revocation is rejected by nullifier uniqueness; the UI recognizes an already revoked credential instead of offering the action again.
+### Bind the existing status to the root version
 
-The owner-root nullifier uses the existing root secret and commitment with a new domain separator. It is distinct from `MAGNA_ROOT_REVOCATION_DS`, which Recovery V3 already emits. Every root-dependent verification and root-authority refresh checks both root nullifiers.
+Recovery keeps `root_commitment` stable but rotates the root revocation secret. Checking only the commitment would allow old linked Instagram to pair with fresh root status if recovery later returns to the same wallet.
 
-Owner revocation must never spend `RootRecoveryNote`. Recovery V3 can therefore consume its authenticated Inbox authorization, spend that recovery note, emit the existing recovery nullifier and mint fresh root status without colliding with owner revocation. The fresh root secret produces fresh revocation nullifiers. Passport renewal cannot reactivate an owner-revoked root.
+Proposed internal implementation: derive the linked Instagram status's existing `revocation_secret` as a domain-separated hash of `(root_revocation_secret, credential_type, claims_hash)`. During every linked Instagram verification, recompute that derivation from the authenticated supplied root status and require equality. The root secret stays private; no new note fields or public markers are needed. Passport's linked status generation remains unchanged.
 
-Retain the current Ghost-linked revocation entrypoint where existing callers depend on it. Do not restore the retired generic Ghost-only recovery entrypoint.
+This derivation separates individual credential secrets while binding them to the exact root version. Renewal leaves the root secret unchanged; recovery changes it, so old Instagram status cannot match the recovered root even at the same owner address. Ensure the replacement secret differs from the source standalone secret so the source kill switch cannot revoke the replacement.
 
-### Exact issuance duplicates
+Do not mint `LinkedRecoveryNote` for newly linked Instagram: it is independently reissued, not automatically recovered. The supported Instagram linked-creation path is this holder conversion. Reject Instagram in legacy orchestrator-only `register_linked_credential`, update the engine's legacy Instagram helper and fixtures to issue then link, and retain Passport uses. This avoids silently creating Instagram notes without the required version binding.
 
-The retained note formats pair credentials with status by owner, claims hash and type. Minting the exact same Instagram commitment twice would create interchangeable status notes: revoking one secret would leave the other usable. Prevent that ambiguity with contract nullifier uniqueness for each Instagram `(owner, claims_hash, standalone-or-linked)` mint. Enforce it in every corresponding mint helper, including legacy orchestrator helpers and owner attachment. Replaying the same API proof must not mint another status pair.
+### Exact commitment duplicates
 
-This is exact commitment deduplication, not Instagram-account uniqueness. Reissuing the same handle with a fresh blind produces a new commitment and remains allowed. Standalone and linked mints use separate domains so one conversion is allowed, but a second matching pair in either mode is not. No note fields or proof outputs change.
+Current status pairing uses owner, claims hash and type. Prevent multiple interchangeable Instagram status pairs by contract uniqueness for `(owner, claims_hash, standalone-or-linked)` across corresponding mint paths. Use separate domains for standalone and linked so one conversion is possible. This prevents exact proof replay; it is not handle uniqueness. A fresh blind gives a new claims commitment and remains allowed.
 
-## Blocking the standalone route after Passport attachment
+## 2. Root and individual revocation
 
-Do not derive a cutoff from the wallet address and public constants alone. That would allow anyone knowing the address to calculate its Passport-protection marker. Contract siloing does not hide a guessable preimage.
+Add private owner operations for standalone status, linked status, and root status. Authenticate note owner, issuer, slot and membership. Individual operations reject Passport type; the Passport revoke action revokes its root.
 
-The proposed replacement uses the holder's issuer-scoped nullifier hiding key. In constrained private code, obtain the owner's address-bound public keys with `get_public_keys(owner)` and request `context.request_nhk_app(public_keys.npk_m_hash)`. Never accept an arbitrary caller-supplied secret or an unconstrained key hint. Aztec validates the key derivation through the kernel; the key is not sent to the API or exposed in a public call.
+Individual revoke emits the existing `MAGNA_REVOCATION_DS` kill switch. Root owner revoke uses the existing root secret/commitment with a new domain separator, distinct from Recovery V3's `MAGNA_ROOT_REVOCATION_DS`. Root-dependent verifiers, linking and authority refresh check both. Revoking first must not prevent later recovery: owner revoke never consumes `RootRecoveryNote`, and recovery emits its distinct existing root kill switch without duplicate-nullifier collision. Renewal cannot reactivate a revoked root.
 
-Add a private holder activation operation over an authenticated, caller-owned, unrevoked `RootStatusNote`. In one transaction it emits two separately domain-separated, contract-siloed nullifiers:
+Each linked proof checks its own credential expiry/revocation and the root kill switches. Revocation needs no transaction that enumerates child credentials. Keep Passport authority checks for Passport itself; remove `RootAuthorityNote` and its expiry/renewal dependency from Instagram-specific issuer and sponsor verification methods. Keep existing Ghost-linked revocation for retained Passport/legacy callers; do not reintroduce generic Ghost-only recovery.
 
-- A permanent wallet cutoff, derived from the holder key and owner address. Every standalone verification helper derives that same value privately and proves non-inclusion at its anchor.
-- An activation marker derived from the holder key, owner address, root commitment and root revocation secret. Every rooted Passport/Instagram verification and holder attachment requires inclusion of this specific root-version marker. A wallet-wide cutoff alone is insufficient: it must not accidentally activate another root status minted to the same wallet.
+## 3. Issuance, wallet routing and UI
 
-Both markers are opaque without the holder key. Activation membership checks remain inside the private proof; do not expose either marker on each login through public function arguments, SDK receipts or API payloads. This removes the proposed public address-to-protection lookup, not the issuance API's existing knowledge of the owner or general network metadata.
+Keep Passport A2 issuance, `/instagram/verify`, the blinded-handle circuit and its seven outputs. To request Passport protection for Instagram, use ordinary standalone issuance followed by the linking operation. With no selected live Passport root, issuance remains independent. When Passport is added later, discover independent Instagram and offer linking through the same operation.
 
-This is not a drop-in change to `mint_root_notes`. Initial Passport issuance runs in the orchestrator's PXE; Recovery V3 runs in a separate Ghost PXE. Neither has the destination holder's key. Preserve those minting transactions and note layouts, then run mandatory activation in the destination holder's wallet. Passport is pending and cannot be verified before activation. Skipping activation therefore cannot produce a usable Passport alongside an unrestricted standalone route. Legacy orchestrator mint/refresh helpers may create notes but must not bypass the verification activation gate.
+Display independent or Passport-linked status per credential. A failed/unfinished link is an issued independent credential, not a protected one; offer retry without repeating proof generation or issuance. On retry, rediscover settled notes and chain state. Record success only after the linking transaction settles. Register the holder as a known sender for holder-authored linked notes. Existing handle witnesses remain valid because claims and expiry are unchanged.
 
-Apply the standalone check beneath direct, sponsored, consumer and session entrypoints, so raw contract calls cannot bypass the UI. Standalone Instagram issuance remains unchanged, including intermediate notes which must be linked after activation. Activation blocks all old standalone copies even if the holder deliberately omits conversion. Before activation, previously standalone Instagram remains standalone; the UI must not describe Passport protection as complete.
+Route login from the discovered standalone/linked mode across wallet engine, browser client, consumer login, management wallet-login and sponsor session methods. Linked Instagram hint discovery retrieves its credential/status by claims and its root status by root commitment, then selects the matching version using the secret derivation. Root discovery for Passport also selects a live candidate rather than assuming the first root-status note is current, which matters after recovery back to an earlier wallet. Do not look up Passport authority using Instagram claims or silently downgrade a revoked linked instance to standalone.
 
-Cutoff uniqueness keeps the proposed one-activated-root-per-wallet rule. Recovery should preflight in the destination wallet that its private cutoff is absent. The existing Ghost recovery transaction cannot itself derive that cutoff: if raw calls target a previously protected wallet, it may mint notes, but fresh root activation must fail and all rooted verification must reject the unactivated version. Do not claim the Ghost mint itself rejects that destination. This prevents recovery back into an old protected wallet from reviving its old linked Instagram via fresh root status. A never-protected destination holding standalone Instagram remains allowed.
+Preserve `StoredCredentialRef` modes and root metadata. Add chain-derived Instagram status for its own expiry/revocation and optional root revocation/version mismatch; extend Passport status for owner-root revocation. Add individual revoke and Passport-root revoke actions to existing cards. Public SDK requests, company sponsorship, rights consumption and session receipt formats stay intact.
 
-Renewal retains the same root status and activation; do not emit the cutoff again. Owner revocation and recovery retain their existing secret-based kill switches and need no old holder key. Recovery rotates the root secret, so the destination needs its own fresh activation before the recovered Passport becomes usable.
+## 4. Lost-wallet recovery entry
 
-The supported Passport API remains rooted A2. Do not expose rootless Passport issuance as a way to bypass this protection rule. Low-level legacy helpers retained for tests or SDK compatibility must not create a usable Passport root without activating the cutoff.
+Keep the existing fresh Passport proof → Ethereum portal → canonical Inbox → Ghost `recover_root_v3` flow. It already mints the complete Passport note set. Add no activation step and no wallet-history cutoff.
 
-### Validation evidence and limits
+Repair the management screen/handler so it can start without the old wallet session, saved credential reference or old local claims witness:
 
-Reviewed `verifyAndIssuePassportA2` (orchestrator submission), issuer standalone/linked verification helpers, `mint_root_notes`, `recover_root_v3`/`recover_root_for_caller`, browser `recoverRootV3`, and management's isolated transient Ghost session. The issuer artifact reports Aztec 5.1.0 and embeds that version's source for constrained `get_public_keys`, `request_nhk_app` and historical nullifier non-inclusion, confirming these are available in this build rather than only in newer docs.
+1. Create/open the destination passkey and use its existing session/deployment/funding support.
+2. Prepare the destination/nonce/message-secret-bound request using the recovery screen's age threshold, default 18.
+3. Derive root and Ghost from the fresh Passport result, then discover the Ghost's `RootRecoveryNote` directly.
+4. Use the existing portal, Inbox wait and isolated transient Ghost finalization; no old holder key or API recovery authorization is required.
+5. Build the destination Passport witness from fresh `localDisclosures(completion, ageThreshold)` and the artifact's new nationality/expiry blinds, not a spread of the lost witness. Make pending-finalization `sourceCredentialId` optional and retain reload/resume support.
+6. Verify transaction success, destination notes and chain validity before showing completion. Restore Passport only; offer fresh Instagram issuance and optional linking afterward. Existing destination-owned independent Instagram can be linked separately.
 
-Seven synthetic checks passed using the installed Aztec 5.1 key-store/cryptography implementation, an in-memory storage adapter and explicit WASM backend: stable holder key, issuer scoping, missing holder key in an orchestrator-only store, missing destination key in a Ghost-only store, destination access without old holder access, wallet-address separation and root-secret-version separation. No real account material was used. These checks do not establish Noir compilation, kernel integration, membership enforcement, transaction timing or complete recovery success; those remain contract/E2E acceptance work. The native LMDB/backend attempts were blocked by the local sandbox, so the successful checks deliberately used in-memory storage and WASM.
+Keep existing wrapper outputs, destination/deployment binding, portal ABI, replay protections and developer proof-profile boundaries. Production proof-profile graduation and payment-policy implementation remain separate.
 
-References: [Aztec 5.1 private context source](https://github.com/AztecProtocol/aztec-packages/blob/v5.1.0/noir-projects/aztec-nr/aztec/src/context/private_context.nr), [private state](https://docs.aztec.network/developers/docs/foundational-topics/state_management).
+## Revocation timing
 
-### Verification timing
+Existing private non-inclusion checks establish state at the proof's anchor, not settlement. Proposed default: cap affected verification, linking and renewal transaction deadlines at the minimum of their existing deadlines and `anchor_timestamp + 300 seconds`. Test this against pinned Aztec 5.1 browser proving times before shipping. Recovery V3 transport/proof deadlines remain unchanged.
 
-The current issuer uses `assert_nullifier_did_not_exist_by` at the proof's anchor block. This proves historical absence, not absence at settlement. Checking a cutoff or revocation against an arbitrarily old anchor would leave a bypass.
+Old anchored transactions may settle within that window after revocation/linking. Fresh chain-status reads show settled revocation immediately; do not promise instant cancellation or publish a stable per-login tag to work around this constraint.
 
-Proposed engineering default: cap all affected credential verification transactions at the minimum of their existing deadlines and `anchor_timestamp + 300 seconds`, using the existing expiration-timestamp mechanism. This applies to standalone and linked verification through every gateway, and to attachment/authority-refresh operations relying on these historical non-inclusion checks. Root expiry and sponsorship limits may shorten the deadline further. The Recovery V3 proof and transport deadlines remain unchanged.
+## Implementation boundaries and acceptance
 
-After a cutoff or revocation settles, older anchored proofs can settle only within that bounded window. New chain-status reads show the settled state immediately. The design does not claim instantaneous cancellation of transactions already proved against older state. Test the bound against the pinned Aztec 5.1.0 implementation and existing browser proving timings before shipping; do not silently widen it or expose a stable per-login public tag as a workaround.
+Primary files: issuer entrypoints/revocation/constants helpers; Instagram sponsor forwarding; wallet `verification-engine.ts`, `browser/client.ts`, `browser/consumer-login.ts` and chain-state helpers; management `App.tsx`, storage, recovery and wallet-login helpers. Regenerate contract bindings and update affected fixtures/documentation. Keep existing note layouts, credential proof formats and Recovery V3 authorization. Use a fresh issuer deployment for contract changes; do not reset a chain or claim older contracts are patched in place.
 
-## Instagram attachment using existing notes
+Required verification:
 
-Add a private holder operation `link_instagram_to_root(hinted_credential, hinted_status, hinted_root_status)`.
+- Authentic owned-note linking preserves claims/expiry, atomically kills the source, rejects revoked/expired/wrong-owner/forged-slot inputs, and resumes without duplicate issuance.
+- Converted sources fail every standalone direct, sponsored and session route after the anchor window. Other never-linked credentials remain independent, including newly issued instances.
+- Exact replay cannot produce interchangeable status notes; fresh-blind reissuance is allowed.
+- Individual revoke leaves other credentials active. Root owner revoke blocks Passport and its linked credentials; fresh-proof recovery still works afterward.
+- Linked Instagram rejects a recovered root version, including same-address recovery and recovery away then back; renewal or Passport authority expiry alone does not invalidate it. Legacy linked helpers cannot bypass the version check.
+- Empty-browser recovery needs neither old passkey nor old claims witness, restores only Passport, uses fresh destination witness data and survives reload.
+- Existing proof/portal/Inbox replay tests, company-paid login and SDK receipt verification continue to pass.
 
-It authenticates this issuer's caller-owned standalone credential/status pair and a caller-owned live root status. It checks the Instagram type, matching claims/type, credential expiry, both root-revocation markers and absence of the credential's revocation marker.
-
-In one transaction it spends the old standalone credential and status notes, emits their existing credential revocation nullifier, and mints an existing `LinkedCredentialNote` and `LinkedStatusNote` to the same owner. Preserve `claims_hash`, credential type and expiry. Generate a fresh linked revocation secret: reusing the old secret would revoke the replacement as well.
-
-New independent Instagram attachments need no `LinkedRecoveryNote`, because they have no automatic recovery/remint operation. Existing linked recovery notes and older helper behavior can remain where used. Root protection comes from checking the Passport root, while individual revocation comes from the holder's linked status note.
-
-Attachment requires no handle, handle blind or fresh Instagram proof: the authenticated source notes already establish issuance. Existing local handle witnesses remain usable because their claims commitment is unchanged.
-
-### Issuance and retries
-
-Keep `/instagram/verify` and its proof payload unchanged. It verifies the local email proof and creates the existing standalone note. The holder wallet then derives its private cutoff locally and reads protection from chain state; do not add an address-based public protection query:
-
-- No cutoff: issuance is complete as a standalone credential.
-- Cutoff and live owned root: link the note and report success only after the linked transaction settles.
-- Cutoff with a revoked or unavailable root: leave the credential blocked and show the root problem; never fall back to standalone verification.
-
-After initial Passport minting, activate the selected root in the holder wallet, then discover all owned standalone Instagram notes and run the same attachment operation for each. The cutoff already prevents omitted notes or failed migrations from remaining a bypass. Show pending activation and unfinished attachments and resume them when the wallet opens. Each attachment is atomic; the entire wallet does not need one large migration transaction.
-
-On retry, rediscover settled notes and revocation state before submitting. Do not request another Instagram proof or another API issuance merely because linking or its response failed. Register the holder as a known note sender as needed, since migrated notes are holder-authored rather than orchestrator-authored.
-
-## Linked verification and wallet integration
-
-For Instagram, reuse the linked credential/status and root-status checks, but remove the `RootAuthorityNote` argument and its expiry/revocation dependency from the Instagram-specific issuer and sponsor entrypoints. Instagram validity is its own credential status/expiry plus the root's two revocation markers.
-
-Leave Passport verification's authority checks intact. Generalize Instagram hint discovery separately: retrieve the linked credential/status using its claims hash and the root status using its root commitment. Do not use the Instagram claims hash to locate Passport authority.
-
-Update `packages/magna-wallet/src/engine/verification-engine.ts`, `browser/client.ts` and `browser/consumer-login.ts`, the sponsor forwarding methods, and management `lib/wallet-login.ts`. Route Instagram by its discovered standalone/linked mode. The public dApp request and receipt formats stay unchanged.
-
-Preserve `StoredCredentialRef`'s current modes and optional `rootCommitment`; avoid replacing the metadata model. Add an Instagram chain-state reader for its individual revocation, optional root revocation, expiry and standalone cutoff. Extend the existing Passport reader for owner-root revocation. Chain state, not local storage or mere note presence, determines validity.
-
-## Recovery without the lost wallet
-
-Refactor the existing recovery handler and screen; do not build a second recovery protocol.
-
-1. Allow entry from “I forgot my account” without an old session, credential reference or local claims witness.
-2. Create/open the destination passkey and use that wallet/PXE as the working session. Keep existing deployment and developer funding mechanisms. Privately derive its cutoff there and check that it has no previous activation before requesting proof. No old wallet key is needed.
-3. Prepare the existing destination/nonce/message-secret-bound Recovery V3 request. Use the screen's age threshold, default 18, rather than reading it from the lost credential.
-4. From the fresh result, derive the authenticated root and Ghost locally. Discover `RootRecoveryNote` using that Ghost and root; do not require saved Ghost metadata or a comparison with an old browser reference.
-5. Use the existing portal, Inbox wait and authenticated Ghost consumption. The Ghost recovery transaction creates the complete Passport note set and invalidates the old root. Then activate the fresh root version in the destination holder wallet, without importing that wallet's secrets into the Ghost PXE. Until this extra private transaction settles, the recovered Passport remains pending and unusable. Old-root credential checks reject the recovery nullifier within the defined verification window; source activation is never undone.
-6. Build the destination's Passport claims witness from fresh `localDisclosures(completion, ageThreshold)` and the recovery artifact's new commitment blinds. Do not copy the old witness. Preserve the seven wrapper outputs and authorization encoding.
-7. Keep resumable finalization and verify destination notes, transaction success and chain status before displaying completion. Make `sourceCredentialId` optional in pending metadata because no old reference is required.
-
-Passport is the only automatically restored credential. Offer Instagram issuance afterward. If the destination already held standalone Instagram, run the same attachment/resume flow for those destination-owned credentials; do not copy Instagram from the lost source wallet.
-
-The flow continues to require the existing supported Passport proof and chain dependencies. Source-wallet Fee Juice and signing access are not recovery prerequisites. Funding for the destination, Ghost and Ethereum transaction remains subject to the existing profile and is not a new subsidy feature.
-
-## UI changes
-
-Keep the existing pages. Add individual revoke actions to credential cards and a Passport-root revoke action which explains its effect on attached credentials. Revocation and attachment remain usable when local claim witnesses are missing, provided the owner can read the relevant status notes.
-
-Show chain-derived states for Instagram as well as Passport: active, pending activation, revoked, expired, awaiting attachment, and unavailable protection. An Instagram-only wallet explains that Passport fallback is absent. Recovery completion is shown only after destination activation and says Passport was recovered and Instagram must be verified again; it never claims all credentials were restored. Activation adds a holder transaction to initial Passport issuance and recovery; its fee funding must use an available payer and cannot be assumed to come from the API/Ghost balance. Changes to the agreed subsidy policy remain separate work.
-
-## Files and compatibility
-
-The main edits are the issuer and its revocation/constants helpers, Instagram-specific sponsor forwarding, wallet engine/browser clients, management `App.tsx` and its storage/login helpers. Regenerate `packages/contracts-bindings` after ABI changes. Update the canonical protocol/recovery documentation and the stale lifecycle paragraph in `docs/onboarding-gas-policy.md`, without changing its economic policy.
-
-No note layout, proof circuit, recovery wrapper output or portal ABI changes are planned. Existing issuer contracts are not retroactively patched by rebuilding artifacts: validate this release with a fresh local/test deployment. Credentials in older deployments are not silently migrated across issuer addresses. Do not reset any chain as part of design or review.
-
-## Acceptance checks
-
-Use contract tests for policy enforcement and client/UI tests for routing and recovery entry. The existing passing unit tests are a baseline, not proof of these new behaviors.
-
-- Individual revocation works for standalone and linked Instagram, needs no handle witness, and leaves Passport/other credentials valid.
-- Exact replay cannot create interchangeable status notes for the same owner and Instagram commitment in either mode; issuing the same handle with a fresh blind remains allowed.
-- Owner-root revocation blocks Passport and linked Instagram, including sponsored login. Subsequent fresh-proof recovery succeeds, and renewal cannot revive the old root.
-- A recovered root uses a fresh secret; old notes cannot use new root status in another owner. Previously protected destinations and a second root in the same wallet cannot activate or verify, even if an orchestrator/Ghost mint itself succeeds. Test the fresh root-version marker, not only the wallet cutoff.
-- Initial/recovered Passport cannot verify before activation. Activation checks genuine owned note membership, key-to-owner binding and root revocation, and emits both markers atomically. Wrong-key hints, omitted activation, renewal and reloads cannot reset the cutoff. Proofs and session receipts do not publish stable protection markers.
-- Instagram attachment preserves claims, expiry and local handle witnesses, uses a fresh revocation secret, and rejects wrong owners, wrong storage slots, revoked sources and revoked roots. Failed transactions leave their source notes intact.
-- After Passport attachment, direct, sponsored, consumer and session standalone routes reject old copies after the defined anchor window. Test adversarial omission of migration, API issuance after cutoff, cached hints and old anchors; UI checks alone do not count.
-- Linked Instagram still verifies when Passport authority has expired or been renewed, provided the root and Instagram credential are live. Passport's own authority checks remain enforced.
-- Linking retries rediscover success without duplicate issuance; missing handle witnesses do not block attachment or revocation.
-- In an empty browser with no old passkey, old local storage or old claims witness, a fresh Passport proof completes Recovery V3 using only the destination session. API downtime does not block the recovery authorization path.
-- Destination claims/witnesses come from the fresh proof, resumable finalization survives reload, and no source Instagram note is reminted.
-- Existing proof destination/deployment binding, portal authorization, Inbox replay tests, company sponsorship and SDK receipt verification continue to pass.
-
-## Design decisions requiring review
-
-The user selected the three targeted changes and excluded a shared protection record, external matching infrastructure, new backups and proof-system redesign. The address-derived public cutoff is withdrawn. The private alternative requires holder activation, two secret-keyed markers and root-version verification gates; this is a proposed integration choice, not an implemented behavior. Other proposed choices remain one activated Passport root per wallet address, separate owner-root revocation domain, exact commitment deduplication, a 300-second maximum verification anchor window, and holder-side attachment after existing API issuance. Implementation must not start until the revised design is accepted.
+This is the revised design, not an implemented or end-to-end-tested feature. The root-version secret derivation, exact commitment guard, distinct owner-root revocation domain and five-minute anchor bound are engineering proposals for review. The earlier secret-keyed-cutoff synthetic checks are not acceptance evidence for this simpler design.
