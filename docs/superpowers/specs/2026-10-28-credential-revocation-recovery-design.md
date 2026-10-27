@@ -2,6 +2,8 @@
 
 Date: 2026-10-28. Status: draft for review. Product scope selected by the user; engineering choices below remain proposed until this design is accepted.
 
+Validation update: the address-derived public cutoff is withdrawn. The private-keyed alternative below is supported by the pinned Aztec 5.1.0 primitives and code-flow review, but requires holder activation after issuance/recovery. It has not been implemented or tested as a Noir/network flow.
+
 Magna will retain its existing credential notes, proof adapters and Recovery V3 transport. A wallet owner can revoke Instagram alone or revoke the Passport root protecting its credentials. Passport recovery restores Passport and disables credentials attached to the old root; Instagram must be issued again manually.
 
 ## Scope and approaches
@@ -62,17 +64,34 @@ This is exact commitment deduplication, not Instagram-account uniqueness. Reissu
 
 ## Blocking the standalone route after Passport attachment
 
-**Pending user decision:** the minimal cutoff below reveals that an address has activated Passport protection to observers who already know that wallet address. It does not reveal the Instagram handle or Passport claims. If that association must also remain private, this section must be revised before acceptance.
+Do not derive a cutoff from the wallet address and public constants alone. That would allow anyone knowing the address to calculate its Passport-protection marker. Contract siloing does not hide a guessable preimage.
 
-Use one permanent contract-siloed cutoff nullifier, derived from the wallet address under a new domain separator. This is an irreversible route cutoff, not a mutable wallet protection record or a handle identifier.
+The proposed replacement uses the holder's issuer-scoped nullifier hiding key. In constrained private code, obtain the owner's address-bound public keys with `get_public_keys(owner)` and request `context.request_nhk_app(public_keys.npk_m_hash)`. Never accept an arbitrary caller-supplied secret or an unconstrained key hint. Aztec validates the key derivation through the kernel; the key is not sent to the API or exposed in a public call.
 
-All supported root-creation paths activate this cutoff once when minting a wallet's first root status. Factor this into the existing root-note mint helper and apply it to Recovery V3's destination as well. Root-authority renewal does not emit it again.
+Add a private holder activation operation over an authenticated, caller-owned, unrevoked `RootStatusNote`. In one transaction it emits two separately domain-separated, contract-siloed nullifiers:
 
-Every standalone verification helper checks cutoff non-inclusion for the credential owner. Apply the check beneath direct, sponsored, consumer and session entrypoints, so raw contract calls cannot bypass the UI. Issuance may still create a standalone Instagram note as an intermediate step, but the credential cannot be verified from a protected wallet until linked.
+- A permanent wallet cutoff, derived from the holder key and owner address. Every standalone verification helper derives that same value privately and proves non-inclusion at its anchor.
+- An activation marker derived from the holder key, owner address, root commitment and root revocation secret. Every rooted Passport/Instagram verification and holder attachment requires inclusion of this specific root-version marker. A wallet-wide cutoff alone is insufficient: it must not accidentally activate another root status minted to the same wallet.
 
-Nullifier uniqueness also makes the minimal model one Passport root per wallet address. Recovery must target an address which has never activated Passport protection. This prevents old Instagram notes from reviving if the same root commitment is recovered back into a previously protected wallet. A destination with standalone Instagram but no prior Passport is allowed; its existing Instagram notes are linked after recovery.
+Both markers are opaque without the holder key. Activation membership checks remain inside the private proof; do not expose either marker on each login through public function arguments, SDK receipts or API payloads. This removes the proposed public address-to-protection lookup, not the issuance API's existing knowledge of the owner or general network metadata.
+
+This is not a drop-in change to `mint_root_notes`. Initial Passport issuance runs in the orchestrator's PXE; Recovery V3 runs in a separate Ghost PXE. Neither has the destination holder's key. Preserve those minting transactions and note layouts, then run mandatory activation in the destination holder's wallet. Passport is pending and cannot be verified before activation. Skipping activation therefore cannot produce a usable Passport alongside an unrestricted standalone route. Legacy orchestrator mint/refresh helpers may create notes but must not bypass the verification activation gate.
+
+Apply the standalone check beneath direct, sponsored, consumer and session entrypoints, so raw contract calls cannot bypass the UI. Standalone Instagram issuance remains unchanged, including intermediate notes which must be linked after activation. Activation blocks all old standalone copies even if the holder deliberately omits conversion. Before activation, previously standalone Instagram remains standalone; the UI must not describe Passport protection as complete.
+
+Cutoff uniqueness keeps the proposed one-activated-root-per-wallet rule. Recovery should preflight in the destination wallet that its private cutoff is absent. The existing Ghost recovery transaction cannot itself derive that cutoff: if raw calls target a previously protected wallet, it may mint notes, but fresh root activation must fail and all rooted verification must reject the unactivated version. Do not claim the Ghost mint itself rejects that destination. This prevents recovery back into an old protected wallet from reviving its old linked Instagram via fresh root status. A never-protected destination holding standalone Instagram remains allowed.
+
+Renewal retains the same root status and activation; do not emit the cutoff again. Owner revocation and recovery retain their existing secret-based kill switches and need no old holder key. Recovery rotates the root secret, so the destination needs its own fresh activation before the recovered Passport becomes usable.
 
 The supported Passport API remains rooted A2. Do not expose rootless Passport issuance as a way to bypass this protection rule. Low-level legacy helpers retained for tests or SDK compatibility must not create a usable Passport root without activating the cutoff.
+
+### Validation evidence and limits
+
+Reviewed `verifyAndIssuePassportA2` (orchestrator submission), issuer standalone/linked verification helpers, `mint_root_notes`, `recover_root_v3`/`recover_root_for_caller`, browser `recoverRootV3`, and management's isolated transient Ghost session. The issuer artifact reports Aztec 5.1.0 and embeds that version's source for constrained `get_public_keys`, `request_nhk_app` and historical nullifier non-inclusion, confirming these are available in this build rather than only in newer docs.
+
+Seven synthetic checks passed using the installed Aztec 5.1 key-store/cryptography implementation, an in-memory storage adapter and explicit WASM backend: stable holder key, issuer scoping, missing holder key in an orchestrator-only store, missing destination key in a Ghost-only store, destination access without old holder access, wallet-address separation and root-secret-version separation. No real account material was used. These checks do not establish Noir compilation, kernel integration, membership enforcement, transaction timing or complete recovery success; those remain contract/E2E acceptance work. The native LMDB/backend attempts were blocked by the local sandbox, so the successful checks deliberately used in-memory storage and WASM.
+
+References: [Aztec 5.1 private context source](https://github.com/AztecProtocol/aztec-packages/blob/v5.1.0/noir-projects/aztec-nr/aztec/src/context/private_context.nr), [private state](https://docs.aztec.network/developers/docs/foundational-topics/state_management).
 
 ### Verification timing
 
@@ -96,13 +115,13 @@ Attachment requires no handle, handle blind or fresh Instagram proof: the authen
 
 ### Issuance and retries
 
-Keep `/instagram/verify` and its proof payload unchanged. It verifies the local email proof and creates the existing standalone note. The wallet then reads protection from chain state:
+Keep `/instagram/verify` and its proof payload unchanged. It verifies the local email proof and creates the existing standalone note. The holder wallet then derives its private cutoff locally and reads protection from chain state; do not add an address-based public protection query:
 
 - No cutoff: issuance is complete as a standalone credential.
 - Cutoff and live owned root: link the note and report success only after the linked transaction settles.
 - Cutoff with a revoked or unavailable root: leave the credential blocked and show the root problem; never fall back to standalone verification.
 
-After initial Passport issuance, discover all owned standalone Instagram notes and run the same attachment operation for each. The cutoff already prevents omitted notes or failed migrations from remaining a bypass. Show unfinished attachments and resume them when the wallet opens. Each attachment is atomic; the entire wallet does not need one large migration transaction.
+After initial Passport minting, activate the selected root in the holder wallet, then discover all owned standalone Instagram notes and run the same attachment operation for each. The cutoff already prevents omitted notes or failed migrations from remaining a bypass. Show pending activation and unfinished attachments and resume them when the wallet opens. Each attachment is atomic; the entire wallet does not need one large migration transaction.
 
 On retry, rediscover settled notes and revocation state before submitting. Do not request another Instagram proof or another API issuance merely because linking or its response failed. Register the holder as a known note sender as needed, since migrated notes are holder-authored rather than orchestrator-authored.
 
@@ -121,10 +140,10 @@ Preserve `StoredCredentialRef`'s current modes and optional `rootCommitment`; av
 Refactor the existing recovery handler and screen; do not build a second recovery protocol.
 
 1. Allow entry from “I forgot my account” without an old session, credential reference or local claims witness.
-2. Create/open the destination passkey and use that wallet/PXE as the working session. Keep existing deployment and developer funding mechanisms. Check that the destination has no previous Passport cutoff before requesting proof.
+2. Create/open the destination passkey and use that wallet/PXE as the working session. Keep existing deployment and developer funding mechanisms. Privately derive its cutoff there and check that it has no previous activation before requesting proof. No old wallet key is needed.
 3. Prepare the existing destination/nonce/message-secret-bound Recovery V3 request. Use the screen's age threshold, default 18, rather than reading it from the lost credential.
 4. From the fresh result, derive the authenticated root and Ghost locally. Discover `RootRecoveryNote` using that Ghost and root; do not require saved Ghost metadata or a comparison with an old browser reference.
-5. Use the existing portal, Inbox wait and authenticated Ghost consumption. The recovery transaction activates the destination cutoff and creates the complete Passport note set. Old-root credential checks reject the root's recovery nullifier within the defined verification window.
+5. Use the existing portal, Inbox wait and authenticated Ghost consumption. The Ghost recovery transaction creates the complete Passport note set and invalidates the old root. Then activate the fresh root version in the destination holder wallet, without importing that wallet's secrets into the Ghost PXE. Until this extra private transaction settles, the recovered Passport remains pending and unusable. Old-root credential checks reject the recovery nullifier within the defined verification window; source activation is never undone.
 6. Build the destination's Passport claims witness from fresh `localDisclosures(completion, ageThreshold)` and the recovery artifact's new commitment blinds. Do not copy the old witness. Preserve the seven wrapper outputs and authorization encoding.
 7. Keep resumable finalization and verify destination notes, transaction success and chain status before displaying completion. Make `sourceCredentialId` optional in pending metadata because no old reference is required.
 
@@ -136,7 +155,7 @@ The flow continues to require the existing supported Passport proof and chain de
 
 Keep the existing pages. Add individual revoke actions to credential cards and a Passport-root revoke action which explains its effect on attached credentials. Revocation and attachment remain usable when local claim witnesses are missing, provided the owner can read the relevant status notes.
 
-Show chain-derived states for Instagram as well as Passport: active, revoked, expired, awaiting attachment, and unavailable protection. An Instagram-only wallet explains that Passport fallback is absent. Recovery completion says Passport was recovered and Instagram must be verified again; it never claims all credentials were restored.
+Show chain-derived states for Instagram as well as Passport: active, pending activation, revoked, expired, awaiting attachment, and unavailable protection. An Instagram-only wallet explains that Passport fallback is absent. Recovery completion is shown only after destination activation and says Passport was recovered and Instagram must be verified again; it never claims all credentials were restored. Activation adds a holder transaction to initial Passport issuance and recovery; its fee funding must use an available payer and cannot be assumed to come from the API/Ghost balance. Changes to the agreed subsidy policy remain separate work.
 
 ## Files and compatibility
 
@@ -151,7 +170,8 @@ Use contract tests for policy enforcement and client/UI tests for routing and re
 - Individual revocation works for standalone and linked Instagram, needs no handle witness, and leaves Passport/other credentials valid.
 - Exact replay cannot create interchangeable status notes for the same owner and Instagram commitment in either mode; issuing the same handle with a fresh blind remains allowed.
 - Owner-root revocation blocks Passport and linked Instagram, including sponsored login. Subsequent fresh-proof recovery succeeds, and renewal cannot revive the old root.
-- A recovered root uses a fresh secret; old notes cannot use new root status in another owner. Previously protected recovery destinations and a second Passport root in the same wallet are rejected.
+- A recovered root uses a fresh secret; old notes cannot use new root status in another owner. Previously protected destinations and a second root in the same wallet cannot activate or verify, even if an orchestrator/Ghost mint itself succeeds. Test the fresh root-version marker, not only the wallet cutoff.
+- Initial/recovered Passport cannot verify before activation. Activation checks genuine owned note membership, key-to-owner binding and root revocation, and emits both markers atomically. Wrong-key hints, omitted activation, renewal and reloads cannot reset the cutoff. Proofs and session receipts do not publish stable protection markers.
 - Instagram attachment preserves claims, expiry and local handle witnesses, uses a fresh revocation secret, and rejects wrong owners, wrong storage slots, revoked sources and revoked roots. Failed transactions leave their source notes intact.
 - After Passport attachment, direct, sponsored, consumer and session standalone routes reject old copies after the defined anchor window. Test adversarial omission of migration, API issuance after cutoff, cached hints and old anchors; UI checks alone do not count.
 - Linked Instagram still verifies when Passport authority has expired or been renewed, provided the root and Instagram credential are live. Passport's own authority checks remain enforced.
@@ -162,4 +182,4 @@ Use contract tests for policy enforcement and client/UI tests for routing and re
 
 ## Design decisions requiring review
 
-The user selected the three targeted changes and excluded a shared protection record, external matching infrastructure, new backups and proof-system redesign. Proposed engineering choices are the address-derived cutoff and its visibility, one Passport root per wallet address, separate owner-root revocation domain, exact commitment deduplication, a 300-second maximum verification anchor window, and holder-side attachment after existing API issuance. The public-cutoff privacy question is pending; implementation must not start until it is resolved and the design is accepted.
+The user selected the three targeted changes and excluded a shared protection record, external matching infrastructure, new backups and proof-system redesign. The address-derived public cutoff is withdrawn. The private alternative requires holder activation, two secret-keyed markers and root-version verification gates; this is a proposed integration choice, not an implemented behavior. Other proposed choices remain one activated Passport root per wallet address, separate owner-root revocation domain, exact commitment deduplication, a 300-second maximum verification anchor window, and holder-side attachment after existing API issuance. Implementation must not start until the revised design is accepted.
