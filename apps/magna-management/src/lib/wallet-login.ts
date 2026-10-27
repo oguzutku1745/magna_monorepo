@@ -17,6 +17,7 @@ import {
   type WalletSession,
 } from "@magna/wallet";
 import { getManagementEnv } from "./env";
+import { readCredentialLifecycle } from "./credential-lifecycle";
 import {
   hydratePassportA2Witness,
   loadCredentialRefs,
@@ -36,22 +37,32 @@ export function isPasskeyAccountAuthNoteMissing(error: unknown): boolean {
   return errorMessage(error).includes(PASSKEY_ACCOUNT_AUTH_NOTE_MISSING_CODE);
 }
 
-function loadPassportCredential(
+async function loadPassportCredential(
+  client: MagnaBrowserClient,
   ownerAddress: string,
   issuerAddress: string | undefined,
   chainCredentials: StoredCredentialRef[],
 ) {
   const passports = chainCredentials.filter(
-    ref => ref.kind === "passport" && ref.status === "active",
+    ref => ref.kind === "passport" && ref.status === "active" &&
+      (ref.mode === "rooted" || !chainCredentials.some(other =>
+        other.kind === "passport" && other.mode === "rooted" && other.claimsHash === ref.claimsHash)),
   );
-  const credential = passports.find(ref => ref.issuanceKind === "a2" && ref.passportCommittedClaimsV2Witness);
-  if (!credential) {
-    if (passports.length > 0) {
-      throw new Error(A2_LOCAL_WITNESS_MISSING_MESSAGE);
+  let missingWitness = false;
+  for (const candidate of passports) {
+    if (candidate.issuanceKind !== "a2" || !candidate.passportCommittedClaimsV2Witness) {
+      missingWitness = true;
+      continue;
     }
-    throw new Error("No active Magna passport credential is available in this wallet session.");
+    if (candidate.mode === "rooted") {
+      const { chainState } = await readCredentialLifecycle(client, candidate);
+      if (chainState?.status !== "active") continue;
+    }
+    // Retain rootless Passport compatibility; the verification transaction checks its status.
+    return toConsumerCredential(candidate);
   }
-  return toConsumerCredential(credential);
+  if (missingWitness) throw new Error(A2_LOCAL_WITNESS_MISSING_MESSAGE);
+  throw new Error("No active Magna passport credential is available in this wallet session.");
 }
 
 function toConsumerCredential(ref: StoredCredentialRef): Partial<MagnaConsumerLoginCredential> {
@@ -86,7 +97,8 @@ function instagramHandleHashFromPolicy(policy: Policy): bigint {
   return constraint.value;
 }
 
-function loadInstagramCredential(
+async function loadInstagramCredential(
+  client: MagnaBrowserClient,
   ownerAddress: string,
   handleHash: bigint,
   issuerAddress: string | undefined,
@@ -94,26 +106,37 @@ function loadInstagramCredential(
   handle?: string,
 ) {
   const handleHashString = handleHash.toString();
-  const credential = chainCredentials.find(
+  const candidates = chainCredentials.filter(
     ref =>
       ref.kind === "instagram" &&
       ref.status === "active" &&
       ref.handleHash === handleHashString &&
-      (!handle || ref.instagramHandle === handle),
+      (!handle || ref.instagramHandle === handle) &&
+      // A converted instance cannot regain independence through a stale same-claims ref.
+      (ref.mode === "rooted" || !chainCredentials.some(other =>
+        other.kind === "instagram" && other.mode === "rooted" && other.claimsHash === ref.claimsHash)),
   );
-  if (!credential) {
-    throw new Error(
-      handle
-        ? `No active Magna Instagram credential for @${handle} is available in this wallet session.`
-        : "No active Magna Instagram credential is available in this wallet session.",
-    );
+  let missingWitness = false;
+  for (const candidate of candidates) {
+    if (!candidate.handleBlind) {
+      missingWitness = true;
+      continue;
+    }
+    // ACTIVE PXE notes survive owner revocation. Authenticated hints plus current chain state,
+    // rather than discovery order or cached status, decide whether this instance can log in.
+    const { chainState } = await readCredentialLifecycle(client, candidate);
+    if (chainState?.status === "active") return candidate;
   }
-  if (!credential.handleBlind) {
+  if (missingWitness) {
     throw new Error(
       "Instagram V2 credential is missing its local blinded-handle witness. Re-issue this Instagram credential on this device.",
     );
   }
-  return credential;
+  throw new Error(
+    handle
+      ? `No active Magna Instagram credential for @${handle} is available in this wallet session.`
+      : "No active Magna Instagram credential is available in this wallet session.",
+  );
 }
 
 function isMissingHintedNoteError(error: unknown): boolean {
@@ -154,7 +177,7 @@ function errorMessage(error: unknown): string {
   return String(error);
 }
 
-function verificationFailureLabel(verification: ReturnType<typeof resolveRequirementCredential>): string {
+function verificationFailureLabel(verification: Awaited<ReturnType<typeof resolveRequirementCredential>>): string {
   const credential = verification.credential;
   const details = [
     `requirement ${verification.id}`,
@@ -172,7 +195,7 @@ function verificationFailureLabel(verification: ReturnType<typeof resolveRequire
 
 function annotateMissingHintedNoteError(
   error: unknown,
-  verification: ReturnType<typeof resolveRequirementCredential>,
+  verification: Awaited<ReturnType<typeof resolveRequirementCredential>>,
 ): Error {
   return new Error(
     `PXE could not read private notes for ${verificationFailureLabel(verification)}. Cause: ${errorMessage(error)}`,
@@ -287,7 +310,8 @@ function verificationRequirements(policy: Policy, requirements?: LoginRequiremen
   return requirements ?? [{ id: "default", kind: "policy", policy }];
 }
 
-function resolveRequirementCredential(input: {
+async function resolveRequirementCredential(input: {
+  client: MagnaBrowserClient;
   requirement: LoginRequirement;
   ownerAddress: string;
   issuerAddress?: string;
@@ -302,7 +326,8 @@ function resolveRequirementCredential(input: {
         credentialType: CredentialType.Instagram,
         constraints: [instagramHandleEqConstraint(handleHash)],
       },
-      credential: loadInstagramCredential(
+      credential: await loadInstagramCredential(
+        input.client,
         input.ownerAddress,
         handleHash,
         input.issuerAddress,
@@ -317,7 +342,7 @@ function resolveRequirementCredential(input: {
       id: input.requirement.id,
       kind: input.requirement.kind,
       policy: input.requirement.policy,
-      credential: loadPassportCredential(input.ownerAddress, input.issuerAddress, input.chainCredentials),
+      credential: await loadPassportCredential(input.client, input.ownerAddress, input.issuerAddress, input.chainCredentials),
     };
   }
 
@@ -327,7 +352,8 @@ function resolveRequirementCredential(input: {
       id: input.requirement.id,
       kind: input.requirement.kind,
       policy: input.requirement.policy,
-      credential: loadInstagramCredential(
+      credential: await loadInstagramCredential(
+        input.client,
         input.ownerAddress,
         handleHash,
         input.issuerAddress,
@@ -398,10 +424,12 @@ async function runWalletLoginWithSession(
     // set. Persisted witness sidecars may enrich these refs but cannot add one.
     const chainCredentials = await reconcileStoredRefsFromPxe({ session, ownerAddress, env });
     input.onVerifying?.();
+    const client = new MagnaBrowserClient(session.wallet, env, ownerAddress);
     const receipts = [];
     let authorizationContract: string | undefined;
     for (const [requirementIndex, requirement] of requirements.entries()) {
-      const verification = resolveRequirementCredential({
+      const verification = await resolveRequirementCredential({
+        client,
         requirement,
         ownerAddress,
         issuerAddress: env.issuerAddress,

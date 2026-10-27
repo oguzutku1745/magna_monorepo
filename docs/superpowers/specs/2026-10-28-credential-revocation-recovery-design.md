@@ -1,6 +1,6 @@
 # Credential linking, revocation and Passport recovery
 
-Date: 2026-10-28. Status: approved by the user; implementation and verification in progress.
+Date: 2026-10-28. Status: implemented; contract/unit/build checks and source review passed. Live E2E and browser proving-time validation remain pending (see the implementation plan).
 
 ## Selected approach
 

@@ -1,5 +1,6 @@
 import { ContractInitializationStatus, type Wallet } from "@aztec/aztec.js/wallet";
 import { AztecAddress } from "@aztec/aztec.js/addresses";
+import { getContractClassFromArtifact } from "@aztec/aztec.js/contracts";
 import { Fq, Fr } from "@aztec/aztec.js/fields";
 import { SetPublicAuthwitContractInteraction } from "@aztec/aztec.js/authorization";
 import { NoteStatus, type NoteDao } from "@aztec/stdlib/note";
@@ -51,6 +52,8 @@ import { createEmbeddedWallet, ensureImportedLocalTestAccountAddress } from "../
 import { createPublicClient, createWalletClient, http, pad, parseAbiItem, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { deriveLinkedInstagramStatusSecret, readInstagramCredentialChainState, readRootStatusChainState, readRootedCredentialChainState, type InstagramCredentialChainState, type RootedCredentialChainState } from "./credential-chain-state.js";
+
+let magnaWebAuthnAccountClassId: Fr | undefined;
 
 const MAGNA_CLAIMS_DS = 0x4d414743n;
 const MAGNA_PASSPORT_NATIONALITY_COMMITMENT_DS = 0x4d414e43n;
@@ -914,6 +917,22 @@ export class MagnaBrowserClient {
     return notes.length;
   }
 
+  private async prepareHolderAccountAuthNote(): Promise<void> {
+    const metadata = await this.wallet.getContractMetadata(toAddress(this.userAddress));
+    // Pinned Wallet metadata supplies the actual contract class, including public upgrades.
+    // Generic wallets must not be asked to read MagnaWebAuthnAccount's private storage layout.
+    const classId = metadata.updatedContractClassId ?? metadata.instance?.originalContractClassId;
+    if (!classId) throw new Error("Cannot identify the active account contract class before authorizing a holder transaction.");
+    magnaWebAuthnAccountClassId ??= (await getContractClassFromArtifact(MagnaWebAuthnAccountContract.artifact)).id;
+    if (!classId.equals(magnaWebAuthnAccountClassId)) return;
+    if ((await this.ensureAccountAuthNoteDiscovered(this.userAddress)) === 0) {
+      throw new Error(
+        "PASSKEY_ACCOUNT_AUTH_NOTE_MISSING: PXE synchronized the active passkey account contract but did not " +
+          "discover its signing-key note.",
+      );
+    }
+  }
+
   /**
    * Diagnostic only: reports whether the passkey account's own `signing_public_key` note is
    * present in this session's PXE, plus the PXE-registered senders/accounts, so a missing account
@@ -1162,6 +1181,7 @@ export class MagnaBrowserClient {
     }
     const source = await this.fetchPassportHintsByClaimsHash(this.userAddress, claimsHash);
     const rootStatus = await this.fetchLiveRootStatusHint(rootCommitment);
+    await this.prepareHolderAccountAuthNote();
     const receipt = await this.issuer.methods.link_credential_to_root(source.hintedCredentialNote as never, source.hintedStatusNote as never, rootStatus as never)
       .send({ from: toAddress(this.userAddress) });
     await this.syncWalletPxeIfAvailable();
@@ -1180,6 +1200,7 @@ export class MagnaBrowserClient {
       ? await simulateHintedNote("get_linked_status_hinted", this.issuer.methods.get_linked_status_hinted(owner, toField(input.rootCommitment!), claims), owner)
       : await simulateHintedNote("get_status_hinted", this.issuer.methods.get_status_hinted(owner, claims), owner);
     const call = input.mode === "rooted" ? this.issuer.methods.revoke_linked_credential_as_owner(status as never) : this.issuer.methods.revoke_credential(status as never);
+    await this.prepareHolderAccountAuthNote();
     const receipt = await call.send({ from: owner });
     return { txHash: readTxHash(receipt), receipt };
   }
@@ -1187,6 +1208,7 @@ export class MagnaBrowserClient {
   async revokeRoot(rootCommitment: bigint | string): Promise<TxOutcome> {
     this.assertRealTransactionMode("revokeRoot");
     const rootStatus = await this.fetchLiveRootStatusHint(rootCommitment);
+    await this.prepareHolderAccountAuthNote();
     const receipt = await this.issuer.methods.revoke_root_as_owner(rootStatus as never).send({ from: toAddress(this.userAddress) });
     return { txHash: readTxHash(receipt), receipt };
   }

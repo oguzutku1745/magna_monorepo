@@ -1,17 +1,32 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { after, describe, it } from 'node:test';
+import { Barretenberg, BackendType } from '@aztec/bb.js';
+import { getContractClassFromArtifact } from '@aztec/aztec.js/contracts';
+import { AztecAddress } from '@aztec/aztec.js/addresses';
+import { PublicKeys } from '@aztec/stdlib/keys';
+import { ContractInitializationStatus } from '@aztec/aztec.js/wallet';
 import { Fr } from '@aztec/aztec.js/fields';
 import { poseidon2HashWithSeparator } from '@aztec/foundation/crypto/sync';
-import { MagnaIssuerContract } from '@magna/contracts-bindings';
+import { MagnaIssuerContract, MagnaWebAuthnAccountContract } from '@magna/contracts-bindings';
 import { MagnaBrowserClient } from './client.js';
 import * as chain from './credential-chain-state.js';
 
 const owner = `0x${'11'.repeat(32)}`;
 const issuer = `0x${'12'.repeat(32)}`;
 const root = 101n, claims = 202n;
+await Barretenberg.initSingleton({ backend: BackendType.Wasm, threads: 1, skipSrsInit: true });
+after(async () => { await Barretenberg.destroySingleton(); });
+const { id: webauthnClassId } = await getContractClassFromArtifact(MagnaWebAuthnAccountContract.artifact);
 const status = (secret: bigint) => ({ note: { root_commitment: root, revocation_secret: secret } });
-function fixture(secrets = [404n]) {
-  const sent: string[] = [], registered: string[] = [];
+function fixture(secrets = [404n], accountKind = 'generic', authNoteCount = 1) {
+  const sent: string[] = [], registered: string[] = [], events: string[] = [];
+  let authReady = accountKind === 'generic';
+  const send = async (name: string) => {
+    assert.ok(authReady, 'cold WebAuthn account cannot send before real auth-note discovery');
+    events.push(`send:${name}`);
+    sent.push(name);
+    return { txHash: name === 'link' ? '0xlink' : name === 'root' ? '0xroot' : '0xrevoke' };
+  };
   const client = Object.create(MagnaBrowserClient.prototype) as any;
   client.env = { requireRealSends: true, issuerAddress: issuer };
   client.userAddress = owner;
@@ -19,7 +34,27 @@ function fixture(secrets = [404n]) {
   client.ensureUserAccountIsDeployed = async () => {};
   client.syncOrchestratorSender = async () => {};
   client.syncWalletPxeIfAvailable = async () => {};
-  client.wallet = { registerSender: async (value: unknown) => { registered.push(String(value)); } };
+  client.wallet = {
+    registerSender: async (value: unknown) => { registered.push(String(value)); },
+    getContractMetadata: async () => ({
+      initializationStatus: ContractInitializationStatus.INITIALIZED,
+      isContractPublished: true, isContractUpdated: false,
+      instance: {
+        version: 2, address: AztecAddress.fromStringUnsafe(owner), salt: Fr.ZERO,
+        deployer: AztecAddress.ZERO, originalContractClassId: accountKind === 'webauthn' ? webauthnClassId : Fr.ZERO,
+        initializationHash: Fr.ZERO, immutablesHash: Fr.ZERO, publicKeys: PublicKeys.default(),
+      },
+    }),
+    pxe: { debug: { getNotes: async (filter: any) => {
+      assert.equal(String(filter.contractAddress), owner);
+      assert.equal(String(filter.owner), owner);
+      assert.ok(filter.storageSlot.equals(MagnaWebAuthnAccountContract.storage.signing_public_key.slot));
+      assert.deepEqual(filter.scopes.map(String), [owner]);
+      events.push('auth-note');
+      authReady = authNoteCount > 0;
+      return Array.from({ length: authNoteCount }, () => ({ note: {} }));
+    } } },
+  };
   client.getActiveNotesForStorageSlot = async (_: unknown, slot: Fr) =>
     slot.equals(MagnaIssuerContract.storage.root_status_notes.slot)
       ? secrets.map(secret => ({ note: { items: [new Fr(root), new Fr(secret)] } })) : [];
@@ -32,12 +67,12 @@ function fixture(secrets = [404n]) {
     get_linked_credential_hinted: () => ({ simulate: async () => ({ note: { root_commitment: root, claims_hash: claims, credential_type: 3n, expiry_ts: 2000n } }) }),
     get_linked_status_hinted: () => ({ simulate: async () => ({ note: { root_commitment: root, claims_hash: claims, credential_type: 3n,
       revocation_secret: poseidon2HashWithSeparator([404n, 3n, claims], 0x4d414c53) } }) }),
-    link_credential_to_root: () => ({ send: async ({ from }: any) => { assert.equal(String(from), owner); sent.push('link'); return { txHash: '0xlink' }; } }),
-    revoke_credential: () => ({ send: async () => { sent.push('standalone'); return { txHash: '0xrevoke' }; } }),
-    revoke_linked_credential_as_owner: () => ({ send: async () => { sent.push('linked'); return { txHash: '0xrevoke' }; } }),
-    revoke_root_as_owner: () => ({ send: async () => { sent.push('root'); return { txHash: '0xroot' }; } }),
+    link_credential_to_root: () => ({ send: async ({ from }: any) => { assert.equal(String(from), owner); return send('link'); } }),
+    revoke_credential: () => ({ send: async () => { return send('standalone'); } }),
+    revoke_linked_credential_as_owner: () => ({ send: async () => { return send('linked'); } }),
+    revoke_root_as_owner: () => ({ send: async () => { return send('root'); } }),
   } };
-  return { client, sent, registered };
+  return { client, sent, registered, events };
 }
 
 describe('credential linking and owner controls', () => {
@@ -76,12 +111,13 @@ describe('credential linking and owner controls', () => {
     assert.ok(registered.includes(owner));
   });
   it('rediscovers a settled link on retry without submitting conversion again', async () => {
-    const { client, sent } = fixture();
+    const { client, sent, events } = fixture([404n], 'webauthn', 0);
     client.discoverCredentialRefs = async () => [{ kind: 'instagram', mode: 'rooted', rootCommitment: String(root), claimsHash: String(claims), issuanceTxHash: '0xsettled' }];
     client.readInstagramChainState = async () => ({ status: 'active' });
     const result = await client.linkCredentialToRoot(claims, root);
     assert.equal(result.txHash, '0xsettled');
     assert.deepEqual(sent, []);
+    assert.deepEqual(events, []);
   });
   it('revokes standalone, linked and root notes without claims witnesses', async () => {
     const { client, sent } = fixture();
@@ -143,4 +179,59 @@ it('chain status derives the contract owner-root nullifier and identifies revoke
   assert.equal((await chain.readInstagramCredentialChainState({ node: node as never, issuerAddress: issuer, hints: independent })).reason, 'credential-expired');
   node.getNullifierMembershipWitness = async () => ({});
   assert.equal((await chain.readInstagramCredentialChainState({ node: node as never, issuerAddress: issuer, hints: independent })).reason, 'credential-revoked');
+});
+
+for (const action of ['link', 'standalone', 'linked', 'root'] as const) {
+  const run = async (client: any) => {
+    client.discoverCredentialRefs = async () => [];
+    client.fetchPassportHintsByClaimsHash = async () => ({ hintedCredentialNote: {}, hintedStatusNote: {} });
+    if (action === 'link') return client.linkCredentialToRoot(claims, root);
+    if (action === 'root') return client.revokeRoot(root);
+    return client.revokeCredential({ mode: action === 'linked' ? 'rooted' : 'passport', claimsHash: claims, rootCommitment: root });
+  };
+  it(`prepares the real cold WebAuthn auth note before ${action} sends`, async () => {
+    const { client, events } = fixture([404n], 'webauthn');
+    await run(client);
+    assert.deepEqual(events, ['auth-note', `send:${action}`]);
+  });
+  it(`fails closed before ${action} send when the WebAuthn auth note is missing`, async () => {
+    const { client, sent } = fixture([404n], 'webauthn', 0);
+    await assert.rejects(() => run(client), /PASSKEY_ACCOUNT_AUTH_NOTE_MISSING: PXE synchronized the active passkey account contract/);
+    assert.deepEqual(sent, []);
+  });
+  it(`preserves generic account ${action} sends without reading WebAuthn storage`, async () => {
+    const { client, events } = fixture();
+    await run(client);
+    assert.deepEqual(events, [`send:${action}`]);
+  });
+}
+
+it('uses the updated account class metadata when an account changes to WebAuthn', async () => {
+  const { client, events } = fixture([404n], 'webauthn');
+  const metadata = await client.wallet.getContractMetadata();
+  client.wallet.getContractMetadata = async () => ({ ...metadata,
+    instance: { ...metadata.instance, originalContractClassId: Fr.ZERO },
+    isContractUpdated: true, updatedContractClassId: webauthnClassId,
+  });
+  await client.revokeRoot(root);
+  assert.deepEqual(events, ['auth-note', 'send:root']);
+});
+
+it('does not read WebAuthn storage after an account changes to a generic class', async () => {
+  const { client, events } = fixture();
+  const metadata = await client.wallet.getContractMetadata();
+  client.wallet.getContractMetadata = async () => ({ ...metadata,
+    instance: { ...metadata.instance, originalContractClassId: webauthnClassId },
+    isContractUpdated: true, updatedContractClassId: Fr.ZERO,
+  });
+  await client.revokeRoot(root);
+  assert.deepEqual(events, ['send:root']);
+});
+
+it('fails closed before send when the account contract class cannot be identified', async () => {
+  const { client, sent } = fixture();
+  const metadata = await client.wallet.getContractMetadata();
+  client.wallet.getContractMetadata = async () => ({ ...metadata, instance: undefined });
+  await assert.rejects(() => client.revokeRoot(root), /Cannot identify the active account contract class/);
+  assert.deepEqual(sent, []);
 });

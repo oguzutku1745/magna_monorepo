@@ -61,15 +61,15 @@
 - [x] Run source-sensitive targeted suites, both Noir suites, wallet tests/build, management tests/build, API tests, e2e TypeScript build and SDK/receipt regressions. Fix actual integration failures with regressions.
 - [x] Exercise live local E2E when available without reset or external deployment. Record unavailable proof fixtures/network limitations explicitly; no unit-only claim of chain success.
 - [x] Update canonical lifecycle docs to state rootless recovery policy and new contract deployment requirement. Do not stage unrelated gas note/.gitignore.
-- [ ] Obtain fresh whole-branch review, fix important findings with tests, verify final diff and commit. Leave feature branch reviewable; do not merge/push/deploy.
+- [x] Obtain fresh whole-branch review, fix important findings with tests, verify final diff and commit. Leave feature branch reviewable; do not merge/push/deploy.
 
 ## Verification record
 
 Pinned Aztec 5.1.0 source was checked for historical-note provenance, owned storage slots,
 transaction expiry and TXE call phases. Issuer and company-sponsor compile/codegen passed;
-their final Noir suites passed 114 and 9 tests respectively. The wallet full run passed 122 tests
-across 22 compiled files; the final changed suites passed 48 tests after the retry fix. E2E
-TypeScript build passed. Management passed 106 tests plus exact WASM routing, lint and production
+their final Noir suites passed 114 and 9 tests respectively. The wallet full run passed 143 tests
+across 22 compiled files; the final changed suites passed 63 tests after the integration fixes. E2E
+TypeScript build passed. Management passed 124 tests plus exact WASM routing, lint and production
 build; finalization's final targeted run passed 27 tests. API passed 25 tests and the unchanged
 public SDK passed 18 tests. Logs and detailed task reports are retained in `.tmp/credential-linking/`.
 
@@ -100,3 +100,9 @@ was performed.
 - Preserved the minimum authority/credential/sponsor deadline when adding the anchor bound.
   Cost: transactions with shorter existing deadlines still expire sooner; browser timing needs
   the release validation above.
+
+Final whole-branch review identified two integration issues: live candidate selection and cold-PXE
+WebAuthn authorization preparation. Both were fixed with regression tests; the scoped final
+re-review found no remaining Critical, Important or Minor defects. Rooted Passport uses the same
+selection gate while retaining the existing Passport protocol and rootless compatibility. The
+feature branch is retained for review; no merge, push or deployment was performed.
