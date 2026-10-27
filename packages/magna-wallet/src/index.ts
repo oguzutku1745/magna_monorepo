@@ -37,6 +37,8 @@ export type {
   PassportHints,
   PolicyForm,
   RootedPassportHints,
+  LinkedInstagramHints,
+  RevokeCredentialRequest,
   SponsorRightsSnapshot,
   SponsorRuntimeStatus,
   TxOutcome,

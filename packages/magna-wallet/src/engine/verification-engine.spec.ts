@@ -1166,3 +1166,127 @@ describe("MagnaVerificationEngine login flows", () => {
   });
 
 });
+
+describe('Instagram holder lifecycle routing', () => {
+  const owner = `0x${'11'.repeat(32)}`;
+  it('registerLinkedInstagram issues standalone then converts as holder', async () => {
+    const steps: string[] = [];
+    let issued = false;
+    const methods: Record<string, any> = {
+      register_credential: () => ({ send: async () => { issued = true; steps.push('issue'); return { txHash: 'issue' }; } }),
+      get_linked_credential_hinted: () => ({ simulate: async () => { throw new Error('linked credential note not found'); } }),
+      get_credential_hinted: () => ({ simulate: async () => { if (!issued) throw new Error('credential note not found'); return 'credential'; } }),
+      get_status_hinted: () => ({ simulate: async () => 'status' }),
+      get_root_status_hinted: () => ({ simulate: async () => 'root' }),
+      link_credential_to_root: (...args: unknown[]) => ({ send: async (opts: any) => {
+        assert.deepEqual(args, ['credential', 'status', 'root']); assert.equal(opts.from, owner);
+        steps.push('link'); return { txHash: 'linked' };
+      } }),
+    };
+    const engine = new MagnaVerificationEngine({ orchestratorAddress: owner, issuerContract: { methods, wallet: { registerSender: async () => { steps.push('sender'); } } } as never });
+    const result = await engine.registerLinkedInstagram({ activeOwner: owner, ghostOwner: owner, rootCommitment: 99n,
+      claims: { schemaVersion: 1, credentialType: CredentialType.Instagram, handleCommitment: 123n, expiryTs: 2000n } });
+    assert.deepEqual(steps, ['sender', 'issue', 'link']);
+    assert.equal((result as any).txHash, 'linked');
+  });
+  it('runVerification routes rooted Instagram through linked direct and sponsored methods', async () => {
+    const calls: string[] = [];
+    const method = (name: string) => (...args: unknown[]) => ({ send: async () => { calls.push(name); assert.equal(args.length, 6); return {}; } });
+    const engine = new MagnaVerificationEngine({ orchestratorAddress: owner,
+      issuerContract: { methods: { verify_linked_instagram: method('direct') } } as never,
+      companySponsorContract: { address: { toString: () => owner }, methods: { sponsored_verify_linked_instagram: method('sponsor') } } as never });
+    const input = { policy: { credentialType: CredentialType.Instagram, constraints: [] }, hintedRootStatusNote: 'root', hintedCredentialNote: 'credential', hintedStatusNote: 'status', claimsWitness: { handleHash: 1n, handleBlind: 2n } };
+    await engine.runVerification(input, owner);
+    await engine.runVerification(input, owner, { sponsored: true });
+    assert.deepEqual(calls, ['direct', 'sponsor']);
+  });
+});
+
+it('runVerification refuses rooted Instagram metadata without a root status hint', async () => {
+  const engine = new MagnaVerificationEngine({ orchestratorAddress: 'unused', issuerContract: { methods: {
+    verify_instagram: () => ({ send: async () => ({ txHash: 'downgrade' }) }),
+  } } as never });
+  await assert.rejects(() => engine.runVerification({ mode: 'rooted', rootCommitment: '99',
+    policy: { credentialType: CredentialType.Instagram, constraints: [] }, hintedCredentialNote: {}, hintedStatusNote: {},
+    claimsWitness: { handleHash: 1n, handleBlind: 2n } } as any, `0x${'11'.repeat(32)}`), /root status metadata/);
+});
+
+describe('registerLinkedInstagram resumption', () => {
+  const owner = `0x${'11'.repeat(32)}`;
+  const input = { activeOwner: owner, ghostOwner: owner, rootCommitment: 99n,
+    claims: { schemaVersion: 1, credentialType: CredentialType.Instagram as const, handleCommitment: 123n, expiryTs: 2000n } };
+  function fixture(options: { failConversion?: boolean; linkedState?: string; lookupError?: string; sourceError?: string; missingReader?: boolean; linkedStatusError?: string } = {}) {
+    let issued = false, linked = false, issues = 0, conversions = 0;
+    const methods = {
+      register_credential: () => ({ send: async () => { if (issued) throw new Error('duplicate issuance'); issued = true; issues++; return {}; } }),
+      get_linked_credential_hinted: () => ({ simulate: async () => {
+        if (options.lookupError) throw new Error(options.lookupError);
+        if (!linked) throw new Error('linked credential note not found');
+        return { note: { root_commitment: 99n, claims_hash: computeInstagramClaimsHash(input.claims), credential_type: 3n, expiry_ts: 2000n } };
+      } }),
+      get_linked_status_hinted: () => ({ simulate: async () => { if (options.linkedStatusError) throw new Error(options.linkedStatusError); return { note: { root_commitment: 99n, claims_hash: computeInstagramClaimsHash(input.claims), credential_type: 3n, revocation_secret: 303n } }; } }),
+      get_credential_hinted: () => ({ simulate: async () => { if (options.sourceError) throw new Error(options.sourceError); if (!issued) throw new Error('credential note not found'); return 'credential'; } }),
+      get_status_hinted: () => ({ simulate: async () => 'status' }),
+      get_root_status_hinted: () => ({ simulate: async () => ({ note: { root_commitment: 99n, revocation_secret: 404n } }) }),
+      link_credential_to_root: () => ({ send: async () => { conversions++;
+        if (options.failConversion && conversions === 1) throw new Error('conversion rejected');
+        linked = true; return { txHash: 'linked' };
+      } }),
+    };
+    const engine = new MagnaVerificationEngine({ orchestratorAddress: owner, issuerContract: { methods } as never,
+      readInstagramChainState: options.missingReader ? undefined : async (hints: any) => {
+        assert.equal(hints.claimsHash, String(computeInstagramClaimsHash(input.claims)));
+        assert.equal(hints.rootCommitment, '99');
+        assert.equal(hints.hintedStatusNote.note.revocation_secret, 303n);
+        assert.equal(hints.hintedRootStatusNote.note.revocation_secret, 404n);
+        assert.equal('hintedRootAuthorityNote' in hints, false);
+        return { status: options.linkedState ?? 'active' };
+      },
+      hintLookupAttempts: 1,
+    } as any);
+    return { engine, counts: () => ({ issues, conversions }) };
+  }
+  it('reuses settled standalone issuance after conversion fails', async () => {
+    const { engine, counts } = fixture({ failConversion: true });
+    await assert.rejects(() => engine.registerLinkedInstagram(input), /conversion rejected/);
+    const result = await engine.registerLinkedInstagram(input);
+    assert.equal((result as any).txHash, 'linked');
+    assert.deepEqual(counts(), { issues: 1, conversions: 2 });
+  });
+  it('rediscovers and validates a settled conversion without issuing or converting again', async () => {
+    const { engine, counts } = fixture();
+    await engine.registerLinkedInstagram(input);
+    const result = await engine.registerLinkedInstagram(input);
+    assert.equal((result as any).alreadyLinked, true);
+    assert.deepEqual(counts(), { issues: 1, conversions: 1 });
+  });
+  it('rejects a revoked linked instance without falling back to its standalone source', async () => {
+    const { engine, counts } = fixture({ linkedState: 'inactive' });
+    await engine.registerLinkedInstagram(input);
+    await assert.rejects(() => engine.registerLinkedInstagram(input), /linked Instagram credential is inactive or expired/);
+    assert.deepEqual(counts(), { issues: 1, conversions: 1 });
+  });
+  it('does not mint when linked discovery fails with a network or authorization error', async () => {
+    for (const lookupError of ['network unavailable', 'caller is not owner']) {
+      const { engine, counts } = fixture({ lookupError });
+      await assert.rejects(() => engine.registerLinkedInstagram(input), new RegExp(lookupError));
+      assert.deepEqual(counts(), { issues: 0, conversions: 0 });
+    }
+  });
+  it('does not mint on standalone lookup errors or missing paired linked status', async () => {
+    const source = fixture({ sourceError: 'network unavailable' });
+    await assert.rejects(() => source.engine.registerLinkedInstagram(input), /network unavailable/);
+    assert.deepEqual(source.counts(), { issues: 0, conversions: 0 });
+    const linked = fixture({ linkedStatusError: 'linked status note not found' });
+    await linked.engine.registerLinkedInstagram(input);
+    await assert.rejects(() => linked.engine.registerLinkedInstagram(input), /linked status note not found/);
+    assert.deepEqual(linked.counts(), { issues: 1, conversions: 1 });
+  });
+  it('fails closed when an already-settled link has no chain-state reader', async () => {
+    const { engine, counts } = fixture({ missingReader: true });
+    await engine.registerLinkedInstagram(input);
+    await assert.rejects(() => engine.registerLinkedInstagram(input), /readInstagramChainState is required/);
+    assert.deepEqual(counts(), { issues: 1, conversions: 1 });
+  });
+
+});

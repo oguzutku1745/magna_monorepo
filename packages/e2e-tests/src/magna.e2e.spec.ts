@@ -1988,20 +1988,18 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
       registerRootAuthorityTx,
     );
 
-    const registerLinkedTx = await runStep("register_linked_credential(instagram linked sponsor scope)", async () => {
-      return await ready.issuer.methods
-        .register_linked_credential(
-          ready.activeOwner,
-          ready.ghostOwner,
-          rootCommitment,
-          instagramClaimsHash,
-          instagramCredentialType,
-          instagramExpiryTs,
-        )
-        .send({ from: ready.orchestrator });
+    await runStep("register_credential(instagram linked sponsor scope)", async () =>
+      ready.issuer.methods.register_credential(ready.activeOwner, ready.ghostOwner, instagramClaimsHash, instagramCredentialType, instagramExpiryTs)
+        .send({ from: ready.orchestrator }));
+    await ready.wallet.registerSender(ready.activeOwner, "magna-holder");
+    const registerLinkedTx = await runStep("link_credential_to_root(instagram linked sponsor scope)", async () => {
+      const credential = await ready.issuer.methods.get_credential_hinted(ready.activeOwner, instagramClaimsHash).simulate({ from: ready.activeOwner });
+      const status = await ready.issuer.methods.get_status_hinted(ready.activeOwner, instagramClaimsHash).simulate({ from: ready.activeOwner });
+      const rootStatus = await ready.issuer.methods.get_root_status_hinted(ready.activeOwner, rootCommitment).simulate({ from: ready.activeOwner });
+      return ready.issuer.methods.link_credential_to_root(credential as unknown as HintedCredential, status as unknown as HintedStatus, rootStatus as unknown as HintedRootStatus).send({ from: ready.activeOwner });
     });
     const registerLinkedTxHash = logTxReceipt(
-      "register_linked_credential_instagram_linked_company_sponsor_scope",
+      "link_credential_to_root_instagram_linked_company_sponsor_scope",
       registerLinkedTx,
     );
 
@@ -2057,7 +2055,6 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
         .sponsored_verify_linked_instagram(
           { credential_type: instagramCredentialType, constraints: buildInstagramConstraints(instagramHandleHash) },
           hintedRootStatus,
-          hintedRootAuthority,
           hintedLinkedCredential,
           hintedLinkedStatus,
           { handle_hash: instagramHandleHash, handle_blind: instagramHandleBlind },
@@ -2096,7 +2093,7 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
     );
   }, 240_000);
 
-  it("rejects linked instagram verify when rooted passport authority has expired", async () => {
+  it("keeps linked instagram valid when rooted passport authority has expired", async () => {
     const ready = requireContext(ctx);
     const expiredAuthorityOwnerDeployment = await createAndDeploySchnorrAccount(
       ready.wallet,
@@ -2154,20 +2151,18 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
       registerRootAuthorityTx,
     );
 
-    const registerLinkedTx = await runStep("register_linked_credential(instagram authority expiry scope)", async () => {
-      return await ready.issuer.methods
-        .register_linked_credential(
-          expiredAuthorityOwner,
-          ready.ghostOwner,
-          rootCommitment,
-          instagramClaimsHash,
-          instagramCredentialType,
-          instagramExpiryTs,
-        )
-        .send({ from: ready.orchestrator });
+    await runStep("register_credential(instagram authority expiry scope)", async () =>
+      ready.issuer.methods.register_credential(expiredAuthorityOwner, ready.ghostOwner, instagramClaimsHash, instagramCredentialType, instagramExpiryTs)
+        .send({ from: ready.orchestrator }));
+    await ready.wallet.registerSender(expiredAuthorityOwner, "magna-holder");
+    const registerLinkedTx = await runStep("link_credential_to_root(instagram authority expiry scope)", async () => {
+      const credential = await ready.issuer.methods.get_credential_hinted(expiredAuthorityOwner, instagramClaimsHash).simulate({ from: expiredAuthorityOwner });
+      const status = await ready.issuer.methods.get_status_hinted(expiredAuthorityOwner, instagramClaimsHash).simulate({ from: expiredAuthorityOwner });
+      const rootStatus = await ready.issuer.methods.get_root_status_hinted(expiredAuthorityOwner, rootCommitment).simulate({ from: expiredAuthorityOwner });
+      return ready.issuer.methods.link_credential_to_root(credential as unknown as HintedCredential, status as unknown as HintedStatus, rootStatus as unknown as HintedRootStatus).send({ from: expiredAuthorityOwner });
     });
     const registerLinkedTxHash = logTxReceipt(
-      "register_linked_credential_instagram_authority_expiry_scope",
+      "link_credential_to_root_instagram_authority_expiry_scope",
       registerLinkedTx,
     );
 
@@ -2200,21 +2195,19 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
           .simulate({ from: expiredAuthorityOwner }),
     )) as HintedLinkedStatus;
 
-    await expect(
-      runStep("verify_linked_instagram [should fail after authority expiry]", async () => {
+    const verifyAfterAuthorityExpiry = await runStep("verify_linked_instagram [authority expiry is independent]", async () => {
         return await ready.issuer.methods
           .verify_linked_instagram(
             { credential_type: instagramCredentialType, constraints: buildInstagramConstraints(instagramHandleHash) },
             hintedRootStatus,
-            hintedRootAuthority,
             hintedLinkedCredential,
             hintedLinkedStatus,
             { handle_hash: instagramHandleHash, handle_blind: instagramHandleBlind },
             0,
           )
           .send({ from: expiredAuthorityOwner });
-      }),
-    ).rejects.toBeDefined();
+      });
+    expect(logTxReceipt("verify_linked_instagram_after_authority_expiry", verifyAfterAuthorityExpiry)).toBeTruthy();
 
     ready.txHashesByPhase.instagram_authority_expiry = [
       expiredAuthorityOwnerDeployTxHash,
@@ -2223,7 +2216,7 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
       registerLinkedTxHash,
     ];
     logTrace(
-      "passed.rejects linked instagram verify when rooted passport authority has expired.tx_ids",
+      "passed.keeps linked instagram valid when rooted passport authority has expired.tx_ids",
       ready.txHashesByPhase.instagram_authority_expiry,
     );
   }, 240_000);
@@ -2285,20 +2278,18 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
       registerRootAuthorityTx,
     );
 
-    const registerLinkedTx = await runStep("register_linked_credential(instagram authority refresh scope)", async () => {
-      return await ready.issuer.methods
-        .register_linked_credential(
-          rootOwner,
-          recoveryOwner,
-          rootCommitment,
-          instagramClaimsHash,
-          instagramCredentialType,
-          instagramExpiryTs,
-        )
-        .send({ from: ready.orchestrator });
+    await runStep("register_credential(instagram authority refresh scope)", async () =>
+      ready.issuer.methods.register_credential(rootOwner, recoveryOwner, instagramClaimsHash, instagramCredentialType, instagramExpiryTs)
+        .send({ from: ready.orchestrator }));
+    await ready.wallet.registerSender(rootOwner, "magna-holder");
+    const registerLinkedTx = await runStep("link_credential_to_root(instagram authority refresh scope)", async () => {
+      const credential = await ready.issuer.methods.get_credential_hinted(rootOwner, instagramClaimsHash).simulate({ from: rootOwner });
+      const status = await ready.issuer.methods.get_status_hinted(rootOwner, instagramClaimsHash).simulate({ from: rootOwner });
+      const rootStatus = await ready.issuer.methods.get_root_status_hinted(rootOwner, rootCommitment).simulate({ from: rootOwner });
+      return ready.issuer.methods.link_credential_to_root(credential as unknown as HintedCredential, status as unknown as HintedStatus, rootStatus as unknown as HintedRootStatus).send({ from: rootOwner });
     });
     const registerLinkedTxHash = logTxReceipt(
-      "register_linked_credential_instagram_authority_refresh_scope",
+      "link_credential_to_root_instagram_authority_refresh_scope",
       registerLinkedTx,
     );
 
@@ -2336,7 +2327,6 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
         .verify_linked_instagram(
           { credential_type: instagramCredentialType, constraints: buildInstagramConstraints(instagramHandleHash) },
           hintedRootStatus,
-          hintedRootAuthority,
           hintedLinkedCredential,
           hintedLinkedStatus,
           { handle_hash: instagramHandleHash, handle_blind: instagramHandleBlind },
@@ -2375,7 +2365,6 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
         .verify_linked_instagram(
           { credential_type: instagramCredentialType, constraints: buildInstagramConstraints(instagramHandleHash) },
           hintedRootStatus,
-          refreshedRootAuthority,
           hintedLinkedCredential,
           hintedLinkedStatus,
           { handle_hash: instagramHandleHash, handle_blind: instagramHandleBlind },
