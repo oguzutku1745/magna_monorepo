@@ -431,6 +431,21 @@ describe("runWalletLoginForRequest", () => {
     expect(testState.disconnect).toHaveBeenCalledOnce();
   });
 
+  it("routes rediscovered linked Instagram with its root while retaining the independent witness cache", async () => {
+    saveCredentialRefs([instagramRef({ mode: "passport" })]);
+    testState.discoverCredentialRefs.mockResolvedValueOnce([{
+      ownerAddress: testState.activeAddress, kind: "instagram", mode: "rooted", rootCommitment: "99", claimsHash: "456",
+    }]);
+    await runWalletLoginForRequest({
+      policy, requirements: [{ id: "instagram", kind: "instagram-handle", handle: "akinspur" }],
+      consumerGatewayAddress: "0xconsumer", sessionRequestId: "11".repeat(16),
+      sessionChallenge: `00${"22".repeat(31)}`, sessionExpiresAt: 1_800_000_000,
+    });
+    expect(testState.runMagnaConsumerLogin).toHaveBeenCalledWith(expect.objectContaining({
+      credential: expect.objectContaining({ kind: "instagram", mode: "rooted", rootCommitment: "99", claimsHash: "456", handleBlind: "777" }),
+    }));
+  });
+
   it("runs mixed passport and instagram requirements in one wallet session", async () => {
     saveCredentialRefs([passportRef(), instagramRef()]);
     testState.runMagnaConsumerLogin

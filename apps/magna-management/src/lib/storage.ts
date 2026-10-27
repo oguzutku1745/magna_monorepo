@@ -62,7 +62,7 @@ export type WalletProfile = {
 export type PendingRecoveryV3Finalization = {
   version: 1;
   phase: "prepared" | "submitted";
-  sourceCredentialId: string;
+  sourceCredentialId?: string;
   target: WalletProfile;
   recoveredCredential: StoredCredentialRef;
   recoveryTxHash?: string;
@@ -341,7 +341,7 @@ export function loadPendingRecoveryV3Finalization(): PendingRecoveryV3Finalizati
     !pending ||
     pending.version !== 1 ||
     (pending.phase !== "prepared" && pending.phase !== "submitted") ||
-    typeof pending.sourceCredentialId !== "string" ||
+    (pending.sourceCredentialId !== undefined && typeof pending.sourceCredentialId !== "string") ||
     typeof pending.target?.address !== "string" ||
     typeof pending.target?.publicKey !== "string" ||
     typeof pending.recoveredCredential?.id !== "string" ||

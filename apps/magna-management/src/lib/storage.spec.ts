@@ -205,6 +205,19 @@ describe("credential ref storage", () => {
     expect(loadPendingRecoveryV3Finalization()).toBeNull();
   });
 
+  it("loads destination-only pending recovery without a source credential", () => {
+    const pending = {
+      version: 1, phase: "submitted",
+      target: { address: "0xtarget", publicKey: "04abcd", walletKind: "passkey", createdAt: "2026-10-28" },
+      recoveredCredential: passportRef({ id: "new", ownerAddress: "0xtarget" }),
+      createdAt: "2026-10-28", updatedAt: "2026-10-28",
+    } as const;
+    window.localStorage.setItem("magna-management:recovery-v3-finalization:v1", JSON.stringify(pending));
+    expect(loadPendingRecoveryV3Finalization()).toEqual(pending);
+    window.localStorage.setItem("magna-management:recovery-v3-finalization:v1", JSON.stringify({ ...pending, sourceCredentialId: 123 }));
+    expect(loadPendingRecoveryV3Finalization()).toBeNull();
+  });
+
   it("persists the non-secret recovery target across frontend restarts", () => {
     const target = {
       address: "0xtarget",

@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import {
   Recovery,
+  CredentialCard,
   Issuance,
   UserLogin,
   buildRecoveryGhostDeploymentAttempts,
@@ -35,6 +36,34 @@ vi.mock("./lib/zkpassport", () => ({
 }));
 
 describe("Recovery", () => {
+  it("enables destination creation and fresh-proof recovery without an old wallet or credential", () => {
+    const props = {
+      busy: null, walletReady: false, recoveryTarget: null,
+      passkeyName: "Recovery", setPasskeyName: () => undefined,
+      storedPublicKeyInput: "", setStoredPublicKeyInput: () => undefined,
+      credentials: [], hints: {}, zkRequest: null, zkStage: "idle", zkProofCount: 0,
+      onCreateTarget: () => undefined, onStoredTarget: () => undefined,
+      onCopyTargetPublicKey: () => undefined, onOpenTarget: () => undefined, onRecover: () => undefined,
+    };
+    const html = renderToStaticMarkup(<Recovery {...props} />);
+    expect(html).toMatch(/<button type="button">Create new passkey target/);
+    expect(html).not.toContain("Wallet connection required");
+    const ready = renderToStaticMarkup(<Recovery {...props} recoveryTarget={{ address: "0xtarget", walletKind: "passkey", publicKey: "04abcd", deploymentStatus: "deployed", createdAt: "2026-10-28" }} />);
+    expect(ready).toMatch(/<button type="button">Recover root to target/);
+  });
+
+  it("offers link and revoke without locally stored Instagram claims", () => {
+    const html = renderToStaticMarkup(<CredentialCard refData={{ id: "ig", ownerAddress: "owner", kind: "instagram", mode: "passport", claimsHash: "12", status: "active", createdAt: "2026-10-28" }} liveRoots={["99"]} onLink={() => undefined} onRevoke={() => undefined} />);
+    expect(html).toContain("Independent");
+    expect(html).toMatch(/<button[^>]*(?<!disabled="")>Link to Passport/);
+    expect(html).toContain("Revoke credential");
+  });
+
+  it("allows root revocation when Passport authority is inactive and its local witness is absent", () => {
+    const html = renderToStaticMarkup(<CredentialCard refData={{ id: "passport", ownerAddress: "owner", kind: "passport", mode: "rooted", rootCommitment: "99", claimsHash: "12", status: "active", createdAt: "2026-10-28" }} hintState={{ status: "loaded", chainState: { status: "inactive", reason: "root-authority-superseded", checkedAtBlock: 8, checkedAtTimestamp: "100" } }} onRevoke={() => undefined} />);
+    expect(html).toMatch(/<button class="secondary" type="button">Revoke Passport root/);
+  });
+
   it("gives new and recovery passkeys distinct user-visible names", () => {
     const now = new Date(2026, 7, 27, 17, 4, 12);
 
@@ -261,6 +290,8 @@ describe("Recovery", () => {
     );
 
     expect(html).toContain("Rotation complete");
+    expect(html).toContain("Independent Instagram credentials remain valid");
+    expect(html).not.toContain("credential count is zero");
     expect(html).toContain("The passport credential now belongs to the new passkey.");
     expect(html).toContain("Active at Aztec L2 block 38");
     expect(html).toContain("Successful at Aztec L2 block 37");
