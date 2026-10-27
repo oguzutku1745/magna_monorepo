@@ -151,13 +151,21 @@ function ensureCrossContractTestArtifacts(projectPath) {
   }
 
   if (cwd.endsWith(`${join("contracts", "magna-company-sponsor")}`)) {
-    // Sponsor tests deploy `MagnaIssuer` from the sponsor project.
-    return ensureArtifactInTarget(
+    // Sponsor tests deploy the issuer and a real rights registry from this project.
+    const issuerStatus = ensureArtifactInTarget(
       repoRoot,
       cwd,
       "magna-issuer",
       "magna_issuer-MagnaIssuer.json",
       "magna_company_sponsor-MagnaIssuer.json",
+    );
+    if (issuerStatus !== 0) return issuerStatus;
+    return ensureArtifactInTarget(
+      repoRoot,
+      cwd,
+      "magna-company-rights-registry",
+      "magna_company_rights_registry-MagnaCompanyRightsRegistry.json",
+      "magna_company_sponsor-MagnaCompanyRightsRegistry.json",
     );
   }
 

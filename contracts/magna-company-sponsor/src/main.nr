@@ -13,23 +13,18 @@ pub contract MagnaCompanySponsor {
         protocol::address::AztecAddress,
         state_vars::{PublicImmutable, PublicMutable},
     };
+    use magna_company_rights_registry::MagnaCompanyRightsRegistry;
     use magna_issuer::{
         MagnaIssuer,
         types::{
-            linked_credential_note::LinkedCredentialNote,
-            linked_status_note::LinkedStatusNote,
-            root_authority_note::RootAuthorityNote,
-            root_status_note::RootStatusNote,
-            credential_note::CredentialNote,
-            status_note::StatusNote,
+            credential_note::CredentialNote, linked_credential_note::LinkedCredentialNote,
+            linked_status_note::LinkedStatusNote, root_authority_note::RootAuthorityNote,
+            root_status_note::RootStatusNote, status_note::StatusNote,
         },
     };
-    use magna_company_rights_registry::MagnaCompanyRightsRegistry;
     use magna_lib::{
-        InstagramCommittedClaimsWitness,
-        PassportCommittedClaimsWitness,
-        Policy,
-        compute_session_authorization,
+        compute_session_authorization, InstagramCommittedClaimsWitness,
+        PassportCommittedClaimsWitness, Policy,
     };
 
     #[storage]
@@ -89,8 +84,13 @@ pub contract MagnaCompanySponsor {
     #[internal("private")]
     fn assert_fee_cap() {
         let gas_settings = self.context.gas_settings();
-        let max_fee_upper_bound = (gas_settings.gas_limits.l2_gas as u128 * gas_settings.max_fees_per_gas.fee_per_l2_gas)
-            + (gas_settings.gas_limits.da_gas as u128 * gas_settings.max_fees_per_gas.fee_per_da_gas);
+        let max_fee_upper_bound = (
+            gas_settings.gas_limits.l2_gas as u128 * gas_settings.max_fees_per_gas.fee_per_l2_gas
+        )
+            + (
+                gas_settings.gas_limits.da_gas as u128
+                    * gas_settings.max_fees_per_gas.fee_per_da_gas
+            );
         assert(max_fee_upper_bound <= self.storage.max_fee_cap.read(), "fee cap exceeded");
     }
 
@@ -273,7 +273,6 @@ pub contract MagnaCompanySponsor {
     fn sponsored_verify_linked_instagram(
         policy: Policy,
         hinted_root_status: HintedNote<RootStatusNote>,
-        hinted_root_authority: HintedNote<RootAuthorityNote>,
         hinted_credential: HintedNote<LinkedCredentialNote>,
         hinted_status: HintedNote<LinkedStatusNote>,
         claims_witness: InstagramCommittedClaimsWitness,
@@ -290,7 +289,6 @@ pub contract MagnaCompanySponsor {
                 caller,
                 policy,
                 hinted_root_status,
-                hinted_root_authority,
                 hinted_credential,
                 hinted_status,
                 claims_witness,
@@ -322,15 +320,25 @@ pub contract MagnaCompanySponsor {
         let caller = self.msg_sender();
         assert(consumer_gateway != AztecAddress::zero(), "consumer gateway required");
         let authorization = compute_session_authorization(
-            consumer_gateway, request_id, session_challenge, expires_at, requirement_index, policy,
+            consumer_gateway,
+            request_id,
+            session_challenge,
+            expires_at,
+            requirement_index,
+            policy,
         );
         self.internal.assert_fee_cap();
         self.context.set_as_fee_payer();
         self.context.end_setup();
         MagnaIssuer::at(self.storage.issuer.read())
             .verify_sponsored(
-                caller, policy, hinted_credential, hinted_status,
-                min_age_proven, nationality_alpha3_packed, sponsor_slot,
+                caller,
+                policy,
+                hinted_credential,
+                hinted_status,
+                min_age_proven,
+                nationality_alpha3_packed,
+                sponsor_slot,
             )
             .call(self.context);
         self.context.push_nullifier_unsafe(authorization);
@@ -357,13 +365,25 @@ pub contract MagnaCompanySponsor {
         let caller = self.msg_sender();
         assert(consumer_gateway != AztecAddress::zero(), "consumer gateway required");
         let authorization = compute_session_authorization(
-            consumer_gateway, request_id, session_challenge, expires_at, requirement_index, policy,
+            consumer_gateway,
+            request_id,
+            session_challenge,
+            expires_at,
+            requirement_index,
+            policy,
         );
         self.internal.assert_fee_cap();
         self.context.set_as_fee_payer();
         self.context.end_setup();
         MagnaIssuer::at(self.storage.issuer.read())
-            .verify_sponsored_v2(caller, policy, hinted_credential, hinted_status, claims_witness, sponsor_slot)
+            .verify_sponsored_v2(
+                caller,
+                policy,
+                hinted_credential,
+                hinted_status,
+                claims_witness,
+                sponsor_slot,
+            )
             .call(self.context);
         self.context.push_nullifier_unsafe(authorization);
         MagnaCompanyRightsRegistry::at(self.storage.rights_registry.read())
@@ -389,13 +409,25 @@ pub contract MagnaCompanySponsor {
         let caller = self.msg_sender();
         assert(consumer_gateway != AztecAddress::zero(), "consumer gateway required");
         let authorization = compute_session_authorization(
-            consumer_gateway, request_id, session_challenge, expires_at, requirement_index, policy,
+            consumer_gateway,
+            request_id,
+            session_challenge,
+            expires_at,
+            requirement_index,
+            policy,
         );
         self.internal.assert_fee_cap();
         self.context.set_as_fee_payer();
         self.context.end_setup();
         MagnaIssuer::at(self.storage.issuer.read())
-            .verify_sponsored_instagram(caller, policy, hinted_credential, hinted_status, claims_witness, sponsor_slot)
+            .verify_sponsored_instagram(
+                caller,
+                policy,
+                hinted_credential,
+                hinted_status,
+                claims_witness,
+                sponsor_slot,
+            )
             .call(self.context);
         self.context.push_nullifier_unsafe(authorization);
         MagnaCompanyRightsRegistry::at(self.storage.rights_registry.read())
@@ -424,15 +456,27 @@ pub contract MagnaCompanySponsor {
         let caller = self.msg_sender();
         assert(consumer_gateway != AztecAddress::zero(), "consumer gateway required");
         let authorization = compute_session_authorization(
-            consumer_gateway, request_id, session_challenge, expires_at, requirement_index, policy,
+            consumer_gateway,
+            request_id,
+            session_challenge,
+            expires_at,
+            requirement_index,
+            policy,
         );
         self.internal.assert_fee_cap();
         self.context.set_as_fee_payer();
         self.context.end_setup();
         MagnaIssuer::at(self.storage.issuer.read())
             .verify_linked_sponsored(
-                caller, policy, hinted_root_status, hinted_root_authority, hinted_credential,
-                hinted_status, min_age_proven, nationality_alpha3_packed, sponsor_slot,
+                caller,
+                policy,
+                hinted_root_status,
+                hinted_root_authority,
+                hinted_credential,
+                hinted_status,
+                min_age_proven,
+                nationality_alpha3_packed,
+                sponsor_slot,
             )
             .call(self.context);
         self.context.push_nullifier_unsafe(authorization);
@@ -461,15 +505,26 @@ pub contract MagnaCompanySponsor {
         let caller = self.msg_sender();
         assert(consumer_gateway != AztecAddress::zero(), "consumer gateway required");
         let authorization = compute_session_authorization(
-            consumer_gateway, request_id, session_challenge, expires_at, requirement_index, policy,
+            consumer_gateway,
+            request_id,
+            session_challenge,
+            expires_at,
+            requirement_index,
+            policy,
         );
         self.internal.assert_fee_cap();
         self.context.set_as_fee_payer();
         self.context.end_setup();
         MagnaIssuer::at(self.storage.issuer.read())
             .verify_linked_sponsored_v2(
-                caller, policy, hinted_root_status, hinted_root_authority,
-                hinted_credential, hinted_status, claims_witness, sponsor_slot,
+                caller,
+                policy,
+                hinted_root_status,
+                hinted_root_authority,
+                hinted_credential,
+                hinted_status,
+                claims_witness,
+                sponsor_slot,
             )
             .call(self.context);
         self.context.push_nullifier_unsafe(authorization);
@@ -484,7 +539,6 @@ pub contract MagnaCompanySponsor {
     fn sponsored_verify_linked_session_instagram(
         policy: Policy,
         hinted_root_status: HintedNote<RootStatusNote>,
-        hinted_root_authority: HintedNote<RootAuthorityNote>,
         hinted_credential: HintedNote<LinkedCredentialNote>,
         hinted_status: HintedNote<LinkedStatusNote>,
         claims_witness: InstagramCommittedClaimsWitness,
@@ -498,15 +552,25 @@ pub contract MagnaCompanySponsor {
         let caller = self.msg_sender();
         assert(consumer_gateway != AztecAddress::zero(), "consumer gateway required");
         let authorization = compute_session_authorization(
-            consumer_gateway, request_id, session_challenge, expires_at, requirement_index, policy,
+            consumer_gateway,
+            request_id,
+            session_challenge,
+            expires_at,
+            requirement_index,
+            policy,
         );
         self.internal.assert_fee_cap();
         self.context.set_as_fee_payer();
         self.context.end_setup();
         MagnaIssuer::at(self.storage.issuer.read())
             .verify_linked_sponsored_instagram(
-                caller, policy, hinted_root_status, hinted_root_authority,
-                hinted_credential, hinted_status, claims_witness, sponsor_slot,
+                caller,
+                policy,
+                hinted_root_status,
+                hinted_credential,
+                hinted_status,
+                claims_witness,
+                sponsor_slot,
             )
             .call(self.context);
         self.context.push_nullifier_unsafe(authorization);

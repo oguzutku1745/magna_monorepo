@@ -1,44 +1,56 @@
 use crate::MagnaCompanySponsor;
-use aztec::{
-    protocol::address::AztecAddress,
-    test::helpers::test_environment::TestEnvironment,
-};
+use aztec::{protocol::address::AztecAddress, test::helpers::test_environment::TestEnvironment};
+use aztec::protocol::address::EthAddress;
+use magna_company_rights_registry::MagnaCompanyRightsRegistry;
 use magna_issuer::MagnaIssuer;
 
-pub unconstrained fn setup(
-) -> (TestEnvironment, AztecAddress, AztecAddress, AztecAddress, AztecAddress, AztecAddress, AztecAddress) {
+pub unconstrained fn setup() -> (TestEnvironment, AztecAddress, AztecAddress, AztecAddress, AztecAddress, AztecAddress, AztecAddress) {
     let mut env = TestEnvironment::new();
     let orchestrator = env.create_light_account();
     let active_owner = env.create_light_account();
     let ghost_owner = env.create_light_account();
     let attacker = env.create_light_account();
 
-    let issuer_initializer = MagnaIssuer::interface().constructor(orchestrator, AztecAddress::zero());
-    let issuer_address = env
-        .deploy("MagnaIssuer")
-        .with_public_initializer(orchestrator, issuer_initializer);
+    let issuer_initializer =
+        MagnaIssuer::interface().constructor(orchestrator, AztecAddress::zero());
+    let issuer_address =
+        env.deploy("MagnaIssuer").with_public_initializer(orchestrator, issuer_initializer);
 
-    let sponsor_initializer = MagnaCompanySponsor::interface().constructor(
+    let sponsor_initializer =
+        MagnaCompanySponsor::interface().constructor(orchestrator, 1_000_000_000 as u128);
+    let sponsor_address = env.deploy("MagnaCompanySponsor").with_public_initializer(
         orchestrator,
-        1_000_000_000 as u128,
+        sponsor_initializer,
     );
-    let sponsor_address = env
-        .deploy("MagnaCompanySponsor")
-        .with_public_initializer(orchestrator, sponsor_initializer);
 
     env.call_public(
         orchestrator,
         MagnaCompanySponsor::at(sponsor_address).initialize_issuer(issuer_address),
     );
+    let rights = env.deploy("MagnaCompanyRightsRegistry").with_public_initializer(
+        orchestrator,
+        MagnaCompanyRightsRegistry::interface().constructor(
+            EthAddress::from_field(0xdead),
+            orchestrator,
+        ),
+    );
     env.call_public(
         orchestrator,
-        MagnaCompanySponsor::at(sponsor_address).initialize_rights_registry(issuer_address),
+        MagnaCompanyRightsRegistry::at(rights).initialize_l2_purchase_adapter(orchestrator),
+    );
+    env.call_public(
+        orchestrator,
+        MagnaCompanyRightsRegistry::at(rights).credit_from_l2_payment(sponsor_address, 10, 1, 1),
+    );
+    env.call_public(
+        orchestrator,
+        MagnaCompanySponsor::at(sponsor_address).initialize_rights_registry(rights),
     );
     env.call_public(
         orchestrator,
         MagnaIssuer::at(issuer_address).add_company_sponsor_gateway(sponsor_address),
     );
-    env.advance_next_block_timestamp_by(300);
+    env.advance_next_block_timestamp_by(3600);
     env.mine_block();
 
     (env, sponsor_address, issuer_address, orchestrator, active_owner, ghost_owner, attacker)
