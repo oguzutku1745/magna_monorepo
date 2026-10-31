@@ -111,6 +111,7 @@ function noirWasmDevAssets() {
 }
 
 export default defineConfig({
+  envDir: process.env.MAGNA_ENV_DIR ? resolve(process.env.MAGNA_ENV_DIR) : appRoot,
   root: appRoot,
   publicDir: false,
   cacheDir: resolve(appRoot, "node_modules/.vite"),

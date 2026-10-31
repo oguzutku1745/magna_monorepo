@@ -32,7 +32,7 @@ const instagramNargo = process.env.NARGO_BIN?.trim() ||
 // management tests import the manifest shape at module load, so supply the
 // checked-in non-secret build placeholder only when no real manifest exists.
 // This is configuration scaffolding, never proof/chain evidence.
-const deploymentPath = resolve("deployments/local.json");
+const deploymentPath = resolve("deployments/local-v6.json");
 const deploymentPlaceholderPath = resolve("deployments/docker-build-placeholder.json");
 let createdDeploymentPlaceholder = false;
 if (!existsSync(deploymentPath)) {

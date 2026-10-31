@@ -6,6 +6,9 @@ import { spawnSync } from "node:child_process";
 import { getInitialTestAccountsData } from "@aztec-labs/accounts/testing";
 import { createAztecNodeClient } from "@aztec-labs/aztec.js/node";
 import { AztecAddress, EthAddress } from "@aztec-labs/aztec.js/addresses";
+import { inboxMessageSentEvent, selectInboxMessage } from "../../../scripts/inbox-message.mjs";
+import { waitForL1ToL2MessageReady } from "@aztec-labs/aztec.js/messaging";
+import { getNonNullifiedL1ToL2MessageWitness } from "@aztec-labs/stdlib/messaging";
 import { Fr } from "@aztec-labs/aztec.js/fields";
 import { createExtendedL1Client } from "@aztec-labs/ethereum/client";
 import { deployL1Contract } from "@aztec-labs/ethereum/deploy-l1-contract";
@@ -158,14 +161,10 @@ async function runRetriedStep<T>(label: string, work: () => Promise<T>): Promise
   }
 }
 
-async function mineTwoL2Blocks(ctx: BridgeContext): Promise<void> {
-  const nudgeRecipient = await AztecAddress.random();
-  await runRetriedStep("mineTwoL2Blocks nudge #1", async () => {
-    return await ctx.l2NudgeToken.methods.mint_to_public(nudgeRecipient, 1n).send({ from: ctx.orchestrator });
-  });
-  await runRetriedStep("mineTwoL2Blocks nudge #2", async () => {
-    return await ctx.l2NudgeToken.methods.mint_to_public(nudgeRecipient, 1n).send({ from: ctx.orchestrator });
-  });
+async function waitForCreditMessage(ctx: BridgeContext, hash: `0x${string}`, secret: Fr, index: bigint) {
+  await waitForL1ToL2MessageReady(ctx.node, Fr.fromHexString(hash), { timeoutSeconds: 180 });
+  const witness = await getNonNullifiedL1ToL2MessageWitness(ctx.node, ctx.rightsRegistry.address, Fr.fromHexString(hash), secret);
+  expect(witness[0]).toBe(index);
 }
 
 const suite = runE2E ? describe.sequential : describe.skip;
@@ -378,9 +377,6 @@ suite("Magna rights local-network L1->L2 bridge flow", () => {
     const purchased = purchasedLogs[0];
     const creditNonce = purchased.args.creditNonce as `0x${string}`;
 
-    const inboxMessageSentEvent = parseAbiItem(
-      "event MessageSent(uint256 indexed checkpointNumber, uint256 index, bytes32 indexed hash, bytes16 rollingHash)",
-    );
     const inboxLogs = await bridgeCtx.l1Client.getLogs({
       address: bridgeCtx.inboxAddress,
       event: inboxMessageSentEvent,
@@ -388,14 +384,18 @@ suite("Magna rights local-network L1->L2 bridge flow", () => {
       toBlock: purchaseReceipt.blockNumber,
     });
     expect(inboxLogs.length).toBeGreaterThan(0);
-    const messageLeafIndex = inboxLogs[0].args.index!;
+    const purchase = purchasedLogs[0].args;
+    const messageLeafIndex = selectInboxMessage(inboxLogs, {
+      hash: purchase.messageKey, index: purchase.messageLeafIndex!, recipient: bridgeCtx.rightsRegistry.address.toString(),
+      sender: bridgeCtx.portalAddress, content: purchase.contentHash, secretHash: pad(secretHash.toString() as `0x${string}`, { size: 32 }),
+    });
 
     const before = await bridgeCtx.rightsRegistry.methods
       .get_remaining_verifies(bridgeCtx.companySponsor.address)
       .simulate({ from: bridgeCtx.activeOwner })
       .then(result => result.result as bigint);
 
-    await mineTwoL2Blocks(bridgeCtx);
+    await waitForCreditMessage(bridgeCtx, purchase.messageKey!, secret, messageLeafIndex);
 
     await runRetriedStep("claim_l1_credit(primary sponsor)", async () => {
       return await bridgeCtx.rightsRegistry.methods
@@ -486,9 +486,6 @@ suite("Magna rights local-network L1->L2 bridge flow", () => {
     expect(purchasedLogs.length).toBeGreaterThan(0);
     const creditNonce = purchasedLogs[0].args.creditNonce as `0x${string}`;
 
-    const inboxMessageSentEvent = parseAbiItem(
-      "event MessageSent(uint256 indexed checkpointNumber, uint256 index, bytes32 indexed hash, bytes16 rollingHash)",
-    );
     const inboxLogs = await bridgeCtx.l1Client.getLogs({
       address: bridgeCtx.inboxAddress,
       event: inboxMessageSentEvent,
@@ -496,9 +493,13 @@ suite("Magna rights local-network L1->L2 bridge flow", () => {
       toBlock: purchaseReceipt.blockNumber,
     });
     expect(inboxLogs.length).toBeGreaterThan(0);
-    const messageLeafIndex = inboxLogs[0].args.index!;
+    const purchase = purchasedLogs[0].args;
+    const messageLeafIndex = selectInboxMessage(inboxLogs, {
+      hash: purchase.messageKey, index: purchase.messageLeafIndex!, recipient: bridgeCtx.rightsRegistry.address.toString(),
+      sender: bridgeCtx.portalAddress, content: purchase.contentHash, secretHash: pad(secretHash.toString() as `0x${string}`, { size: 32 }),
+    });
 
-    await mineTwoL2Blocks(bridgeCtx);
+    await waitForCreditMessage(bridgeCtx, purchase.messageKey!, secret, messageLeafIndex);
 
     await runRetriedStep("claim_l1_credit(secondary sponsor)", async () => {
       return await bridgeCtx.rightsRegistry.methods

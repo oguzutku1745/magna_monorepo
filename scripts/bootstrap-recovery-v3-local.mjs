@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { assertV6Manifest } from "./v6-operations.mjs";
+
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -27,7 +29,7 @@ import {
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const portalRoot = resolve(repoRoot, "contracts/magna-recovery-portal");
-const manifestPath = resolve(repoRoot, process.env.MAGNA_DEPLOYMENT_MANIFEST ?? "deployments/local.json");
+const manifestPath = resolve(repoRoot, process.env.MAGNA_DEPLOYMENT_MANIFEST ?? "deployments/local-v6.json");
 const rpcUrl = process.env.MAGNA_L1_RPC_URL ?? "http://127.0.0.1:8545";
 const aztecNodeUrl = process.env.MAGNA_AZTEC_NODE_URL ?? "http://127.0.0.1:8080";
 const deployerKey =
@@ -45,6 +47,7 @@ if (Number(process.versions.node.split(".")[0]) < 24) {
 }
 if (!existsSync(manifestPath)) throw new Error(`Deployment manifest not found: ${manifestPath}`);
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+assertV6Manifest(manifest);
 const issuer = manifest?.l2?.issuerAddress;
 const inbox = manifest?.resolvedAztec?.inboxAddress;
 const protocolVersion = BigInt(manifest?.resolvedAztec?.rollupVersion ?? 0);

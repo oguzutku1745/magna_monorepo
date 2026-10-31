@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { assertV6Manifest, assertFreshOutput } from "./v6-operations.mjs";
+
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +13,7 @@ import { AztecAddress } from "@aztec-labs/aztec.js/addresses";
 import { createAztecNodeClient } from "@aztec-labs/aztec.js/node";
 import { Fr } from "@aztec-labs/aztec.js/fields";
 import { FeeJuiceContract, ProtocolContractAddress } from "@aztec-labs/aztec.js/protocol";
+import { isL1ToL2MessageReady } from "@aztec-labs/aztec.js/messaging";
 import { getFeeJuiceBalance } from "@aztec-labs/aztec.js/utils";
 import { createExtendedL1Client } from "@aztec-labs/ethereum/client";
 import { deployL1Contract } from "@aztec-labs/ethereum/deploy-l1-contract";
@@ -29,7 +32,7 @@ import { MagnaConsumerContract } from "../packages/contracts-bindings/src/MagnaC
 import { MagnaCompanyRightsRegistryContract } from "../packages/contracts-bindings/src/MagnaCompanyRightsRegistry.ts";
 import { MagnaRightsPurchaseL2Contract } from "../packages/contracts-bindings/src/MagnaRightsPurchaseL2.ts";
 
-const DEFAULT_NETWORK_NAME = "local";
+const DEFAULT_NETWORK_NAME = "local-v6";
 const DEFAULT_WAIT_FOR_NODE_MS = 120_000;
 const DEFAULT_FEE_JUICE_WITNESS_WAIT_MS = 420_000;
 const DEFAULT_FEE_JUICE_WITNESS_POLL_MS = 15_000;
@@ -96,10 +99,10 @@ function usage() {
   node ./scripts/bootstrap-local-apps.mjs [options]
 
 Options:
-  --network-name <name>               Default: local
+  --network-name <name>               Default: local-v6
   --manifest <path>                   Default: deployments/<network>.json
-  --management-env-out <path>         Default: apps/magna-management/.env
-  --reference-dapp-env-out <path>     Default: apps/reference-dapp/.env
+  --management-env-out <path>         Default: .runtime/aztec6/management/.env
+  --reference-dapp-env-out <path>     Default: .runtime/aztec6/reference-dapp/.env
   --aztec-node-url <url>              Optional override for node URL
   --l1-rpc-url <url>                  Optional override for L1 RPC URL
   --public-aztec-node-url <url>       Optional browser-facing node URL (Docker/local proxy)
@@ -308,7 +311,7 @@ async function warpForwardSeconds({ l1RpcUrls, l1Mnemonic, label, seconds, walle
   await syncWalletPxeAfterWarp(label, wallet);
 }
 
-async function mineThreeL2BlocksForBridgeIngestion(l2NudgeToken, orchestrator, label = "bridge ingestion") {
+async function mineGatewayActivationBlocks(l2NudgeToken, orchestrator, label = "bridge ingestion") {
   const nudgeRecipient = await AztecAddress.random();
   await runRetriedStep(`${label} L2 nudge #1`, async () => {
     return await l2NudgeToken.methods.mint_to_public(nudgeRecipient, 1n).send({ from: orchestrator });
@@ -347,14 +350,17 @@ async function claimBridgedFeeJuice(
   let lastError = "unknown";
   while (Date.now() - startedAt < waitMs) {
     try {
-      await getNonNullifiedL1ToL2MessageWitness(
+      if (!await isL1ToL2MessageReady(node, Fr.fromHexString(claim.messageHash))) throw new Error("Inbox message not committed yet");
+      const witness = await getNonNullifiedL1ToL2MessageWitness(
         node,
         ProtocolContractAddress.FeeJuice,
         Fr.fromHexString(claim.messageHash),
         claim.claimSecret,
       );
+      if (witness[0] !== claim.messageLeafIndex) throw new Error(`Fee Juice Inbox index mismatch: portal=${claim.messageLeafIndex} Aztec=${witness[0]}`);
       break;
     } catch (error) {
+      if (String(error).includes("Inbox index mismatch")) throw error;
       lastError = errorDetails(error);
       await sleep(pollMs);
     }
@@ -623,9 +629,12 @@ async function main() {
   const repoRoot = resolve(here, "..");
   const networkName = String(args.networkName ?? DEFAULT_NETWORK_NAME);
   const manifestPath = resolve(repoRoot, String(args.manifest ?? `deployments/${networkName}.json`));
-  const managementEnvOutPath = resolve(repoRoot, String(args.managementEnvOut ?? "apps/magna-management/.env"));
-  const referenceDappEnvOutPath = resolve(repoRoot, String(args.referenceDappEnvOut ?? "apps/reference-dapp/.env"));
+  const managementEnvOutPath = resolve(repoRoot, String(args.managementEnvOut ?? ".runtime/aztec6/management/.env"));
+  const referenceDappEnvOutPath = resolve(repoRoot, String(args.referenceDappEnvOut ?? ".runtime/aztec6/reference-dapp/.env"));
   const existingManifest = existsSync(manifestPath) ? readJson(manifestPath, "Deployment manifest") : undefined;
+  if (existingManifest) assertV6Manifest(existingManifest);
+  assertFreshOutput(managementEnvOutPath);
+  assertFreshOutput(referenceDappEnvOutPath);
   const nodeUrl = String(
     args.aztecNodeUrl ?? existingManifest?.endpoints?.aztecNodeUrl ?? process.env.AZTEC_NODE_URL ?? "http://127.0.0.1:8080",
   );
@@ -847,7 +856,7 @@ async function main() {
       seconds: MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS,
       wallet,
     });
-    await mineThreeL2BlocksForBridgeIngestion(
+    await mineGatewayActivationBlocks(
       l2PaymentToken,
       orchestrator,
       "consumer gateway activation",
@@ -875,11 +884,6 @@ async function main() {
     const sponsorFeeJuiceBefore = await getFeeJuiceBalance(companySponsor.address, node);
     if (sponsorFeeJuiceBefore === 0n) {
       const sponsorFundingClaim = await bridgeFeeJuiceToAddress(node, l1RpcUrls, l1Mnemonic, companySponsor.address);
-      await mineThreeL2BlocksForBridgeIngestion(
-        l2PaymentToken,
-        orchestrator,
-        "sponsor Fee Juice bridge ingestion",
-      );
       const sponsorFunding = await claimBridgedFeeJuice(
         node,
         wallet,

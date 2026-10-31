@@ -16,7 +16,7 @@ Recovery V3, the management wallet, and the `@magna-protocol/client` dApp connec
 - [SDK release procedure](docs/sdk-release.md)
 - [Apache-2.0 publication and clean-history evidence](docs/evidence/public-release-2026-09-12.md)
 
-M1–M5 are complete for the agreed local developer scope, including SDK
+The dated V5 evidence records M1–M5 as complete for the agreed local developer scope, including SDK
 publication and installation from npm. Public-network deployment, production custody and the
 supported-document `SALTED=1` run remain M6 work. The local developer proof uses
 the official zkPassport app with `NON_SALTED_MOCK=2`; it is not production
@@ -30,8 +30,9 @@ Use Docker Desktop and Node.js 24.12+ with npm. From this checkout:
 npm run docker:local
 ```
 
-This clean command builds the digest-pinned Aztec 5.1.0 image, then replaces only
-Magna's disposable chain and generated deployment state. A failed image build
+This clean command builds the digest-pinned Aztec 6.0.0 image, then replaces only
+the separate `magna-local-v6` chain and generated deployment state. V5 images,
+volumes, browser stores, manifests and environment files remain available separately. A failed image build
 leaves the previous stack intact. A successful reset requires fresh local
 credentials; OS passkeys are not deleted.
 
@@ -58,6 +59,11 @@ An old latest block with a current pending timestamp means the automining
 network is idle. A future pending timestamp is an actual clock problem. Use the
 [Docker guide](docs/local-docker.md) for lifecycle and troubleshooting; the
 unmanaged host `network:local` command does not install the Docker clock hooks.
+
+V6 requires fresh contracts, accounts and credential issuance. Existing Recovery V3
+operates within one deployed network and is not a V5-to-V6 credential migration
+mechanism. The V6 build and regression results do not establish a fresh official
+mobile or production Passport acceptance run; see the [reviewer guide](docs/reviewer-guide.md).
 
 ## Application flow
 

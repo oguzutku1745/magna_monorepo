@@ -14,10 +14,12 @@
 //   --aztec-node-url <url>      Default: manifest endpoint or http://127.0.0.1:8080
 //   --l1-rpc-url <url>          Default: manifest endpoint or http://127.0.0.1:8545
 //   --l1-mnemonic <mnemonic>   Default: MNEMONIC env or the anvil "test ... junk" mnemonic
-//   --manifest <path>          Default: deployments/local.json (used only for endpoints)
+//   --manifest <path>          Default: deployments/local-v6.json (used only for endpoints)
 //   --wait-ms <ms>             Fee Juice bridge witness timeout. Default: 420000
 //   --poll-ms <ms>             Fee Juice bridge witness poll interval. Default: 15000
 //   --skip-checkpoint-advance  Do not advance bounded local Aztec checkpoints
+
+import { assertV6Manifest } from "./v6-operations.mjs";
 
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -28,6 +30,7 @@ import { AztecAddress } from "@aztec-labs/aztec.js/addresses";
 import { createAztecNodeClient } from "@aztec-labs/aztec.js/node";
 import { Fr } from "@aztec-labs/aztec.js/fields";
 import { FeeJuiceContract, ProtocolContractAddress } from "@aztec-labs/aztec.js/protocol";
+import { isL1ToL2MessageReady } from "@aztec-labs/aztec.js/messaging";
 import { getFeeJuiceBalance } from "@aztec-labs/aztec.js/utils";
 import { createExtendedL1Client } from "@aztec-labs/ethereum/client";
 import { L1FeeJuicePortalManager } from "@aztec-labs/aztec.js/ethereum";
@@ -36,9 +39,9 @@ import { retryUntil } from "@aztec-labs/foundation/retry";
 import { getNonNullifiedL1ToL2MessageWitness } from "@aztec-labs/stdlib/messaging";
 import { createAztecNodeDebugClient } from "@aztec-labs/stdlib/interfaces/client";
 import { EmbeddedWallet } from "@aztec-labs/wallets/embedded";
-import { createPublicClient, http, parseAbi } from "viem";
+import { createPublicClient, http } from "viem";
 
-const DEFAULT_NETWORK_NAME = "local";
+const DEFAULT_NETWORK_NAME = "local-v6";
 const DEFAULT_WAIT_FOR_NODE_MS = 120_000;
 const DEFAULT_FEE_JUICE_WITNESS_WAIT_MS = 420_000;
 const DEFAULT_FEE_JUICE_WITNESS_POLL_MS = 15_000;
@@ -47,7 +50,6 @@ const LOCAL_ANVIL_CHAIN_ID = 31_337n;
 const LOCAL_CLOCK_DRIFT_DANGER_SECONDS = 180n;
 const DEFAULT_L1_MNEMONIC =
   process.env.MNEMONIC ?? "test test test test test test test test test test test junk";
-const inboxAbi = parseAbi(["function LAG() view returns (uint256)"]);
 
 function assertNode24Runtime() {
   const major = Number.parseInt(process.versions.node.split(".")[0] ?? "0", 10);
@@ -91,7 +93,7 @@ Options:
   --aztec-node-url <url>     Default: manifest endpoint or http://127.0.0.1:8080
   --l1-rpc-url <url>         Default: manifest endpoint or http://127.0.0.1:8545
   --l1-mnemonic <mnemonic>  Default: MNEMONIC env or the anvil "test ... junk" mnemonic
-  --manifest <path>         Default: deployments/local.json (endpoints only)
+  --manifest <path>         Default: deployments/local-v6.json (endpoints only)
   --wait-ms <ms>            Fee Juice bridge witness timeout. Default: 420000
   --poll-ms <ms>            Fee Juice bridge witness poll interval. Default: 15000
   --skip-checkpoint-advance Do not advance bounded local Aztec checkpoints
@@ -171,14 +173,8 @@ async function bridgeFeeJuiceToAddress(node, l1RpcUrls, l1Mnemonic, recipient) {
   };
 }
 
-function localCheckpointAdvanceLimit(inboxLag) {
-  if (inboxLag < 1n || inboxLag > 64n) {
-    throw new Error(`Canonical Inbox returned an invalid local checkpoint lag: ${inboxLag}.`);
-  }
-  return Number(inboxLag) + 2;
-}
-
 async function getClaimWitness(node, claim) {
+  if (!await isL1ToL2MessageReady(node, Fr.fromHexString(claim.messageHash))) throw new Error("Fee Juice message is not committed yet");
   return getNonNullifiedL1ToL2MessageWitness(
     node,
     ProtocolContractAddress.FeeJuice,
@@ -211,16 +207,14 @@ async function advanceLocalCheckpointsForClaim(node, nodeUrl, l1RpcUrl, claim, p
     throw new Error(`Fee Juice local L1 RPC reports unexpected chain ${l1ChainId}.`);
   }
 
-  const inboxAddress = nodeInfo.l1ContractAddresses.inboxAddress.toString();
-  const inboxLag = await l1.readContract({
-    address: inboxAddress,
-    abi: inboxAbi,
-    functionName: "LAG",
-  });
-  const advanceLimit = localCheckpointAdvanceLimit(inboxLag);
+  const deadline = Date.now() + 180_000;
+  const assertBeforeDeadline = () => {
+    if (Date.now() >= deadline) throw new Error("Fee Juice Inbox wait exceeded three minutes. Check local node health.");
+  };
   const debug = createAztecNodeDebugClient(nodeUrl);
   const advanceClockPacedCheckpoint = async () => {
     while (true) {
+      assertBeforeDeadline();
       const latestBlock = await l1.getBlock();
       const wallTimestamp = BigInt(Math.floor(Date.now() / 1000));
       const drift = latestBlock.timestamp - wallTimestamp;
@@ -234,33 +228,29 @@ async function advanceLocalCheckpointsForClaim(node, nodeUrl, l1RpcUrl, claim, p
         const beforeL2Block = await node.getBlockNumber();
         await debug.warpL2TimeAtLeastTo(Number(wallTimestamp));
         if ((await node.getBlockNumber()) > beforeL2Block) return;
+        await sleep(1_000);
         continue;
       }
       await sleep(1_000);
     }
   };
-  let lastError = "message not indexed yet";
 
-  for (let advanced = 0; advanced <= advanceLimit; advanced += 1) {
+  for (let advanced = 0; ; advanced += 1) {
+    assertBeforeDeadline();
     let witness;
     try {
       witness = await getClaimWitness(node, claim);
     } catch (error) {
-      lastError = errorDetails(error);
+      // Retry transient node/archive errors within the fixed deadline.
     }
     if (witness) {
       assertClaimWitnessIndex(witness, claim.messageLeafIndex);
       return { localCheckpointsAdvanced: advanced };
     }
-    if (advanced === advanceLimit) break;
     await advanceClockPacedCheckpoint();
     await sleep(pollMs);
   }
 
-  throw new Error(
-    `Fee Juice Inbox message was not committed after ${advanceLimit} bounded local checkpoint advances. ` +
-      `last_error=${lastError}`,
-  );
 }
 
 async function claimBridgedFeeJuice(
@@ -282,6 +272,7 @@ async function claimBridgedFeeJuice(
       assertClaimWitnessIndex(witness, claim.messageLeafIndex);
       witnessReady = true;
     } catch (error) {
+      if (String(error).includes("Inbox index mismatch")) throw error;
       lastError = errorDetails(error);
       console.info(`[fund-fee-juice] bridge witness not ready yet: ${lastError}`);
       await sleep(pollMs);
@@ -328,6 +319,7 @@ async function main() {
   const repoRoot = resolve(here, "..");
   const manifestPath = resolve(repoRoot, String(args.manifest ?? `deployments/${DEFAULT_NETWORK_NAME}.json`));
   const manifest = readJsonIfExists(manifestPath);
+  if (manifest) assertV6Manifest(manifest);
 
   const nodeUrl = String(
     args.aztecNodeUrl ?? manifest?.endpoints?.aztecNodeUrl ?? process.env.AZTEC_NODE_URL ?? "http://127.0.0.1:8080",

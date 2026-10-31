@@ -28,6 +28,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { createAztecNodeDebugClient } from "@aztec-labs/stdlib/interfaces/client";
 import { createAztecNodeClient } from "@aztec-labs/aztec.js/node";
 import { Fr } from "@aztec-labs/aztec.js/fields";
+import { isL1ToL2MessageReady } from "@aztec-labs/aztec.js/messaging";
 import {
   compressedOuterProof,
   localDisclosures,
@@ -193,18 +194,6 @@ export type RecoveryV3LocalContracts = {
   recoveryPortalAddress: Hex;
 };
 
-const inboxAbi = parseAbi(["function LAG() view returns (uint256)"]);
-
-export function recoveryLocalCheckpointAdvanceLimit(inboxLag: bigint): number {
-  if (inboxLag < 1n || inboxLag > 64n) {
-    throw new Error(`Canonical Inbox returned an invalid local checkpoint lag: ${inboxLag}.`);
-  }
-  // One checkpoint can be needed for the archiver to observe the L1 event,
-  // followed by the configured Inbox lag. Keep one final bounded attempt for
-  // the checkpoint that makes the resulting tree membership queryable.
-  return Number(inboxLag) + 2;
-}
-
 export function recoveryLocalCheckpointWaitSeconds(
   latestBlockTimestamp: bigint,
   wallTimestamp: bigint,
@@ -259,13 +248,6 @@ export async function waitForRecoveryV3InboxMessage(input: {
     if (l1ChainId !== LOCAL_ANVIL_CHAIN_ID) {
       throw new Error(`Recovery V3 local L1 RPC reports unexpected chain ${l1ChainId}.`);
     }
-    const inboxAddress = nodeInfo.l1ContractAddresses.inboxAddress.toString() as Hex;
-    const inboxLag = await l1.readContract({
-      address: inboxAddress,
-      abi: inboxAbi,
-      functionName: "LAG",
-    });
-    const advanceLimit = recoveryLocalCheckpointAdvanceLimit(inboxLag);
     const debug = createAztecNodeDebugClient(input.aztecNodeUrl);
     const advanceClockPacedCheckpoint = async () => {
       while (true) {
@@ -288,38 +270,41 @@ export async function waitForRecoveryV3InboxMessage(input: {
           // An unrelated L1 update can win the race and make the absolute
           // target a no-op. Re-read both clocks without consuming the bounded
           // checkpoint allowance.
+          await new Promise(resolve => setTimeout(resolve, 1_000));
           continue;
         }
         await new Promise(resolve => setTimeout(resolve, Number(waitSeconds > 1n ? 1_000n : waitSeconds * 1_000n)));
       }
     };
-    for (let advanced = 0; advanced <= advanceLimit; advanced += 1) {
+    let advanced = 0;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
       assertWithinLocalDeadline();
-      const witness = await node.getL1ToL2MessageMembershipWitness("latest", messageLeaf);
+      let witness;
+      try {
+        if (await isL1ToL2MessageReady(node, messageLeaf)) {
+          witness = await node.getL1ToL2MessageMembershipWitness("latest", messageLeaf);
+        }
+      } catch (error) { lastError = error; }
       assertWitnessIndex(witness);
       if (witness) return { localCheckpointsAdvanced: advanced };
-      if (advanced === advanceLimit) break;
       await advanceClockPacedCheckpoint();
+      advanced += 1;
+      await new Promise(resolve => setTimeout(resolve, pollMs));
+    }
+  } else {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      let witness;
+      try {
+        if (await isL1ToL2MessageReady(node, messageLeaf)) {
+          witness = await node.getL1ToL2MessageMembershipWitness("latest", messageLeaf);
+        }
+      } catch (error) { lastError = error; }
+      assertWitnessIndex(witness);
+      if (witness) return { localCheckpointsAdvanced: 0 };
       await new Promise(resolve => setTimeout(resolve, pollMs));
     }
   }
 
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    assertWithinLocalDeadline();
-    let witness: Awaited<ReturnType<typeof node.getL1ToL2MessageMembershipWitness>>;
-    try {
-      witness = await node.getL1ToL2MessageMembershipWitness("latest", messageLeaf);
-    } catch (error) {
-      lastError = error;
-      await new Promise(resolve => setTimeout(resolve, pollMs));
-      continue;
-    }
-    assertWitnessIndex(witness);
-    if (witness) {
-      return { localCheckpointsAdvanced: 0 };
-    }
-    await new Promise(resolve => setTimeout(resolve, pollMs));
-  }
   const suffix = lastError instanceof Error ? ` Last node error: ${lastError.message}` : "";
   throw new Error(
     `Canonical Recovery V3 Inbox message was not committed on Aztec after ${attempts} checks.${suffix}`,
@@ -539,7 +524,7 @@ export async function submitRecoveryV3DeveloperAuthorization(input: {
   // The Aztec local network owns a shared L1/L2 test clock. A plain Anvil
   // transaction advances only one second in this configuration and can leave
   // both chains hours behind after a suspended development session. Aztec
-  // 5.1's debug warp is the supported local-network operation: it advances L1
+  // V6's debug warp is the supported local-network operation: it advances L1
   // and builds an empty L2 checkpoint at the next slot boundary atomically.
   // The target is the authenticated proof date, not browser wall time, so the
   // synchronization does not unnecessarily consume the one-hour proof window.

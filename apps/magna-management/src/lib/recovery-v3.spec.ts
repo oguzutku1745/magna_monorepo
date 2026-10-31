@@ -10,7 +10,6 @@ import {
   mutateZkPassportPrivateProofField,
   recoveryDevClockWarpTarget,
   recoveryL1ClockNeedsWarp,
-  recoveryLocalCheckpointAdvanceLimit,
   recoveryLocalCheckpointWaitSeconds,
 } from "./recovery-v3";
 
@@ -54,12 +53,6 @@ describe("Recovery V3 live-proof mutations", () => {
       /180s ahead.*before zkPassport scanning.*fresh passport scan by itself cannot repair/s,
     );
     expect(assertLocalRecoveryClockReadyForScan(1_080n, 900n, 11_155_111n)).toBe(180n);
-  });
-
-  it("bounds local Inbox checkpoint advancement from the canonical Inbox lag", () => {
-    expect(recoveryLocalCheckpointAdvanceLimit(2n)).toBe(4);
-    expect(() => recoveryLocalCheckpointAdvanceLimit(0n)).toThrow(/invalid local checkpoint lag/);
-    expect(() => recoveryLocalCheckpointAdvanceLimit(65n)).toThrow(/invalid local checkpoint lag/);
   });
 
   it("paces each forced checkpoint until wall time is ahead of monotonic L1 time", () => {

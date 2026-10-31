@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { assertV6Manifest, assertFreshOutput } from "./v6-operations.mjs";
+
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 function parseArgs(argv) {
@@ -82,7 +84,7 @@ function usage() {
   node ./scripts/fill-env-from-local-deploy.mjs [options]
 
 Options:
-  --network-name <name>            Default: local
+  --network-name <name>            Default: local-v6
   --manifest <path>                Default: deployments/<network>.json
   --out <path>                     Default: apps/magna-management/.env
   --template <path>                Default: apps/magna-management/.env.example
@@ -117,15 +119,22 @@ function main() {
   }
 
   const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
-  const networkName = String(args.networkName ?? "local");
+  const networkName = String(args.networkName ?? "local-v6");
   const templatePath = resolve(repoRoot, String(args.template ?? "apps/magna-management/.env.example"));
   const manifestPath = resolve(repoRoot, String(args.manifest ?? `deployments/${networkName}.json`));
-  const outPath = resolve(repoRoot, String(args.out ?? "apps/magna-management/.env"));
+  const outPath = resolve(repoRoot, String(args.out ?? ".runtime/aztec6/management/.env"));
 
   const templateRaw = readFileSync(templatePath, "utf8");
   const templatePairs = parseEnvPairs(templateRaw);
   const existingOutPairs = existsSync(outPath) ? parseEnvPairs(readFileSync(outPath, "utf8")) : new Map();
   const manifest = loadJson(manifestPath, "Deployment manifest");
+  assertV6Manifest(manifest);
+  // One bootstrap writes an initial checkpoint and then final configuration.
+  // Permit only this V6 deployment's generated file to be refreshed.
+  if (existingOutPairs.get("VITE_MAGNA_AZTEC_VERSION") !== "6.0.0" ||
+      existingOutPairs.get("VITE_MAGNA_ISSUER_ADDRESS") !== manifest?.l2?.issuerAddress) {
+    assertFreshOutput(outPath);
+  }
 
   const aztecNodeUrl = requireString(
     preferString(args.aztecNodeUrl, manifest?.endpoints?.aztecNodeUrl),
@@ -265,6 +274,7 @@ function main() {
   );
 
   const merged = new Map(templatePairs);
+  merged.set("VITE_MAGNA_AZTEC_VERSION", "6.0.0");
   merged.set("VITE_AZTEC_NODE_URL", aztecNodeUrl);
   merged.set("VITE_MAGNA_RIGHTS_REGISTRY_ADDRESS", rightsRegistryAddress);
   merged.set("VITE_MAGNA_RIGHTS_PURCHASE_L2_ADDRESS", rightsPurchaseAddress);
@@ -298,7 +308,8 @@ function main() {
     return `${key}=${merged.get(key) ?? ""}`;
   });
 
-  writeFileSync(outPath, `${lines.join("\n").replace(/\n+$/, "\n")}`, "utf8");
+  mkdirSync(dirname(outPath), { recursive: true });
+  writeFileSync(outPath, `${lines.join("\n").replace(/\n+$/, "\n")}\nVITE_MAGNA_AZTEC_VERSION=6.0.0\n`, "utf8");
 
   const warnings = [];
   if (templatePairs.has("VITE_MAGNA_ISSUER_ADDRESS") && !issuerAddress) {

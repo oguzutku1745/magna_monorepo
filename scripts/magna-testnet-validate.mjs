@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { assertV6Manifest } from "./v6-operations.mjs";
+
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -13,6 +15,8 @@ import { loadContractArtifact } from "@aztec-labs/aztec.js/abi";
 import { SetPublicAuthwitContractInteraction } from "@aztec-labs/aztec.js/authorization";
 import { Contract, DeployMethod } from "@aztec-labs/aztec.js/contracts";
 import { Fq, Fr } from "@aztec-labs/aztec.js/fields";
+import { isL1ToL2MessageReady } from "@aztec-labs/aztec.js/messaging";
+import { inboxMessageSentEvent as INBOX_MESSAGE_SENT_ABI, selectInboxMessage } from "./inbox-message.mjs";
 import { getFeeJuiceBalance } from "@aztec-labs/aztec.js/utils";
 import { createExtendedL1Client } from "@aztec-labs/ethereum/client";
 import { deployL1Contract } from "@aztec-labs/ethereum/deploy-l1-contract";
@@ -27,7 +31,7 @@ import { pad, parseAbiItem } from "viem";
 import rightsRegistryArtifactJson from "../contracts/magna-company-rights-registry/target/magna_company_rights_registry-MagnaCompanyRightsRegistry.json" with { type: "json" };
 import rightsPurchaseArtifactJson from "../contracts/magna-rights-purchase-l2/target/magna_rights_purchase_l2-MagnaRightsPurchaseL2.json" with { type: "json" };
 
-const PINNED_AZTEC_VERSION = process.env.AZTEC_VERSION_PIN ?? "5.1.0";
+const PINNED_AZTEC_VERSION = process.env.AZTEC_VERSION_PIN ?? "6.0.0";
 const DEFAULT_PRICE_PER_VERIFY = 150_000n;
 const DEFAULT_L1_TOKEN_DECIMALS = 6;
 const DEFAULT_REPORTS_DIR = "reports";
@@ -39,9 +43,6 @@ const DEFAULT_RIGHTS_AMOUNT = 1n;
 const DEFAULT_L2_SMOKE_MINT_AMOUNT = 1_000_000n;
 const PORTAL_EVENT_ABI = parseAbiItem(
   "event RightsPurchased(uint256 indexed purchaseId, bytes32 indexed sponsorAddressOnAztec, uint128 rightsAmount, bytes32 packageId, bytes32 creditNonce, bytes32 contentHash, bytes32 secretHash, bytes32 messageKey, uint256 messageLeafIndex, uint256 paymentAmount, address payer)",
-);
-const INBOX_MESSAGE_SENT_ABI = parseAbiItem(
-  "event MessageSent(uint256 indexed checkpointNumber, uint256 index, bytes32 indexed hash, bytes16 rollingHash)",
 );
 const ERC20_DECIMALS_ABI = [
   {
@@ -159,6 +160,7 @@ function usage() {
 
 Modes:
   preflight   Check endpoints, versions, balances, and resolved Aztec L1 addresses.
+              V6 requires an L1 RPC with debug_traceTransaction support; read-only RPC access is insufficient.
   deploy      Deploy Magna portal + rights registry + L2 purchase adapter and write a manifest.
   validate    Validate live deployment invariants against a manifest.
   smoke-l1    Run the L1 portal purchase -> L2 rights claim smoke.
@@ -384,6 +386,7 @@ function buildConfig(cli) {
   );
 
   const manifest = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, "utf8")) : undefined;
+  if (manifest) assertV6Manifest(manifest);
   const l1RpcUrl = cli.l1RpcUrl ?? process.env.L1_RPC_URL ?? manifest?.endpoints?.l1RpcUrl;
   const aztecNodeUrl = cli.aztecNodeUrl ?? process.env.AZTEC_NODE_URL ?? manifest?.endpoints?.aztecNodeUrl;
   const l1PrivateKey = cli.l1PrivateKey ?? process.env.DEPLOYER_PRIVATE_KEY ?? process.env.L1_PRIVATE_KEY;
@@ -713,6 +716,7 @@ function buildManifest(config, runtime, deployment) {
       aztecNodeUrl: config.aztecNodeUrl,
     },
     config: {
+      l1RpcRequiresDebugTraceTransaction: true,
       pricePerVerify: config.pricePerVerify.toString(),
       l1PaymentTokenDecimals: config.l1PaymentTokenDecimals,
     },
@@ -1067,7 +1071,7 @@ async function validateManifest(config, reporter, runtime, manifest) {
   });
 }
 
-async function waitForCustomMessageWitness(runtime, rightsRegistryAddress, contentHash, secret, expectedLeafIndex, config) {
+async function waitForCustomMessageWitness(runtime, rightsRegistryAddress, messageHash, secret, expectedLeafIndex, config) {
   const startedAt = Date.now();
   let attempt = 0;
   let lastError = "unknown";
@@ -1075,14 +1079,14 @@ async function waitForCustomMessageWitness(runtime, rightsRegistryAddress, conte
   while (Date.now() - startedAt < config.l1MessageWaitMs) {
     attempt += 1;
     try {
+      if (!await isL1ToL2MessageReady(runtime.node, Fr.fromHexString(messageHash))) throw new Error("Inbox message is not committed yet");
       const [messageIndex] = await getNonNullifiedL1ToL2MessageWitness(
-        runtime.node,
-        AztecAddress.fromStringUnsafe(rightsRegistryAddress),
-        Fr.fromHexString(contentHash),
-        secret,
+        runtime.node, AztecAddress.fromStringUnsafe(rightsRegistryAddress), Fr.fromHexString(messageHash), secret,
       );
+      if (messageIndex !== expectedLeafIndex) throw new Error(`Inbox index mismatch: portal=${expectedLeafIndex} Aztec=${messageIndex}`);
       return { messageIndex, attempt, elapsedMs: Date.now() - startedAt, expectedLeafIndex };
     } catch (error) {
+      if (String(error).includes("Inbox index mismatch")) throw error;
       lastError = errorDetails(error);
       await new Promise(resolve => setTimeout(resolve, config.l1MessagePollMs));
     }
@@ -1161,11 +1165,15 @@ async function runSmokeL1(config, reporter, runtime, manifest, consumeAfterSmoke
 
   const creditNonce = purchased.args.creditNonce;
   const contentHash = purchased.args.contentHash;
-  const messageLeafIndex = inboxLogs[0].args.index;
+  const messageLeafIndex = selectInboxMessage(inboxLogs, {
+    hash: purchased.args.messageKey, index: purchased.args.messageLeafIndex,
+    recipient: manifest.l2.rightsRegistryAddress, sender: manifest.l1.portalAddress,
+    content: contentHash, secretHash: pad(secretHash.toString(), { size: 32 }),
+  });
   const witness = await waitForCustomMessageWitness(
     runtime,
     manifest.l2.rightsRegistryAddress,
-    contentHash,
+    purchased.args.messageKey,
     secret,
     messageLeafIndex,
     config,

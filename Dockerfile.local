@@ -1,7 +1,7 @@
-FROM aztecprotocol/aztec:5.1.0@sha256:dd26a01042caf0f34760c4221bd1c855862181842e0cbe3c8c6b4e3f6a5b4128
+FROM azteclabs/aztec:6.0.0@sha256:59b10cc8e89bb9226db1f771a5abbe5d5f8d71483c00c7472187e6ddc7adab8d
 
 ARG TARGETARCH
-LABEL io.magna.local-app="true"
+LABEL io.magna.local-app="true" io.magna.aztec-version="6.0.0"
 WORKDIR /workspace
 ENTRYPOINT []
 
@@ -9,7 +9,7 @@ COPY package.json package-lock.json LICENSE ./
 COPY apps ./apps
 COPY contracts ./contracts
 COPY deployments/docker-build-placeholder.json ./deployments/docker-build-placeholder.json
-RUN cp ./deployments/docker-build-placeholder.json ./deployments/local.json
+RUN cp ./deployments/docker-build-placeholder.json ./deployments/local-v6.json
 COPY l1-contracts ./l1-contracts
 COPY packages ./packages
 COPY scripts ./scripts
@@ -26,8 +26,30 @@ RUN chmod 755 /usr/local/bin/aztec
 # GitHub on the HTTP/2 git-upload-pack POST. Nargo resolves public Git
 # dependencies through Git, so keep that transport on HTTP/1.1.
 RUN git config --global http.version HTTP/1.1
-RUN ln -s /usr/src/noir/noir-repo/target/release/nargo /usr/local/bin/nargo
-RUN ln -s /usr/src/noir/noir-repo/target/release/nargo /usr/local/bin/aztec-nargo
+# The V6 image omits nargo. Keep the network and standalone compilers explicit.
+ENV AZTEC_HOME="/root/.aztec"
+ENV AZTEC_NARGO_BIN="/usr/local/bin/nargo-standalone"
+RUN set -eu; \
+    case "$TARGETARCH" in \
+      arm64) target="aarch64-unknown-linux-gnu"; network_sha="98be47cd6b2a81f3857c029acd8298fd590eebeb153ef51e1dc6f10c973e00e9"; standalone_sha="9e07b436148bb1e89d12a4d2043e613ea5fd81f7d5518e8104e27298b39c314a" ;; \
+      amd64) target="x86_64-unknown-linux-gnu"; network_sha="5792dd962afce1eed834570f95d9f72cc4a09d45cd846d3b80b7a57392732973"; standalone_sha="384c4fc800905b213e26aabd738a96a4a85b1a76ffc27fb19aeb6d33494a787b" ;; \
+      *) echo "Unsupported Docker architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    mkdir -p /tmp/network-nargo /tmp/standalone-nargo "$AZTEC_HOME/versions/6.0.0/bin"; \
+    curl -fsSL "https://github.com/noir-lang/noir/releases/download/v1.0.0-rc.3/noir-$target.tar.gz" -o /tmp/network-nargo.tar.gz; \
+    echo "$network_sha  /tmp/network-nargo.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/network-nargo.tar.gz -C /tmp/network-nargo; \
+    install -m 0755 /tmp/network-nargo/nargo "$AZTEC_HOME/versions/6.0.0/bin/aztec-nargo"; \
+    ln -s aztec-nargo "$AZTEC_HOME/versions/6.0.0/bin/nargo"; \
+    ln -s /usr/local/bin/aztec "$AZTEC_HOME/versions/6.0.0/bin/aztec"; \
+    curl -fsSL "https://github.com/noir-lang/noir/releases/download/v1.0.0-beta.22/nargo-$target.tar.gz" -o /tmp/standalone-nargo.tar.gz; \
+    echo "$standalone_sha  /tmp/standalone-nargo.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/standalone-nargo.tar.gz -C /tmp/standalone-nargo; \
+    install -m 0755 /tmp/standalone-nargo/nargo /usr/local/bin/nargo-standalone; \
+    "$AZTEC_HOME/versions/6.0.0/bin/aztec-nargo" --version | grep 'nargo version = 1.0.0-rc.3'; \
+    "$AZTEC_NARGO_BIN" --version | grep 'nargo version = 1.0.0-beta.22'; \
+    rm -rf /tmp/network-nargo /tmp/standalone-nargo /tmp/network-nargo.tar.gz /tmp/standalone-nargo.tar.gz
+ENV PATH="/root/.aztec/versions/6.0.0/bin:/opt/foundry/bin:${PATH}"
 RUN set -eu; \
     case "$TARGETARCH" in \
       arm64) \
@@ -51,6 +73,7 @@ RUN forge build --root ./contracts/magna-recovery-portal && \
     forge build --root ./contracts/magna-recovery-portal --offline
 RUN npm run compile:contracts
 RUN NARGO_BIN=/usr/local/bin/nargo-instagram npm run -w @magna/instagram-proof compile:circuit
+RUN npm run -w @magna/recovery-wrapper-proof compile:circuit
 RUN npm run codegen:contracts
 RUN npm run -w @magna-protocol/core build
 RUN npm run -w @magna/recovery-v3 build
@@ -66,7 +89,7 @@ RUN npm run -w @magna/management build
 RUN npm run -w @magna/verification-api build
 RUN npm run -w @magna/reference-dapp build
 RUN npm run -w @magna/e2e-tests build
-RUN rm ./deployments/local.json
+RUN rm ./deployments/local-v6.json
 ENV NODE_OPTIONS="--max-old-space-size=6144"
 
 CMD ["node", "./scripts/start-docker-service.mjs", "management"]

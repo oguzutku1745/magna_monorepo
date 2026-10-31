@@ -1,3 +1,4 @@
+import { isL1ToL2MessageReady } from "@aztec-labs/aztec.js/messaging";
 import { AztecAddress } from "@aztec-labs/aztec.js/addresses";
 import { Fr } from "@aztec-labs/aztec.js/fields";
 import { createAztecNodeClient } from "@aztec-labs/aztec.js/node";
@@ -32,10 +33,6 @@ export type LocalFeeJuiceFundingResult = {
   localCheckpointsAdvanced: number;
 };
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function assertLocalPrivateKey(value: string): asserts value is `0x${string}` {
   if (!/^0x[0-9a-fA-F]{64}$/.test(value)) {
     throw new Error("Local Fee Juice faucet requires a 32-byte Anvil private key.");
@@ -69,7 +66,7 @@ export async function fundLocalFeeJuice(
 ): Promise<LocalFeeJuiceFundingResult> {
   assertLocalPrivateKey(options.l1PrivateKey);
   options.onProgress?.("checking");
-  const { node, nodeInfo, l1 } = await assertLocalFundingNetwork(options.nodeUrl, options.l1RpcUrl);
+  const { node, l1 } = await assertLocalFundingNetwork(options.nodeUrl, options.l1RpcUrl);
   const recipient = AztecAddress.fromStringUnsafe(options.recipient);
   const balanceBefore = await getFeeJuiceBalance(recipient, node);
 
@@ -80,7 +77,6 @@ export async function fundLocalFeeJuice(
     { createLogger },
     { createAztecNodeDebugClient },
     { getNonNullifiedL1ToL2MessageWitness },
-    { parseAbi },
   ] = await Promise.all([
     import("@aztec-labs/aztec.js/ethereum"),
     import("@aztec-labs/aztec.js/protocol"),
@@ -88,9 +84,7 @@ export async function fundLocalFeeJuice(
     import("@aztec-labs/foundation/log"),
     import("@aztec-labs/stdlib/interfaces/client"),
     import("@aztec-labs/stdlib/messaging"),
-    import("viem"),
   ]);
-  const inboxAbi = parseAbi(["function LAG() view returns (uint256)"]);
 
   options.onProgress?.("bridging");
   const l1Client = createExtendedL1Client([options.l1RpcUrl], options.l1PrivateKey);
@@ -102,19 +96,15 @@ export async function fundLocalFeeJuice(
   const claim = await portalManager.bridgeTokensPublic(recipient, undefined, true);
 
   options.onProgress?.("waiting_for_inbox");
-  const inboxAddress = nodeInfo.l1ContractAddresses.inboxAddress.toString() as `0x${string}`;
-  const inboxLag = await l1.readContract({
-    address: inboxAddress,
-    abi: inboxAbi,
-    functionName: "LAG",
-  });
-  if (inboxLag < 1n || inboxLag > 64n) {
-    throw new Error(`Canonical Inbox returned invalid local lag ${inboxLag}.`);
-  }
-  const checkpointLimit = Number(inboxLag) + 2;
+  let lastWitnessError = "message not indexed yet";
+  const deadline = Date.now() + 180_000;
+  const assertBeforeDeadline = () => {
+    if (Date.now() >= deadline) throw new Error(`Fee Juice Inbox wait exceeded three minutes. Check local node health. last_error=${lastWitnessError}`);
+  };
   const debug = createAztecNodeDebugClient(options.nodeUrl);
   const advanceClockPacedCheckpoint = async () => {
     while (true) {
+      assertBeforeDeadline();
       const latestBlock = await l1.getBlock();
       const wallTimestamp = BigInt(Math.floor(Date.now() / 1_000));
       const drift = latestBlock.timestamp - wallTimestamp;
@@ -128,6 +118,7 @@ export async function fundLocalFeeJuice(
         const beforeL2Block = await node.getBlockNumber();
         await debug.warpL2TimeAtLeastTo(Number(wallTimestamp));
         if ((await node.getBlockNumber()) > beforeL2Block) return;
+        await new Promise(resolve => setTimeout(resolve, 1_000));
         continue;
       }
       await new Promise(resolve => setTimeout(resolve, 1_000));
@@ -135,27 +126,23 @@ export async function fundLocalFeeJuice(
   };
   let localCheckpointsAdvanced = 0;
   let witness: Awaited<ReturnType<typeof getNonNullifiedL1ToL2MessageWitness>> | undefined;
-  let lastWitnessError = "message not indexed yet";
-  for (let attempt = 0; attempt <= checkpointLimit; attempt += 1) {
+  while (true) {
+    assertBeforeDeadline();
     try {
-      witness = await getNonNullifiedL1ToL2MessageWitness(
+      if (await isL1ToL2MessageReady(node, Fr.fromHexString(claim.messageHash))) witness = await getNonNullifiedL1ToL2MessageWitness(
         node,
         ProtocolContractAddress.FeeJuice,
         Fr.fromHexString(claim.messageHash),
         claim.claimSecret,
       );
     } catch (error) {
-      lastWitnessError = errorMessage(error);
+      lastWitnessError = error instanceof Error ? error.message : String(error);
+      // The archiver may not have observed the message yet; retry within the deadline.
     }
     if (witness) break;
-    if (attempt === checkpointLimit) {
-      throw new Error(
-        `Fee Juice Inbox message was not committed after ${checkpointLimit} local checkpoints. ` +
-          `last_error=${lastWitnessError}`,
-      );
-    }
     await advanceClockPacedCheckpoint();
     localCheckpointsAdvanced += 1;
+    await new Promise(resolve => setTimeout(resolve, 1_000));
   }
   if (!witness) {
     throw new Error("Fee Juice Inbox witness was unavailable after local checkpoint advancement.");

@@ -10,7 +10,7 @@ const result = spawnSync('docker', [
   '-e', 'ETHEREUM_SLOT_DURATION=4', '-e', 'AZTEC_SLOT_DURATION=8', '-e', 'SEQ_BLOCK_DURATION_MS=1000',
   '--mount', `type=bind,source=${resolve(root, 'docker/local-clock')},target=/opt/magna-local-clock,readonly`,
   '--mount', `type=bind,source=${resolve(root, 'scripts/test-local-clock-integration.mjs')},target=/workspace/scripts/test-local-clock-integration.mjs,readonly`,
-  'magna-local-app:aztec-5.1.0', '--import', '/opt/magna-local-clock/register.mjs',
+  'magna-local-app:aztec-6.0.0', '--import', '/opt/magna-local-clock/register.mjs',
   '--experimental-import-meta-resolve', '/workspace/scripts/test-local-clock-integration.mjs',
 ], { cwd: root, stdio: 'inherit' });
 if (result.error) throw result.error;

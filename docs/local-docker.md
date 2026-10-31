@@ -1,13 +1,13 @@
 # Magna local Docker stack
 
-This Compose profile packages the same local developer flow that passed the manual Recovery V3 Gate B-dev run. It does not replace the official zkPassport mobile scan and does not weaken any proof, mutation, replay, Inbox, Ghost, or issuer check.
+This Aztec 6.0.0 Compose profile implements the existing local developer flow. The dated Recovery V3 Gate B-dev evidence was produced on V5 and must be repeated on a fresh V6 deployment. It does not replace the official zkPassport mobile scan and does not weaken any proof, mutation, replay, Inbox, Ghost, or issuer check.
 
 ## What starts
 
 One command starts, in dependency order:
 
-1. one Anvil process from the official digest-pinned Aztec `5.1.0` image;
-2. the official Aztec `5.1.0` local-network process connected explicitly to that Anvil RPC;
+1. one Anvil process from the official digest-pinned Aztec `6.0.0` image;
+2. the official Aztec `6.0.0` local-network process connected explicitly to that Anvil RPC;
 3. a one-shot bootstrap that deploys the rights/application contracts and then Recovery V3;
 4. the verification API;
 5. the management wallet and reference dApp running through their Vite development servers with the generated deployment configuration.
@@ -22,10 +22,10 @@ Stop any host processes already using ports `8080`, `18545`, `4310`, `5174`, or 
 npm run docker:local
 ```
 
-This is intentionally a destructive reset of **only the `magna-local` Compose project**. Every invocation:
+This is intentionally a destructive reset of **only the `magna-local-v6` Compose project**. Every invocation:
 
-1. removes unused prior Magna application-image generations, identified by Magna's image label, without globally pruning Docker;
-2. creates a dedicated empty `magna-local-clean-builder`, rebuilds with `--no-cache`, exports the result to a temporary host file, loads it, and then deletes that builder and all of its cache;
+1. removes unused prior Magna application-image generations, identified by both `io.magna.local-app=true` and `io.magna.aztec-version=6.0.0`, without globally pruning Docker;
+2. creates a dedicated empty `magna-local-v6-clean-builder`, rebuilds with `--no-cache`, exports the result to a temporary host file, loads it, and then deletes that builder and all of its cache;
 3. only after that replacement image is safely loaded, removes the previous Magna containers and named volumes containing Anvil/Aztec state, the deployment manifest, generated runtime configuration, and frontend bundles;
 4. removes the now-unused previous Magna image and starts new L1/L2 processes for a completely new application and Recovery V3 deployment.
 
@@ -41,7 +41,13 @@ inspect `docker system df` and remove only cache you can identify or increase
 Docker Desktop's disk allocation. Its 12 GiB reserve is an early guard, not a
 guarantee against concurrent disk use by other projects.
 
-The command cannot and must not delete the user's OS/cloud passkey credentials. Each fresh bootstrap does, however, generate a new deployment-instance ID. On the next page load, the management and login apps detect that ID, clear the prior Aztec `pxe_data` and `wallet_data` SQLite-OPFS stores for this local network, and discard chain-specific credential metadata before allowing automatic wallet restoration. The underlying passkey remains available and can be used to deploy the same user-controlled address on the fresh chain, or the tester can create a new passkey.
+V5 images, Compose volumes and stopped resources are preserved. The V6 project uses
+`deployments/local-v6.json`, separate named volumes and generated runtime files.
+Old or unversioned manifests are rejected before reuse or writes. The browser uses
+new V6 PXE and wallet store names, preserving V5 stores. Passkeys remain available,
+but V6 requires fresh contract deployments, accounts and credential issuance.
+Recovery V3 transfers a root lineage within its deployed network; it does not
+export/import credentials across the V5/V6 network boundary.
 
 The image build runs the repository build on Node 24 inside the official Aztec image. Because cached layers are deliberately ignored, the build and one-shot deployment can take several minutes. Follow deployment separately with:
 
@@ -123,15 +129,16 @@ npm run docker:local:down
 
 That command removes only this Compose project's containers and named volumes. It destroys the disposable local chain and deployment. Browser passkeys are not deleted, but credentials tied to the removed chain are no longer usable, so create new local wallets after the reset.
 
-Docker build cache is different from Magna runtime state: it contains immutable intermediate image layers, not an Anvil database, Aztec state, a deployment manifest, or browser/PXE data. The clean command nevertheless isolates and deletes Magna's build cache on every run. It does not run a global `docker builder prune`; caches belonging to unrelated projects are untouched. Runnable Magna images carry `io.magna.local-app=true`, and the clean command removes unused older generations with that label. A narrowly matched legacy signature cleans images built before the label existed. After a successful build, Docker retains only the current runnable Magna image rather than Magna's intermediate builder cache.
+Docker build cache is different from Magna runtime state: it contains immutable intermediate image layers, not an Anvil database, Aztec state, a deployment manifest, or browser/PXE data. The clean command nevertheless isolates and deletes Magna's build cache on every run. It does not run a global `docker builder prune`; caches belonging to unrelated projects are untouched. Only V6 application images carrying both version and application labels are eligible for cleanup. Unlabelled legacy images and labelled V5 images remain untouched.
 
 ## Configuration boundary
 
-- Aztec is pinned to `aztecprotocol/aztec:5.1.0` and immutable multi-architecture digest `sha256:dd26a01042caf0f34760c4221bd1c855862181842e0cbe3c8c6b4e3f6a5b4128`.
+- Aztec is pinned to `azteclabs/aztec:6.0.0` and immutable multi-architecture digest `sha256:59b10cc8e89bb9226db1f771a5abbe5d5f8d71483c00c7472187e6ddc7adab8d`.
 - Anvil is the Foundry binary bundled in that same immutable image. There is exactly one L1 process; the Aztec local-network service receives it through the documented `--l1-rpc-urls` option rather than silently starting another chain.
 - The image installs the portal's exactly pinned Solidity `0.8.30` compiler during the build and immediately proves that the same portal compiles in Foundry offline mode. Runtime Recovery V3 bootstrap remains offline for compilation and cannot silently select another compiler.
 - The Instagram/zkEmail circuit is an isolated `zkemail.nr v2.0.0` / Noir `1.0.0-beta.5` lane, matching upstream zkEmail CI. Its Noir.js runtime is also beta.5 and its `@aztec/bb.js` backend is `0.84.0`, matching Noir beta.5's own integration tests. The image downloads the official beta.5 Nargo archive for its target architecture, verifies the pinned SHA-256, checks the reported compiler version, and compiles the Instagram artifact from a clean dependency cache. It never uses the Aztec Nargo, a host-specific absolute path, or the host's Nargo dependency cache for that circuit. Real-DKIM input checks and full proof generation are the explicit `npm run test:instagram-proof` acceptance test because the full proof takes about 80 seconds and close to 1 GiB for the optimized circuit.
-- The local timing profile is the validated 4-second Ethereum slot, 8-second Aztec slot, and 1-second block cadence.
+- Network Nargo is `1.0.0-rc.3` at `/root/.aztec/versions/6.0.0/bin/aztec-nargo`, alongside the exact V6 CLI shim. Passport/recovery standalone compilation explicitly selects checksum-pinned `1.0.0-beta.22` via `AZTEC_NARGO_BIN`; Instagram explicitly selects beta.5 via `NARGO_BIN`. The frozen recovery bundle and verification key remain unchanged.
+- The local timing profile uses the source-checked 4-second Ethereum slot, 8-second Aztec slot, and 1-second block cadence.
 - The disposable Anvil account-zero key is injected only into the Vite development bundle for portal relaying and the chain-`31337` Fee Juice faucet. It is not a production custody design.
 - Login with Magna uses no shared frontend signing key. Bootstrap writes the public Aztec node,
   consumer-gateway, and active sponsor addresses to the two app environments. The relying party
@@ -169,7 +176,7 @@ the email, witness, prover, or verifier.
 
 ## Official mobile developer evidence
 
-The September 6 managed-clock deployment passed an official mobile developer
+The historical V5 September 6 managed-clock deployment passed an official mobile developer
 recovery with mutation/replay rejection, canonical Inbox ingestion and successful
 Aztec execution at block 45. See the [public receipt and browser evidence](evidence/recovery-v3-mobile-2026-09-06.md).
 Future acceptance runs still require a fresh official mobile proof; a container
@@ -192,7 +199,7 @@ increment, resets the injected clock, and verifies readiness before the API and
 apps start. Authenticated passport dates and contract freshness rules are unchanged.
 
 The local-only loader in `docker/local-clock` checks exact integration points in
-the digest-pinned Aztec 5.1.0 runtime and refuses an unsupported runtime. It paces
+the digest-pinned Aztec 6.0.0 runtime and refuses an unsupported runtime. It paces
 both ordinary and explicit checkpoints at the sequencer: a future slot waits for
 wall time instead of making L1 advance ahead of it. The 8s Aztec / 4s Ethereum
 protocol slot configuration is preserved. The internal clock control endpoint
@@ -224,3 +231,45 @@ of entering an additional six-minute polling wait. RPC/proof processing has its
 own latency; this is not a three-minute guarantee for mobile scanning and the
 complete browser proof/recovery flow. A wait timeout does not cancel a submitted
 portal transaction.
+
+## Fresh host configuration and V6 acceptance
+
+Host bootstraps default to `deployments/local-v6.json` and generate
+`.runtime/aztec6/management/.env` and `.runtime/aztec6/reference-dapp/.env`.
+They refuse existing output files at the start of a fresh bootstrap; preserve
+those files and choose new output paths when creating another deployment.
+The existing apps' `.env` files are not overwritten. Install Aztec 6.0.0 side by
+side, then start a fresh local network and deploy:
+
+```sh
+npm run network:local
+# In another terminal:
+npm run bootstrap:local
+MAGNA_DEPLOYMENT_MANIFEST=deployments/local-v6.json npm run recovery-v3:bootstrap:local
+MAGNA_ENV_DIR="$PWD/.runtime/aztec6/management" npm run -w @magna/management dev
+MAGNA_ENV_DIR="$PWD/.runtime/aztec6/reference-dapp" npm run -w @magna/reference-dapp dev
+```
+
+Set `MAGNA_ENV_DIR` to an absolute generated directory for each host frontend;
+Vite then loads that directory's environment instead of the old app `.env`.
+Host mode does not install the Docker clock hooks: observe drift and run the
+verification API with the fresh deployment's explicit configuration. Docker is
+the complete managed bootstrap path.
+
+V6 Fast Inbox has no `LAG()` contract method. Funding/recovery/rights waits
+observe committed inclusion, then require the exact message leaf and global
+index; Fee Juice and rights consumption retain the nullifier/replay checks.
+Local debug advancement remains restricted to chain 31337, paced by wall time,
+and bounded by a three-minute deadline. No fixed two-checkpoint delay remains.
+
+The Passport issuance freshness bound is **300 seconds**. Recovery V3 retains
+its existing **3600-second** proof freshness bound; the consumer-gateway and
+sponsorship-policy activation delay is separately **3600 seconds**. Historical
+bootstrap time may satisfy activation delays; it cannot make a stale live proof
+fresh. A new official mobile developer proof and a supported-document production
+`SALTED=1` proof are separate acceptance gates.
+
+For public testnet, supply a trace-capable L1 RPC with `debug_traceTransaction`
+support, matching V6 node/RPC endpoints, and fresh V6 manifests/accounts. Read-only
+Sepolia registry access is a separate dependency. No remote deployment is
+performed by this migration's verification.

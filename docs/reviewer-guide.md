@@ -1,6 +1,9 @@
 # Magna M1–M5 reviewer guide
 
-Current status: 2026-09-07. This is the canonical status and command index.
+Current target: Aztec 6.0.0 (2026-11-01). This is the canonical status and command index.
+The milestone table below records historical V5 acceptance; those live runs do
+not establish V6 deployment or mobile-proof acceptance. Fresh V6 local and
+production proof gates must be recorded separately.
 Dated evidence files record specific runs; older evidence is retained only when
 it establishes a distinct protocol or adapter acceptance result.
 
@@ -34,8 +37,8 @@ Provide a private Instagram email using the [fixture instructions](../packages/m
 The full suite fails with setup instructions when that file is missing; it does not skip proof checks.
 
 After `npm run docker:local`, run the reviewer suite without a concurrent live
-E2E/proving process. The bounded worker/heap configuration below passed on an
-8 GiB Docker Desktop VM:
+E2E/proving process. The bounded worker/heap configuration below passed historically on V5 on an
+8 GiB Docker Desktop VM; rerun it against the new V6 image:
 
 ```sh
 npm run test:reviewer:critical:docker
@@ -75,3 +78,18 @@ rootless lane and is issued again from a fresh signed email on the new wallet.
 Production `SALTED=1`, production orchestrator custody/rotation, public-network
 deployment, benchmarks and a demo video
 remain separate from the local acceptance evidence. None is silently claimed complete by this local acceptance.
+
+## V6 migration gates
+
+Network packages use `@aztec-labs/*` 6.0.0 and Noir rc.3. The independent
+Passport/recovery lane remains bb.js 5.0.0 / Noir beta.22; Instagram remains
+bb.js 0.84.0 / Noir beta.5. `npm run check:proof-runtimes` and
+`npm run test:compiler-isolation` verify the separation.
+
+Operational regressions: `node --test scripts/v6-operations.spec.mjs scripts/inbox-message.spec.mjs`.
+Fresh bootstrap instructions, preservation boundaries, digest and trace-capable
+testnet RPC requirements are in [the Docker guide](local-docker.md).
+A successful build or health check does not establish issuance/link/revoke,
+sponsorship, rights bridging, or fresh official-mobile recovery on V6. Retain
+those as explicit gates until measured on the fresh network. Historical V5
+receipts remain historical evidence.

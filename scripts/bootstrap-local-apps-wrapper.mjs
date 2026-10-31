@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { assertV6Manifest } from "./v6-operations.mjs";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -54,6 +55,7 @@ function outputsAreComplete({ manifestPath, managementEnvOutPath, referenceDappE
     }
 
     const manifest = readJson(manifestPath);
+    assertV6Manifest(manifest);
     const l2 = manifest?.l2 ?? {};
     const managementEnvText = readText(managementEnvOutPath);
     const referenceDappEnvText = readText(referenceDappEnvOutPath);
@@ -140,10 +142,12 @@ function runWorker(scriptPath, argv) {
 const args = parseArgs(process.argv.slice(2));
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
-const networkName = String(args.networkName ?? "local");
+const networkName = String(args.networkName ?? "local-v6");
 const manifestPath = resolve(repoRoot, args.manifest ?? `deployments/${networkName}.json`);
-const managementEnvOutPath = resolve(repoRoot, args.managementEnvOut ?? "apps/magna-management/.env");
-const referenceDappEnvOutPath = resolve(repoRoot, args.referenceDappEnvOut ?? "apps/reference-dapp/.env");
+const managementEnvOutPath = resolve(repoRoot, args.managementEnvOut ?? ".runtime/aztec6/management/.env");
+const referenceDappEnvOutPath = resolve(repoRoot, args.referenceDappEnvOut ?? ".runtime/aztec6/reference-dapp/.env");
+
+if (existsSync(manifestPath)) assertV6Manifest(readJson(manifestPath));
 
 const result = await runWorker(resolve(here, "bootstrap-local-apps.mjs"), process.argv.slice(2));
 

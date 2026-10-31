@@ -4,15 +4,16 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, statfsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { assertV6ComposeEnvironment, isCurrentLocalImage } from "./v6-operations.mjs";
 import { availableBytesFromDf, requireBuildSpace } from "./docker-build-space.mjs";
 
+assertV6ComposeEnvironment(process.env);
 const args = process.argv.slice(2);
 if (args.some(arg => arg !== "--build-only")) throw new Error("Usage: npm run docker:local -- [--build-only]");
 const buildOnly = args.includes("--build-only");
 
-const composeProjectImage = "magna-local-app:aztec-5.1.0";
-const cleanBuilderName = "magna-local-clean-builder";
-const magnaImageLabel = "io.magna.local-app";
+const composeProjectImage = "magna-local-app:aztec-6.0.0";
+const cleanBuilderName = "magna-local-v6-clean-builder";
 const imageExportDir = mkdtempSync(join(tmpdir(), "magna-local-image-"));
 const imageExportPath = join(imageExportDir, "magna-local-app.tar");
 
@@ -55,21 +56,6 @@ function lines(value) {
   return value.split(/\r?\n/u).map(line => line.trim()).filter(Boolean);
 }
 
-function isMagnaLocalImage(image) {
-  const config = image.Config ?? {};
-  const labels = config.Labels ?? {};
-  if (labels[magnaImageLabel] === "true") return true;
-
-  // Images exported before the explicit label was introduced have this exact
-  // Magna-only runtime signature. Keep this compatibility branch until those
-  // old local images have naturally been removed from developer machines.
-  return (
-    config.WorkingDir === "/workspace" &&
-    JSON.stringify(config.Cmd ?? []) ===
-      JSON.stringify(["node", "./scripts/start-docker-service.mjs", "management"])
-  );
-}
-
 function removeUnusedMagnaImages({ except = [] } = {}) {
   const imageIds = [...new Set(lines(capture("docker", ["image", "ls", "--all", "--quiet", "--no-trunc"])))];
   if (imageIds.length === 0) return;
@@ -83,7 +69,7 @@ function removeUnusedMagnaImages({ except = [] } = {}) {
   const exceptIds = new Set(except);
   const inspected = JSON.parse(capture("docker", ["image", "inspect", ...imageIds]));
   const removable = inspected
-    .filter(image => isMagnaLocalImage(image))
+    .filter(image => isCurrentLocalImage(image))
     .map(image => image.Id)
     .filter(imageId => !usedImageIds.has(imageId) && !exceptIds.has(imageId));
 

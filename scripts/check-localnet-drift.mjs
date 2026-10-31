@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Reports how far the local Aztec network's latest L1 block differs from
-// wall-clock and verifies Magna's pinned local timing profile. Aztec 5.1's
+// wall-clock and verifies Magna's pinned local timing profile. Aztec V6's
 // AutomineSequencer assigns rapidly-built checkpoints to fresh slots; explicit
 // debug checkpoints do the same. Production-sized 72s slots therefore turn a
 // short local test run into hours of monotonic L1 time.

@@ -1,4 +1,5 @@
 {
+  "aztecVersion": "6.0.0",
   "network": "docker-build-placeholder",
   "endpoints": {
     "aztecNodeUrl": "http://127.0.0.1:8080",
