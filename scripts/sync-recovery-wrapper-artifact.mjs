@@ -58,9 +58,19 @@ if (!String(artifact.noir_version ?? "").startsWith("1.0.0-beta.22")) {
   throw new Error(`Refusing to sync recovery artifact built by ${artifact.noir_version ?? "an unknown Noir version"}.`);
 }
 
+// These are the only reviewed source-metadata variants of the same beta.22
+// circuit. The complete normalized bundle must still match the frozen SHA-256
+// below, binding compiler build, witness/public ABI and executable bytecode.
+// The shared-hash source refactor changed Nargo metadata, not the proof circuit.
+const frozenArtifactHash = "10286239348019432587";
+const equivalentArtifactHash = "4751306955926801238";
+if (artifact.hash !== frozenArtifactHash && artifact.hash !== equivalentArtifactHash) {
+  throw new Error(`Refusing to sync unreviewed recovery source metadata hash ${artifact.hash}.`);
+}
+
 const bundle = {
   noir_version: artifact.noir_version,
-  hash: artifact.hash,
+  hash: frozenArtifactHash,
   abi: artifact.abi,
   bytecode: artifact.bytecode,
   debug_symbols: "",

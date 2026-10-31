@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { accessSync, constants, copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { connect } from "node:net";
 import { resolve, join, basename, delimiter } from "node:path";
 import { homedir } from "node:os";
@@ -16,6 +16,24 @@ if (NODE_MAJOR < 24) {
 }
 
 const PINNED_AZTEC_VERSION = process.env.AZTEC_VERSION_PIN ?? "6.0.0";
+// Native installs and container images must provide these versioned entrypoints.
+// Container builds may symlink their exact V6 CLI/native nargo into this directory.
+const PINNED_AZTEC_BIN = resolve(process.env.AZTEC_HOME ?? join(homedir(), ".aztec"), "versions", PINNED_AZTEC_VERSION, "bin");
+
+function pinnedExecutable(command) {
+  const executable = join(PINNED_AZTEC_BIN, command);
+  try {
+    accessSync(executable, constants.X_OK);
+    if (!statSync(executable).isFile()) throw new Error("not a file");
+  } catch {
+    throw new Error(
+      `Pinned Aztec ${PINNED_AZTEC_VERSION} executable is missing or not executable: ${executable}. ` +
+        `Run aztec-up install ${PINNED_AZTEC_VERSION}, or install the exact version's entrypoints in ${PINNED_AZTEC_BIN}.`,
+    );
+  }
+  return executable;
+}
+
 const TXE_PORT = Number(process.env.AZTEC_TXE_PORT ?? "8081");
 const TXE_START_TIMEOUT_MS = Number(process.env.AZTEC_TXE_START_TIMEOUT_MS ?? "30000");
 const NARGO_TEST_THREADS = process.env.AZTEC_NARGO_TEST_THREADS ?? "1";
@@ -23,8 +41,9 @@ const NARGO_TEST_THREADS = process.env.AZTEC_NARGO_TEST_THREADS ?? "1";
 function getAztecEnv() {
   const env = { ...process.env };
   // Select the side-by-side native compiler as well as the CLI version.
-  const versionBin = resolve(env.AZTEC_HOME ?? join(homedir(), ".aztec"), "versions", PINNED_AZTEC_VERSION, "bin");
-  if (existsSync(versionBin)) env.PATH = `${versionBin}${delimiter}${env.PATH ?? ""}`;
+  env.PATH = `${PINNED_AZTEC_BIN}${delimiter}${env.PATH ?? ""}`;
+  // The V6 CLI honors NARGO for its child compiler. Never inherit an older override.
+  env.NARGO = join(PINNED_AZTEC_BIN, "aztec-nargo");
   env.AZTEC_VERSIONED = "1";
   // Pin CLI container/image tag unless caller explicitly sets VERSION.
   if (!env.VERSION) {
@@ -41,7 +60,7 @@ function getAztecTestEnv() {
 }
 
 function run(command, args, cwd, env = getAztecEnv()) {
-  const result = spawnSync(command, args, {
+  const result = spawnSync(pinnedExecutable(command), args, {
     cwd,
     stdio: "inherit",
     shell: false,
@@ -51,7 +70,7 @@ function run(command, args, cwd, env = getAztecEnv()) {
 }
 
 function runCapture(command, args, cwd, env = getAztecEnv()) {
-  const result = spawnSync(command, args, {
+  const result = spawnSync(pinnedExecutable(command), args, {
     cwd,
     stdio: ["ignore", "pipe", "pipe"],
     shell: false,
@@ -72,6 +91,7 @@ function hasAztecCompile(cwd) {
 }
 
 function compileProject(projectPath) {
+  pinnedExecutable("aztec-nargo");
   const cwd = resolve(projectPath);
   if (hasAztecCompile(cwd)) {
     process.exit(run("aztec", ["compile"], cwd));
@@ -85,6 +105,7 @@ function compileProject(projectPath) {
 }
 
 function compileProjectReturn(projectPath) {
+  pinnedExecutable("aztec-nargo");
   const cwd = resolve(projectPath);
   if (hasAztecCompile(cwd)) {
     return run("aztec", ["compile"], cwd);
@@ -277,6 +298,8 @@ function stopChild(child) {
 }
 
 async function testProject(projectPath) {
+  pinnedExecutable("aztec");
+  pinnedExecutable("aztec-nargo");
   const cwd = resolve(projectPath);
   const prep = ensureCrossContractTestArtifacts(cwd);
   if (prep !== 0) process.exit(prep);
@@ -285,7 +308,7 @@ async function testProject(projectPath) {
   // contract suites exercise TXE/world-state state machines that are not stable
   // under parallel execution. Run tests serially by default and allow opt-in
   // overrides when the upstream runtime issue is resolved.
-  const txe = spawn("aztec", ["start", "--txe", "--port", String(TXE_PORT)], {
+  const txe = spawn(pinnedExecutable("aztec"), ["start", "--txe", "--port", String(TXE_PORT)], {
     cwd,
     stdio: "inherit",
     shell: false,
