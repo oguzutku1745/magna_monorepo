@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
-import { assertV6Manifest } from "./v6-operations.mjs";
+import { assertV6Manifest, assertFreshOutput } from "./v6-operations.mjs";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 
 function parseArgs(argv) {
   const args = { _: [] };
@@ -123,18 +124,24 @@ function pipeFilteredStderr(stream) {
 }
 
 function runWorker(scriptPath, argv) {
+  const runId = randomUUID();
+  let completed = false;
   return new Promise((resolveWorker, reject) => {
     const child = spawn(process.execPath, [scriptPath, ...argv], {
       cwd: repoRoot,
-      stdio: ["inherit", "inherit", "pipe"],
+      stdio: ["inherit", "inherit", "pipe", "ipc"],
+      env: { ...process.env, MAGNA_BOOTSTRAP_RUN_ID: runId },
       shell: false,
     });
 
+    child.on("message", message => {
+      if (message?.type === "magna-bootstrap-complete" && message.runId === runId) completed = true;
+    });
     pipeFilteredStderr(child.stderr);
 
     child.on("error", reject);
     child.on("close", (status, signal) => {
-      resolveWorker({ status, signal });
+      resolveWorker({ status, signal, completed });
     });
   });
 }
@@ -147,7 +154,11 @@ const manifestPath = resolve(repoRoot, args.manifest ?? `deployments/${networkNa
 const managementEnvOutPath = resolve(repoRoot, args.managementEnvOut ?? ".runtime/aztec6/management/.env");
 const referenceDappEnvOutPath = resolve(repoRoot, args.referenceDappEnvOut ?? ".runtime/aztec6/reference-dapp/.env");
 
-if (existsSync(manifestPath)) assertV6Manifest(readJson(manifestPath));
+if (!args.help && !args.h) {
+  if (existsSync(manifestPath)) assertV6Manifest(readJson(manifestPath));
+  assertFreshOutput(managementEnvOutPath);
+  assertFreshOutput(referenceDappEnvOutPath);
+}
 
 const result = await runWorker(resolve(here, "bootstrap-local-apps.mjs"), process.argv.slice(2));
 
@@ -156,7 +167,7 @@ if ((result.status ?? 1) === 0) {
 }
 
 if (
-  outputsAreComplete({ manifestPath, managementEnvOutPath, referenceDappEnvOutPath })
+  result.completed && outputsAreComplete({ manifestPath, managementEnvOutPath, referenceDappEnvOutPath })
 ) {
   console.info("[app-bootstrap] verified complete local outputs after Aztec worker teardown.");
   process.exit(0);

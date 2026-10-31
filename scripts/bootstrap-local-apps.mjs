@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { assertV6Manifest, assertFreshOutput } from "./v6-operations.mjs";
+import { assertV6Manifest, assertFreshOutput, v6NodeProverEnabled } from "./v6-operations.mjs";
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -13,7 +13,7 @@ import { AztecAddress } from "@aztec-labs/aztec.js/addresses";
 import { createAztecNodeClient } from "@aztec-labs/aztec.js/node";
 import { Fr } from "@aztec-labs/aztec.js/fields";
 import { FeeJuiceContract, ProtocolContractAddress } from "@aztec-labs/aztec.js/protocol";
-import { isL1ToL2MessageReady } from "@aztec-labs/aztec.js/messaging";
+import { waitForCommittedInboxWitness } from "./wait-for-inbox.mjs";
 import { getFeeJuiceBalance } from "@aztec-labs/aztec.js/utils";
 import { createExtendedL1Client } from "@aztec-labs/ethereum/client";
 import { deployL1Contract } from "@aztec-labs/ethereum/deploy-l1-contract";
@@ -345,32 +345,16 @@ async function claimBridgedFeeJuice(
   claim,
   waitMs,
   pollMs,
+  nodeUrl,
+  l1RpcUrl,
 ) {
-  const startedAt = Date.now();
-  let lastError = "unknown";
-  while (Date.now() - startedAt < waitMs) {
-    try {
-      if (!await isL1ToL2MessageReady(node, Fr.fromHexString(claim.messageHash))) throw new Error("Inbox message not committed yet");
-      const witness = await getNonNullifiedL1ToL2MessageWitness(
-        node,
-        ProtocolContractAddress.FeeJuice,
-        Fr.fromHexString(claim.messageHash),
-        claim.claimSecret,
-      );
-      if (witness[0] !== claim.messageLeafIndex) throw new Error(`Fee Juice Inbox index mismatch: portal=${claim.messageLeafIndex} Aztec=${witness[0]}`);
-      break;
-    } catch (error) {
-      if (String(error).includes("Inbox index mismatch")) throw error;
-      lastError = errorDetails(error);
-      await sleep(pollMs);
-    }
-  }
-
-  if (Date.now() - startedAt >= waitMs) {
-    throw new Error(
-      `Timeout awaiting Fee Juice bridge message witness after ${waitMs}ms. last_error=${lastError}`,
-    );
-  }
+  await waitForCommittedInboxWitness({
+    node, nodeUrl, l1RpcUrl, messageHash: Fr.fromHexString(claim.messageHash), expectedIndex: claim.messageLeafIndex,
+    getWitness: () => getNonNullifiedL1ToL2MessageWitness(
+      node, ProtocolContractAddress.FeeJuice, Fr.fromHexString(claim.messageHash), claim.claimSecret,
+    ),
+    timeoutMs: waitMs, pollMs,
+  });
 
   const feeJuice = FeeJuiceContract.at(wallet);
   const claimReceipt = await runRetriedStep(`FeeJuice.claim(${recipient.toString()})`, async () => {
@@ -676,6 +660,11 @@ async function main() {
     DEFAULT_INITIAL_SPONSOR_RIGHTS,
     "initial-sponsor-rights",
   );
+  const node = createAztecNodeClient(nodeUrl);
+  await waitForNode(node, waitForNodeMs);
+  const proverEnabled = v6NodeProverEnabled(await node.getNodeInfo(), { localOnly: true });
+  console.info(`[app-bootstrap] Aztec 6.0.0 local node ready (${nodeUrl})`);
+
   if (!args.skipRightsDeploy) {
     const l1Client = createExtendedL1Client(l1RpcUrls, l1Mnemonic);
     const initialAccounts = await getInitialTestAccountsData();
@@ -741,13 +730,10 @@ async function main() {
     );
   }
 
-  const node = createAztecNodeClient(nodeUrl);
-  await waitForNode(node, waitForNodeMs);
-  console.info(`[app-bootstrap] aztec node ready (${nodeUrl})`);
 
   const wallet = await EmbeddedWallet.create(node, {
     ephemeral: true,
-    pxeConfig: { proverEnabled: false },
+    pxeConfig: { proverEnabled },
   });
 
   try {
@@ -892,6 +878,8 @@ async function main() {
         sponsorFundingClaim,
         feeJuiceWitnessWaitMs,
         feeJuiceWitnessPollMs,
+        nodeUrl,
+        l1RpcUrls[0],
       );
       sponsorFeeJuiceClaimTxHash = sponsorFunding.claimTxHash;
     }
@@ -941,6 +929,11 @@ async function main() {
         2,
       ),
     );
+    if (process.send && process.env.MAGNA_BOOTSTRAP_RUN_ID) {
+      await new Promise((resolveComplete, rejectComplete) => process.send({
+        type: "magna-bootstrap-complete", runId: process.env.MAGNA_BOOTSTRAP_RUN_ID,
+      }, error => error ? rejectComplete(error) : resolveComplete()));
+    }
   } finally {
     // Avoid explicit native wallet shutdown on macOS; the process owns this short-lived wallet.
     // This one-shot local bootstrap exits immediately, so OS process cleanup is safer by default.

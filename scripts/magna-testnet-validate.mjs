@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { assertV6Manifest } from "./v6-operations.mjs";
+import { assertV6Manifest, v6NodeProverEnabled } from "./v6-operations.mjs";
 
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -555,11 +555,12 @@ async function createAdminWallet(config, reporter) {
   await waitForNode(node, config.waitForNodeMs);
   reporter.pass("aztec node ready", { nodeUrl: config.aztecNodeUrl });
 
+  const proverEnabled = v6NodeProverEnabled(await node.getNodeInfo());
   const wallet = await EmbeddedWallet.create(node, {
     // PXE stores local synced/private state; local-network bootstrap should opt into
     // ephemeral storage after node restarts to avoid stale world-state anchors.
     ephemeral: config.walletEphemeral,
-    pxeConfig: { proverEnabled: false },
+    pxeConfig: { proverEnabled },
   });
   const accountManager = await wallet.createSchnorrInitializerlessAccount(
     parseField(config.aztecAdminSecret, "aztec admin secret"),

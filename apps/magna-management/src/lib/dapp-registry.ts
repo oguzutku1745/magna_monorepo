@@ -1,4 +1,4 @@
-import localDeployment from "../../../../deployments/local.json";
+import localDeployment from "../../../../deployments/local-v6.json";
 
 export type RegisteredDapp = {
   clientId: string;

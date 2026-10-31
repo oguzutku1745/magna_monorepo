@@ -7,7 +7,7 @@ import { getInitialTestAccountsData } from "@aztec-labs/accounts/testing";
 import { createAztecNodeClient } from "@aztec-labs/aztec.js/node";
 import { AztecAddress, EthAddress } from "@aztec-labs/aztec.js/addresses";
 import { inboxMessageSentEvent, selectInboxMessage } from "../../../scripts/inbox-message.mjs";
-import { waitForL1ToL2MessageReady } from "@aztec-labs/aztec.js/messaging";
+import { waitForCommittedInboxWitness } from "../../../scripts/wait-for-inbox.mjs";
 import { getNonNullifiedL1ToL2MessageWitness } from "@aztec-labs/stdlib/messaging";
 import { Fr } from "@aztec-labs/aztec.js/fields";
 import { createExtendedL1Client } from "@aztec-labs/ethereum/client";
@@ -162,9 +162,10 @@ async function runRetriedStep<T>(label: string, work: () => Promise<T>): Promise
 }
 
 async function waitForCreditMessage(ctx: BridgeContext, hash: `0x${string}`, secret: Fr, index: bigint) {
-  await waitForL1ToL2MessageReady(ctx.node, Fr.fromHexString(hash), { timeoutSeconds: 180 });
-  const witness = await getNonNullifiedL1ToL2MessageWitness(ctx.node, ctx.rightsRegistry.address, Fr.fromHexString(hash), secret);
-  expect(witness[0]).toBe(index);
+  await waitForCommittedInboxWitness({
+    node: ctx.node, nodeUrl: AZTEC_NODE_URL, l1RpcUrl: L1_RPC_URLS[0]!, messageHash: Fr.fromHexString(hash), expectedIndex: index,
+    getWitness: () => getNonNullifiedL1ToL2MessageWitness(ctx.node, ctx.rightsRegistry.address, Fr.fromHexString(hash), secret),
+  });
 }
 
 const suite = runE2E ? describe.sequential : describe.skip;

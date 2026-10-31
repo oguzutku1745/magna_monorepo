@@ -19,3 +19,23 @@ export function assertV6ComposeEnvironment(env) {
   }
   if (env.COMPOSE_FILE) throw new Error("Unset COMPOSE_FILE before managing the pinned V6 local stack.");
 }
+
+export function assertV6ComposeConfig(config) {
+  const project = "magna-local-v6";
+  const image = "azteclabs/aztec:6.0.0@sha256:59b10cc8e89bb9226db1f771a5abbe5d5f8d71483c00c7472187e6ddc7adab8d";
+  if (config.name !== project) throw new Error("Unsafe V6 Compose project identity.");
+  for (const service of ["anvil", "aztec-localnet"]) {
+    if (config.services?.[service]?.image !== image) throw new Error(`Unsafe V6 Compose image for ${service}.`);
+  }
+  if (config.services?.bootstrap?.image !== "magna-local-app:aztec-6.0.0") throw new Error("Unsafe V6 Compose application image.");
+  for (const name of ["magna-runtime", "magna-deployments"]) {
+    const volume = config.volumes?.[name];
+    if (volume?.external || volume?.name !== `${project}_${name}`) throw new Error(`Unsafe V6 Compose volume ${name}.`);
+  }
+}
+export function v6NodeProverEnabled(info, options = {}) {
+  if (info.nodeVersion !== "6.0.0") throw new Error(`Expected Aztec 6.0.0 node; received ${info.nodeVersion ?? "unknown"}.`);
+  if (typeof info.realProofs !== "boolean") throw new Error("V6 node must report realProofs.");
+  if (options.localOnly && BigInt(info.l1ChainId) !== 31337n) throw new Error("Local bootstrap requires chain 31337.");
+  return info.realProofs;
+}

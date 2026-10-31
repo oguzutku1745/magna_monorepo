@@ -2,6 +2,7 @@
 
 import { assertV6Manifest, assertFreshOutput } from "./v6-operations.mjs";
 
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -129,10 +130,13 @@ function main() {
   const existingOutPairs = existsSync(outPath) ? parseEnvPairs(readFileSync(outPath, "utf8")) : new Map();
   const manifest = loadJson(manifestPath, "Deployment manifest");
   assertV6Manifest(manifest);
+  const generatedOwner = createHash("sha256").update(JSON.stringify({
+    version: manifest.aztecVersion, manifestPath,
+    issuer: manifest.l2?.issuerAddress, rollup: manifest.resolvedAztec?.rollupAddress,
+  })).digest("hex");
   // One bootstrap writes an initial checkpoint and then final configuration.
   // Permit only this V6 deployment's generated file to be refreshed.
-  if (existingOutPairs.get("VITE_MAGNA_AZTEC_VERSION") !== "6.0.0" ||
-      existingOutPairs.get("VITE_MAGNA_ISSUER_ADDRESS") !== manifest?.l2?.issuerAddress) {
+  if (existingOutPairs.get("MAGNA_GENERATED_ENV_OWNER") !== generatedOwner) {
     assertFreshOutput(outPath);
   }
 
@@ -309,7 +313,7 @@ function main() {
   });
 
   mkdirSync(dirname(outPath), { recursive: true });
-  writeFileSync(outPath, `${lines.join("\n").replace(/\n+$/, "\n")}\nVITE_MAGNA_AZTEC_VERSION=6.0.0\n`, "utf8");
+  writeFileSync(outPath, `${lines.join("\n").replace(/\n+$/, "\n")}\nVITE_MAGNA_AZTEC_VERSION=6.0.0\nMAGNA_GENERATED_ENV_OWNER=${generatedOwner}\n`, "utf8");
 
   const warnings = [];
   if (templatePairs.has("VITE_MAGNA_ISSUER_ADDRESS") && !issuerAddress) {

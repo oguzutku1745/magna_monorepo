@@ -48,3 +48,11 @@ test('rejects inherited Compose overrides that could select old resources',async
   assert.doesNotThrow(()=>assertV6ComposeEnvironment({}));
   assert.doesNotThrow(()=>assertV6ComposeEnvironment({COMPOSE_PROJECT_NAME:'magna-local-v6'}));
 });
+
+test('V6 node handshake selects real proving for public targets and rejects mismatched versions',async()=>{
+  const {v6NodeProverEnabled}=await import('./v6-operations.mjs');
+  assert.equal(v6NodeProverEnabled({nodeVersion:'6.0.0',realProofs:true,l1ChainId:11155111}),true);
+  assert.equal(v6NodeProverEnabled({nodeVersion:'6.0.0',realProofs:false,l1ChainId:31337},{localOnly:true}),false);
+  assert.throws(()=>v6NodeProverEnabled({nodeVersion:'5.1.0',realProofs:false,l1ChainId:31337}),/Aztec 6.0.0/);
+  assert.throws(()=>v6NodeProverEnabled({nodeVersion:'6.0.0',realProofs:true,l1ChainId:11155111},{localOnly:true}),/31337/);
+});

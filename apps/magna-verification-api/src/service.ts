@@ -345,7 +345,7 @@ function resolveDeploymentManifestPath(repoRoot: string): string | undefined {
     readFirstEnv(["MAGNA_USE_LOCAL_DEPLOYMENT_MANIFEST", "VITE_MAGNA_ENABLE_LOCAL_TEST_BOOTSTRAP"]),
     false,
   );
-  return useLocalManifest ? resolve(repoRoot, "deployments/local.json") : undefined;
+  return useLocalManifest ? resolve(repoRoot, "deployments/local-v6.json") : undefined;
 }
 
 function errorMessage(error: unknown): string {

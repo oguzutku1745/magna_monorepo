@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { assertV6Manifest } from "./v6-operations.mjs";
+import { assertV6Manifest, v6NodeProverEnabled } from "./v6-operations.mjs";
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -55,6 +55,15 @@ const manifestChainId = BigInt(manifest?.resolvedAztec?.l1ChainId ?? 0);
 if (!/^0x[0-9a-fA-F]{64}$/.test(issuer ?? "")) throw new Error("Manifest is missing the L2 issuer address.");
 if (!/^0x[0-9a-fA-F]{40}$/.test(inbox ?? "")) throw new Error("Manifest is missing the canonical Aztec Inbox.");
 if (protocolVersion === 0n || manifestChainId === 0n) throw new Error("Manifest is missing Aztec/L1 network identity.");
+const aztecNode = createAztecNodeClient(aztecNodeUrl);
+await waitForNode(aztecNode, undefined, { timeout: 120 });
+const nodeInfo = await aztecNode.getNodeInfo();
+const proverEnabled = v6NodeProverEnabled(nodeInfo, { localOnly: true });
+if (BigInt(nodeInfo.l1ChainId) !== manifestChainId || BigInt(nodeInfo.rollupVersion) !== protocolVersion ||
+    nodeInfo.l1ContractAddresses.inboxAddress.toString().toLowerCase() !== inbox.toLowerCase()) {
+  throw new Error("Recovery manifest does not match the live V6 local network identity.");
+}
+
 
 function stableJson(value) {
   if (typeof value === "bigint") return JSON.stringify(value.toString());
@@ -292,11 +301,9 @@ if (recoveryPortal.toLowerCase() !== predictedPortal.toLowerCase()) {
 // The L1 portal must be pinned by the issuer before any recovery message can
 // be consumed. Deployment is intentionally one-time: PublicImmutable rejects
 // later replacement, so a relayer/backend cannot redirect the trusted sender.
-const aztecNode = createAztecNodeClient(aztecNodeUrl);
-await waitForNode(aztecNode, undefined, { timeout: 120 });
 const aztecWallet = await EmbeddedWallet.create(aztecNode, {
   ephemeral: true,
-  pxeConfig: { proverEnabled: false },
+  pxeConfig: { proverEnabled },
 });
 let issuerPortalInitializationTxHash;
 try {
