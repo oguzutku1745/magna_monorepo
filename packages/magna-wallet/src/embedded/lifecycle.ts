@@ -1,23 +1,23 @@
-import { getInitialTestAccountsData, INITIAL_TEST_SIGNING_KEYS } from "@aztec/accounts/testing";
-import { getSchnorrAccountContractAddress } from "@aztec/accounts/schnorr";
-import { deriveSecretKeyFromSigningKey } from "@aztec/accounts/utils";
-import { AztecAddress } from "@aztec/aztec.js/addresses";
-import type { Account } from "@aztec/aztec.js/account";
-import { createAztecNodeClient, waitForNode } from "@aztec/aztec.js/node";
-import type { ChainInfo } from "@aztec/aztec.js/account";
-import { ContractInitializationStatus, type AccountManager } from "@aztec/aztec.js/wallet";
-import type { Wallet } from "@aztec/aztec.js/wallet";
-import { CAPABILITY_VERSION, type AppCapabilities } from "@aztec/aztec.js/wallet";
-import { Fq, Fr } from "@aztec/aztec.js/fields";
-import { Ecdsa } from "@aztec/foundation/crypto/ecdsa";
-import { hashToEmoji } from "@aztec/wallet-sdk/crypto";
+import { getInitialTestAccountsData, INITIAL_TEST_SIGNING_KEYS } from "@aztec-labs/accounts/testing";
+import { getSchnorrAccountContractAddress } from "@aztec-labs/accounts/schnorr";
+import { deriveSecretKeyFromSigningKey } from "@aztec-labs/accounts/utils";
+import { AztecAddress } from "@aztec-labs/aztec.js/addresses";
+import type { Account } from "@aztec-labs/aztec.js/account";
+import { createAztecNodeClient, waitForNode } from "@aztec-labs/aztec.js/node";
+import type { ChainInfo } from "@aztec-labs/aztec.js/account";
+import { ContractInitializationStatus, type AccountManager } from "@aztec-labs/aztec.js/wallet";
+import type { Wallet } from "@aztec-labs/aztec.js/wallet";
+import { CAPABILITY_VERSION, type AppCapabilities } from "@aztec-labs/aztec.js/wallet";
+import { Fq, Fr } from "@aztec-labs/aztec.js/fields";
+import { Ecdsa } from "@aztec-labs/foundation/crypto/ecdsa";
+import { hashToEmoji } from "@aztec-labs/wallet-sdk/crypto";
 import {
   WalletManager,
   type DiscoverySession,
   type PendingConnection,
   type WalletProvider,
-} from "@aztec/wallet-sdk/manager";
-import { EmbeddedWallet } from "@aztec/wallets/embedded";
+} from "@aztec-labs/wallet-sdk/manager";
+import { EmbeddedWallet } from "@aztec-labs/wallets/embedded";
 import { Buffer } from "buffer";
 import {
   SCOPED_GHOST_DERIVATION_VERSION,
@@ -502,7 +502,7 @@ export async function createEmbeddedWallet(nodeUrl: string, ephemeral: boolean):
     // `pxe_data_<network>-v13` OPFS pool unless a store is supplied explicitly.
     // A transient Ghost wallet must therefore provide its own in-memory PXE
     // store or it will contend with the already-open passkey wallet PXE.
-    const { openTmpStore } = await import("@aztec/kv-store/sqlite-opfs");
+    const { openTmpStore } = await import("@aztec-labs/kv-store/sqlite-opfs");
     const pxeStore = await openTmpStore(true);
     try {
       return await EmbeddedWallet.create(node, {

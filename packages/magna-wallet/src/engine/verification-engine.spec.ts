@@ -4,7 +4,7 @@ import { MagnaVerificationEngine } from "./verification-engine.js";
 import { computeInstagramClaimsHash, computePassportClaimsHash, poseidon2FieldHasher } from "./encoding.js";
 import { ClaimId, ConstraintOp, CredentialType } from "@magna-protocol/core";
 import { normalizePolicy } from "@magna-protocol/core";
-import { Fr } from "@aztec/aztec.js/fields";
+import { Fr } from "@aztec-labs/aztec.js/fields";
 
 describe("MagnaVerificationEngine login flows", () => {
   function contractPolicy(policy: Parameters<typeof normalizePolicy>[0]) {

@@ -25,9 +25,9 @@ import {
   type Hex,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { createAztecNodeDebugClient } from "@aztec/stdlib/interfaces/client";
-import { createAztecNodeClient } from "@aztec/aztec.js/node";
-import { Fr } from "@aztec/aztec.js/fields";
+import { createAztecNodeDebugClient } from "@aztec-labs/stdlib/interfaces/client";
+import { createAztecNodeClient } from "@aztec-labs/aztec.js/node";
+import { Fr } from "@aztec-labs/aztec.js/fields";
 import {
   compressedOuterProof,
   localDisclosures,

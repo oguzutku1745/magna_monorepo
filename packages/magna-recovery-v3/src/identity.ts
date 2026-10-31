@@ -1,9 +1,9 @@
-import { deriveSecretKeyFromSigningKey } from "@aztec/accounts/utils";
-import { getSchnorrAccountContractAddress } from "@aztec/accounts/schnorr";
-import { poseidon2HashWithSeparator } from "@aztec/foundation/crypto/sync";
-import { Fr } from "@aztec/foundation/curves/bn254";
-import { GrumpkinScalar } from "@aztec/foundation/curves/grumpkin";
-import type { AztecAddress } from "@aztec/stdlib/aztec-address";
+import { deriveSecretKeyFromSigningKey } from "@aztec-labs/accounts/utils";
+import { getSchnorrAccountContractAddress } from "@aztec-labs/accounts/schnorr";
+import { poseidon2HashWithSeparator } from "@aztec-labs/foundation/crypto/sync";
+import { Fr } from "@aztec-labs/foundation/curves/bn254";
+import { GrumpkinScalar } from "@aztec-labs/foundation/curves/grumpkin";
+import type { AztecAddress } from "@aztec-labs/stdlib/aztec-address";
 import {
   MAGNA_GHOST_DS,
   MAGNA_PASSPORT_CREDENTIAL_TYPE,

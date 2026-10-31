@@ -1,15 +1,15 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getSchnorrAccountContractAddress } from "@aztec/accounts/schnorr";
-import { getInitialTestAccountsData, INITIAL_TEST_SIGNING_KEYS } from "@aztec/accounts/testing";
-import { AztecAddress } from "@aztec/aztec.js/addresses";
-import type { ContractArtifact } from "@aztec/aztec.js/abi";
-import { Fq, Fr } from "@aztec/aztec.js/fields";
-import { createAztecNodeClient, waitForNode, type AztecNode } from "@aztec/aztec.js/node";
-import type { Wallet } from "@aztec/aztec.js/wallet";
-import { contractInstanceWithAddressFromPlainObject } from "@aztec/stdlib/contract";
-import { EmbeddedWallet } from "@aztec/wallets/embedded";
+import { getSchnorrAccountContractAddress } from "@aztec-labs/accounts/schnorr";
+import { getInitialTestAccountsData, INITIAL_TEST_SIGNING_KEYS } from "@aztec-labs/accounts/testing";
+import { AztecAddress } from "@aztec-labs/aztec.js/addresses";
+import type { ContractArtifact } from "@aztec-labs/aztec.js/abi";
+import { Fq, Fr } from "@aztec-labs/aztec.js/fields";
+import { createAztecNodeClient, waitForNode, type AztecNode } from "@aztec-labs/aztec.js/node";
+import type { Wallet } from "@aztec-labs/aztec.js/wallet";
+import { contractInstanceWithAddressFromPlainObject } from "@aztec-labs/stdlib/contract";
+import { EmbeddedWallet } from "@aztec-labs/wallets/embedded";
 import {
   CredentialType,
   deriveGhostKeyMaterial,

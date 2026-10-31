@@ -1,4 +1,4 @@
-import { createAztecNodeClient } from "@aztec/aztec.js/node";
+import { createAztecNodeClient } from "@aztec-labs/aztec.js/node";
 
 const WORLD_STATE_ANCHOR_ERROR_MARKERS = [
   "Block hash",
@@ -53,7 +53,7 @@ export async function clearEmbeddedPxeCacheForNode(nodeUrl: string): Promise<voi
   ];
 
   if (typeof navigator !== "undefined" && "storage" in navigator) {
-    const { deleteStore, listStores } = await import("@aztec/kv-store/sqlite-opfs");
+    const { deleteStore, listStores } = await import("@aztec-labs/kv-store/sqlite-opfs");
     const existing = new Set(await listStores());
     for (const storeName of storeNames) {
       if (existing.has(storeName)) await deleteStore(storeName);

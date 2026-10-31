@@ -1,8 +1,8 @@
-import type { ChainInfo } from "@aztec/aztec.js/account";
-import { Fr } from "@aztec/aztec.js/fields";
-import { createAztecNodeClient } from "@aztec/aztec.js/node";
-import { TxExecutionResult, TxHash, TxStatus } from "@aztec/aztec.js/tx";
-import { BlockNumber } from "@aztec/foundation/branded-types";
+import type { ChainInfo } from "@aztec-labs/aztec.js/account";
+import { Fr } from "@aztec-labs/aztec.js/fields";
+import { createAztecNodeClient } from "@aztec-labs/aztec.js/node";
+import { TxExecutionResult, TxHash, TxStatus } from "@aztec-labs/aztec.js/tx";
+import { BlockNumber } from "@aztec-labs/foundation/branded-types";
 
 export type MagnaChainInfo = ChainInfo & {
   /**

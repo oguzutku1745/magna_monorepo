@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { AztecNode } from "@aztec/aztec.js/node";
+import type { AztecNode } from "@aztec-labs/aztec.js/node";
 import { readRootedCredentialChainState } from "./credential-chain-state.js";
 import type { RootedPassportHints } from "./client.js";
 

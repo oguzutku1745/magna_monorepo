@@ -1,5 +1,5 @@
-import { getSchnorrAccountContractAddress } from "@aztec/accounts/schnorr";
-import { Fq, Fr } from "@aztec/aztec.js/fields";
+import { getSchnorrAccountContractAddress } from "@aztec-labs/accounts/schnorr";
+import { Fq, Fr } from "@aztec-labs/aztec.js/fields";
 import { CredentialType } from "@magna-protocol/core";
 import type {
   PassportA2Action,

@@ -3,24 +3,29 @@
 import { spawn, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { connect } from "node:net";
-import { resolve, join, basename } from "node:path";
+import { resolve, join, basename, delimiter } from "node:path";
+import { homedir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const NODE_MAJOR = Number.parseInt(process.versions.node.split(".")[0] ?? "0", 10);
 if (NODE_MAJOR < 24) {
   throw new Error(
-    `Magna's Aztec 5.1 tooling requires Node.js >=24; received ${process.versions.node}. ` +
+    `Magna's Aztec 6.0 tooling requires Node.js >=24; received ${process.versions.node}. ` +
       "Older runtimes lack Set.prototype.intersection and make TXE note operations fail misleadingly.",
   );
 }
 
-const PINNED_AZTEC_VERSION = process.env.AZTEC_VERSION_PIN ?? "5.1.0";
+const PINNED_AZTEC_VERSION = process.env.AZTEC_VERSION_PIN ?? "6.0.0";
 const TXE_PORT = Number(process.env.AZTEC_TXE_PORT ?? "8081");
 const TXE_START_TIMEOUT_MS = Number(process.env.AZTEC_TXE_START_TIMEOUT_MS ?? "30000");
 const NARGO_TEST_THREADS = process.env.AZTEC_NARGO_TEST_THREADS ?? "1";
 
 function getAztecEnv() {
   const env = { ...process.env };
+  // Select the side-by-side native compiler as well as the CLI version.
+  const versionBin = resolve(env.AZTEC_HOME ?? join(homedir(), ".aztec"), "versions", PINNED_AZTEC_VERSION, "bin");
+  if (existsSync(versionBin)) env.PATH = `${versionBin}${delimiter}${env.PATH ?? ""}`;
+  env.AZTEC_VERSIONED = "1";
   // Pin CLI container/image tag unless caller explicitly sets VERSION.
   if (!env.VERSION) {
     env.VERSION = PINNED_AZTEC_VERSION;
@@ -182,7 +187,7 @@ function ensureCrossContractTestArtifacts(projectPath) {
     const bundledTokenArtifact = join(
       repoRoot,
       "node_modules",
-      "@aztec",
+      "@aztec-labs",
       "noir-contracts.js",
       "artifacts",
       "token_contract-Token.json",
@@ -191,19 +196,7 @@ function ensureCrossContractTestArtifacts(projectPath) {
       return ensureArtifactFromFilePath(cwd, bundledTokenArtifact, "token_contract-Token.json");
     }
 
-    const tokenProjectPath = resolve(
-      process.env.HOME ?? "",
-      "nargo",
-      "github.com",
-      "AztecProtocol",
-      "aztec-packages",
-      PINNED_AZTEC_VERSION,
-      "noir-projects",
-      "noir-contracts",
-      "contracts",
-      "app",
-      "token_contract",
-    );
+    const tokenProjectPath = join(repoRoot, "contracts", "vendor", "token_contract");
     return ensureArtifactFromProjectPath(cwd, tokenProjectPath, "token_contract-Token.json", "token_contract-Token.json");
   }
 
@@ -326,7 +319,7 @@ const [, , action, arg1, arg2] = process.argv;
 
 if (!action || !arg1) {
   process.stderr.write(
-    "Usage:\n  node scripts/aztec-tooling.mjs compile <project-path>\n  node scripts/aztec-tooling.mjs test <project-path>\n  node scripts/aztec-tooling.mjs codegen <project-path> <out-dir>\n",
+    "Usage:\n  node scripts/aztec-tooling.mjs compile <project-path>\n  node scripts/aztec-tooling.mjs test <project-path>\n  node scripts/aztec-tooling.mjs test-pure <project-path>\n  node scripts/aztec-tooling.mjs codegen <project-path> <out-dir>\n",
   );
   process.exit(1);
 }
@@ -334,6 +327,8 @@ if (!action || !arg1) {
 async function main() {
   if (action === "compile") {
     compileProject(arg1);
+  } else if (action === "test-pure") {
+    process.exit(run("aztec-nargo", ["test"], resolve(arg1), getAztecTestEnv()));
   } else if (action === "test") {
     await testProject(arg1);
   } else if (action === "codegen") {

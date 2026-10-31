@@ -5,14 +5,14 @@ const mocks = vi.hoisted(() => ({
   blockNumber: vi.fn(),
   warp: vi.fn(async () => undefined),
 }));
-vi.mock("@aztec/aztec.js/node", () => ({
+vi.mock("@aztec-labs/aztec.js/node", () => ({
   createAztecNodeClient: () => ({
     getNodeInfo: async () => ({ l1ChainId: 31337, l1ContractAddresses: { inboxAddress: "0x123" } }),
     getBlockNumber: mocks.blockNumber,
     getL1ToL2MessageMembershipWitness: mocks.witness,
   }),
 }));
-vi.mock("@aztec/stdlib/interfaces/client", () => ({
+vi.mock("@aztec-labs/stdlib/interfaces/client", () => ({
   createAztecNodeDebugClient: () => ({ warpL2TimeAtLeastTo: mocks.warp }),
 }));
 vi.mock("viem", async importOriginal => ({

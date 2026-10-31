@@ -1,6 +1,6 @@
-import type { AztecNode } from "@aztec/aztec.js/node";
-import { DomainSeparator } from "@aztec/constants";
-import { poseidon2HashWithSeparator } from "@aztec/foundation/crypto/sync";
+import type { AztecNode } from "@aztec-labs/aztec.js/node";
+import { DomainSeparator } from "@aztec-labs/constants";
+import { poseidon2HashWithSeparator } from "@aztec-labs/foundation/crypto/sync";
 import type { RootedPassportHints, LinkedInstagramHints, PassportHints } from "./client.js";
 import { toAddress } from "./aztec.js";
 
@@ -111,7 +111,7 @@ export async function readRootedCredentialChainState(input: {
     MAGNA_ROOT_AUTHORITY_REVOCATION_DS,
   );
   const issuer = toAddress(input.issuerAddress);
-  // This is the exact implementation of @aztec/stdlib/hash.siloNullifier,
+  // This is the exact implementation of @aztec-labs/stdlib/hash.siloNullifier,
   // kept on the synchronous browser-safe Poseidon backend.
   const linkedNullifier = poseidon2HashWithSeparator(
     [issuer.toField(), linkedInner],

@@ -12,10 +12,10 @@ import {
   publicActions,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { getInitialTestAccountsData, INITIAL_TEST_SIGNING_KEYS } from "@aztec/accounts/testing";
-import { AztecAddress } from "@aztec/aztec.js/addresses";
-import { createAztecNodeClient, waitForNode } from "@aztec/aztec.js/node";
-import { EmbeddedWallet } from "@aztec/wallets/embedded";
+import { getInitialTestAccountsData, INITIAL_TEST_SIGNING_KEYS } from "@aztec-labs/accounts/testing";
+import { AztecAddress } from "@aztec-labs/aztec.js/addresses";
+import { createAztecNodeClient, waitForNode } from "@aztec-labs/aztec.js/node";
+import { EmbeddedWallet } from "@aztec-labs/wallets/embedded";
 import { RegistryClient } from "@zkpassport/registry";
 import { MagnaIssuerContract } from "../packages/contracts-bindings/src/MagnaIssuer.ts";
 import {

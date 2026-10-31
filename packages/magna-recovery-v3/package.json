@@ -18,13 +18,13 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test dist/*.spec.js",
-    "test:noir": "cd circuit && VERSION=5.1.0 aztec-nargo test --package magna_recovery_v3_protocol",
+    "test:noir": "node ../../scripts/aztec-tooling.mjs test-pure ./circuit",
     "lint": "echo \"no lint configured\""
   },
   "dependencies": {
-    "@aztec/accounts": "5.1.0",
-    "@aztec/foundation": "5.1.0",
-    "@aztec/stdlib": "5.1.0",
+    "@aztec-labs/accounts": "6.0.0",
+    "@aztec-labs/foundation": "6.0.0",
+    "@aztec-labs/stdlib": "6.0.0",
     "@zkpassport/utils": "0.37.3"
   },
   "devDependencies": {

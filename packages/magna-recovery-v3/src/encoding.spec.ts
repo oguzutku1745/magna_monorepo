@@ -71,7 +71,7 @@ describe("Magna recovery V3 protocol encodings", () => {
     }
   });
 
-  it("derives the official Aztec 5.1 secret hash", async () => {
+  it("derives the official Aztec 5.1 and 6.0 secret hash", async () => {
     assert.equal(
       await computeRecoveryMessageSecretHash(8n),
       0x1848b066724ab0ffb50ecb0ee3398eb839f162823d262bad959721a9c13d1e96n,

@@ -16,7 +16,7 @@ test("@magna-protocol/core has zero runtime dependencies and no node/aztec impor
   const nodeBuiltinPattern = /(?:from|import\s*\()\s*["'](?:node:|buffer|crypto|fs|path|url)(?:["']|\/)/;
   for (const file of readdirSync(distDir).filter(f => f.endsWith(".js") && !f.endsWith(".spec.js"))) {
     const src = readFileSync(join(distDir, file), "utf8");
-    assert.ok(!/from\s+["']@aztec\//.test(src), `${file} imports @aztec/*`);
+    assert.ok(!/from\s+["']@aztec(?:-labs|-foundation)?\//.test(src), `${file} imports @aztec/*`);
     assert.ok(!nodeBuiltinPattern.test(src), `${file} imports a Node builtin`);
     assert.ok(!/require\s*\(/.test(src), `${file} uses require()`);
     assert.ok(!/\bBuffer\b/.test(src), `${file} uses Buffer`);

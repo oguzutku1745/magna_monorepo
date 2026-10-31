@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
-import { AztecAddress } from "@aztec/aztec.js/addresses";
+import { AztecAddress } from "@aztec-labs/aztec.js/addresses";
 import { MagnaVerificationEngine } from "./verification-engine.js";
 import { buildCompanySponsorFeeConfig, buildSponsoredFeeConfig } from "./sponsorship.js";
 import { CredentialType } from "@magna-protocol/core";

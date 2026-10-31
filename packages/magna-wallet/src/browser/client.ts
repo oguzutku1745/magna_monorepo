@@ -1,12 +1,12 @@
-import { ContractInitializationStatus, type Wallet } from "@aztec/aztec.js/wallet";
-import { AztecAddress } from "@aztec/aztec.js/addresses";
-import { getContractClassFromArtifact } from "@aztec/aztec.js/contracts";
-import { Fq, Fr } from "@aztec/aztec.js/fields";
-import { SetPublicAuthwitContractInteraction } from "@aztec/aztec.js/authorization";
-import { NoteStatus, type NoteDao } from "@aztec/stdlib/note";
-import { getSchnorrAccountContractAddress } from "@aztec/accounts/schnorr";
-import { computeSecretHash } from "@aztec/stdlib/hash";
-import { poseidon2HashWithSeparator } from "@aztec/foundation/crypto/poseidon";
+import { ContractInitializationStatus, type Wallet } from "@aztec-labs/aztec.js/wallet";
+import { AztecAddress } from "@aztec-labs/aztec.js/addresses";
+import { getContractClassFromArtifact } from "@aztec-labs/aztec.js/contracts";
+import { Fq, Fr } from "@aztec-labs/aztec.js/fields";
+import { SetPublicAuthwitContractInteraction } from "@aztec-labs/aztec.js/authorization";
+import { NoteStatus, type NoteDao } from "@aztec-labs/stdlib/note";
+import { getSchnorrAccountContractAddress } from "@aztec-labs/accounts/schnorr";
+import { computeSecretHash } from "@aztec-labs/stdlib/hash";
+import { poseidon2HashWithSeparator } from "@aztec-labs/foundation/crypto/poseidon";
 import {
   MagnaCompanyRightsRegistryContract,
   MagnaCompanySponsorContract,
@@ -14,7 +14,7 @@ import {
   MagnaRightsPurchaseL2Contract,
   MagnaWebAuthnAccountContract,
 } from "@magna/contracts-bindings";
-import { TokenContract } from "@aztec/noir-contracts.js/Token";
+import { TokenContract } from "@aztec-labs/noir-contracts.js/Token";
 import { buildCompanySponsorFeeConfig } from "../engine/sponsorship.js";
 import {
   deriveGhostKeyMaterial,

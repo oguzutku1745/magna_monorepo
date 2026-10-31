@@ -1,7 +1,7 @@
-import { AccountManager } from "@aztec/aztec.js/wallet";
-import type { Account } from "@aztec/aztec.js/account";
-import type { Wallet } from "@aztec/aztec.js/wallet";
-import { Fr } from "@aztec/aztec.js/fields";
+import { AccountManager } from "@aztec-labs/aztec.js/wallet";
+import type { Account } from "@aztec-labs/aztec.js/account";
+import type { Wallet } from "@aztec-labs/aztec.js/wallet";
+import { Fr } from "@aztec-labs/aztec.js/fields";
 import { clearEmbeddedPxeCacheForNode, isAztecWorldStateAnchorError } from "../browser/pxe-cache.js";
 import { bytesToHex, hexToBytes } from "@magna-protocol/core";
 import { MagnaWebAuthnAccountContract } from "../webauthn/account-contract.js";

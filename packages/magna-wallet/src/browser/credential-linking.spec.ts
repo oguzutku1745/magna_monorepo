@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { after, describe, it } from 'node:test';
 import { Barretenberg, BackendType } from '@aztec/bb.js';
-import { getContractClassFromArtifact } from '@aztec/aztec.js/contracts';
-import { AztecAddress } from '@aztec/aztec.js/addresses';
-import { PublicKeys } from '@aztec/stdlib/keys';
-import { ContractInitializationStatus } from '@aztec/aztec.js/wallet';
-import { Fr } from '@aztec/aztec.js/fields';
-import { poseidon2HashWithSeparator } from '@aztec/foundation/crypto/sync';
+import { getContractClassFromArtifact } from '@aztec-labs/aztec.js/contracts';
+import { AztecAddress } from '@aztec-labs/aztec.js/addresses';
+import { PublicKeys } from '@aztec-labs/stdlib/keys';
+import { ContractInitializationStatus } from '@aztec-labs/aztec.js/wallet';
+import { Fr } from '@aztec-labs/aztec.js/fields';
+import { poseidon2HashWithSeparator } from '@aztec-labs/foundation/crypto/sync';
 import { MagnaIssuerContract, MagnaWebAuthnAccountContract } from '@magna/contracts-bindings';
 import { MagnaBrowserClient } from './client.js';
 import * as chain from './credential-chain-state.js';
@@ -169,8 +169,8 @@ it('chain status derives the contract owner-root nullifier and identifies revoke
     getNullifierMembershipWitness: async (_block: unknown, nullifier: unknown) => { queries.push(nullifier); return undefined as any; },
   };
   await chain.readInstagramCredentialChainState({ node: node as never, issuerAddress: issuer, hints });
-  const { DomainSeparator } = await import('@aztec/constants');
-  const { AztecAddress } = await import('@aztec/aztec.js/addresses');
+  const { DomainSeparator } = await import('@aztec-labs/constants');
+  const { AztecAddress } = await import('@aztec-labs/aztec.js/addresses');
   const expected = poseidon2HashWithSeparator([AztecAddress.fromStringUnsafe(issuer).toField(),
     poseidon2HashWithSeparator([404n, root], 0x4d415257)], DomainSeparator.SILOED_NULLIFIER);
   assert.equal(queries[2].toString(), expected.toString());

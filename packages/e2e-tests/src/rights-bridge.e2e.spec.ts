@@ -3,15 +3,15 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { getInitialTestAccountsData } from "@aztec/accounts/testing";
-import { createAztecNodeClient } from "@aztec/aztec.js/node";
-import { AztecAddress, EthAddress } from "@aztec/aztec.js/addresses";
-import { Fr } from "@aztec/aztec.js/fields";
-import { createExtendedL1Client } from "@aztec/ethereum/client";
-import { deployL1Contract } from "@aztec/ethereum/deploy-l1-contract";
-import { TokenContract } from "@aztec/noir-contracts.js/Token";
-import { computeSecretHash } from "@aztec/stdlib/hash";
-import { EmbeddedWallet } from "@aztec/wallets/embedded";
+import { getInitialTestAccountsData } from "@aztec-labs/accounts/testing";
+import { createAztecNodeClient } from "@aztec-labs/aztec.js/node";
+import { AztecAddress, EthAddress } from "@aztec-labs/aztec.js/addresses";
+import { Fr } from "@aztec-labs/aztec.js/fields";
+import { createExtendedL1Client } from "@aztec-labs/ethereum/client";
+import { deployL1Contract } from "@aztec-labs/ethereum/deploy-l1-contract";
+import { TokenContract } from "@aztec-labs/noir-contracts.js/Token";
+import { computeSecretHash } from "@aztec-labs/stdlib/hash";
+import { EmbeddedWallet } from "@aztec-labs/wallets/embedded";
 import {
   MagnaCompanyRightsRegistryContract,
   MagnaCompanySponsorContract,

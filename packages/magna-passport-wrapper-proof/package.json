@@ -29,8 +29,8 @@
   },
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json",
-    "compile:circuit:production": "${AZTEC_NARGO_BIN:-aztec-nargo} compile --program-dir circuit && node ../../scripts/sync-passport-a2-artifact.mjs --profile=production",
-    "compile:circuit:development": "${AZTEC_NARGO_BIN:-aztec-nargo} compile --program-dir circuit-dev && node ../../scripts/sync-passport-a2-artifact.mjs --profile=development",
+    "compile:circuit:production": "node ../../scripts/compile-standalone-circuit.mjs circuit && node ../../scripts/sync-passport-a2-artifact.mjs --profile=production",
+    "compile:circuit:development": "node ../../scripts/compile-standalone-circuit.mjs circuit-dev && node ../../scripts/sync-passport-a2-artifact.mjs --profile=development",
     "compile:circuit": "npm run compile:circuit:production && npm run compile:circuit:development",
     "test": "npm run build && node ../../scripts/node-test-runner.mjs 'dist/**/*.spec.js'",
     "lint": "tsc -p tsconfig.json --noEmit"

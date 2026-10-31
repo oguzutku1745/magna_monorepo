@@ -1,8 +1,8 @@
-import { AztecAddress } from "@aztec/aztec.js/addresses";
-import { Fr } from "@aztec/aztec.js/fields";
-import { createAztecNodeClient } from "@aztec/aztec.js/node";
-import { getFeeJuiceBalance } from "@aztec/aztec.js/utils";
-import type { Wallet } from "@aztec/aztec.js/wallet";
+import { AztecAddress } from "@aztec-labs/aztec.js/addresses";
+import { Fr } from "@aztec-labs/aztec.js/fields";
+import { createAztecNodeClient } from "@aztec-labs/aztec.js/node";
+import { getFeeJuiceBalance } from "@aztec-labs/aztec.js/utils";
+import type { Wallet } from "@aztec-labs/aztec.js/wallet";
 
 const LOCAL_ANVIL_CHAIN_ID = 31_337n;
 const LOCAL_CLOCK_DRIFT_DANGER_SECONDS = 180n;
@@ -82,12 +82,12 @@ export async function fundLocalFeeJuice(
     { getNonNullifiedL1ToL2MessageWitness },
     { parseAbi },
   ] = await Promise.all([
-    import("@aztec/aztec.js/ethereum"),
-    import("@aztec/aztec.js/protocol"),
-    import("@aztec/ethereum/client"),
-    import("@aztec/foundation/log"),
-    import("@aztec/stdlib/interfaces/client"),
-    import("@aztec/stdlib/messaging"),
+    import("@aztec-labs/aztec.js/ethereum"),
+    import("@aztec-labs/aztec.js/protocol"),
+    import("@aztec-labs/ethereum/client"),
+    import("@aztec-labs/foundation/log"),
+    import("@aztec-labs/stdlib/interfaces/client"),
+    import("@aztec-labs/stdlib/messaging"),
     import("viem"),
   ]);
   const inboxAbi = parseAbi(["function LAG() view returns (uint256)"]);

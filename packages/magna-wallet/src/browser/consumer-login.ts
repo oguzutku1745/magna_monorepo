@@ -1,6 +1,6 @@
 import { ClaimId, ConstraintOp, CredentialType, type Policy } from "@magna-protocol/core";
-import { AztecAddress } from "@aztec/aztec.js/addresses";
-import type { Wallet } from "@aztec/aztec.js/wallet";
+import { AztecAddress } from "@aztec-labs/aztec.js/addresses";
+import type { Wallet } from "@aztec-labs/aztec.js/wallet";
 import { MagnaCompanySponsorContract, MagnaConsumerContract, MagnaIssuerContract } from "@magna/contracts-bindings";
 import { MagnaVerificationEngine, type SessionAuthorizationContext } from "../engine/verification-engine.js";
 import { packAlpha3 } from "../engine/encoding.js";

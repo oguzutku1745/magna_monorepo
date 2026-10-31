@@ -30,7 +30,7 @@ describe("Magna recovery V3 identity derivation", () => {
     );
   });
 
-  it("uses the Aztec 5.1 Schnorr account derivation APIs", async () => {
+  it("uses the Aztec 6.0 Schnorr account derivation APIs", async () => {
     const first = await deriveRecoveryGhostIdentity(identityInput);
     const second = await deriveRecoveryGhostIdentity(identityInput);
     assert.equal(first.rootCommitment.toString(), second.rootCommitment.toString());

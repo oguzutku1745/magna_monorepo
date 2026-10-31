@@ -1,6 +1,6 @@
-import { AztecAddress } from "@aztec/aztec.js/addresses";
-import type { Wallet } from "@aztec/aztec.js/wallet";
-import type { EmbeddedWallet } from "@aztec/wallets/embedded";
+import { AztecAddress } from "@aztec-labs/aztec.js/addresses";
+import type { Wallet } from "@aztec-labs/aztec.js/wallet";
+import type { EmbeddedWallet } from "@aztec-labs/wallets/embedded";
 import { syncEmbeddedWalletPxeIfAvailable } from "./lifecycle.js";
 
 /**
