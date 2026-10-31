@@ -1,11 +1,12 @@
 # SDK release procedure
 
-Release versions: `@magna-protocol/core@0.1.1` and `@magna-protocol/client@0.2.1`.
-Patch release for Apache-2.0 metadata and bundled license text; application APIs are unchanged.
-Published and verified: see the [September 12 release evidence](evidence/public-release-2026-09-12.md).
-Only publish these versions if they do not already exist in the registry.
-For a subsequent release, update versions and regenerate the candidates. The SDK is
-for the current Aztec 5.1.0 integration; no public Magna network is implied.
+Candidate versions: `@magna-protocol/core@0.1.1` and `@magna-protocol/client@0.3.0`.
+Client 0.3.0 changes network compatibility to Aztec 6.0.0. The previously
+published client 0.2.1 targets V5 and remains immutable; see the historical
+[September 12 release evidence](evidence/public-release-2026-09-12.md).
+Preparation and local consumer verification do not publish a release, and V6
+registry availability is not assumed. Publishing requires a separate release
+request and the checks below. No public Magna network is implied.
 
 ## Prepare and verify
 
@@ -33,7 +34,8 @@ registered reference origin. Stop only the existing reference-dApp server to
 free that port; keep the management wallet, API and chain running. Port 15175 is
 suitable for bundle/render smoke checks but is not a registered login origin.
 
-To run the published npm packages against an active Docker deployment:
+After a separate V6 release has actually been published, the optional registry
+consumer path is available against an active deployment:
 
 ```sh
 docker compose cp management:/runtime/reference-dapp.env /tmp/magna-reference.env
@@ -47,10 +49,10 @@ its registry URLs, versions, integrity values and absence of workspace symlinks.
 It uses the directory recorded in ignored `artifacts/sdk/consumer.json`.
 Keep this terminal running. If the port is already served by a previous external
 consumer, stop that server first. To recreate a removed temporary consumer,
-repeat the installation command. The normal Docker reference service and
-`npm run -w @magna/reference-dapp dev` also use the published packages: the app
-pins registry tarballs in its manifest and rejects workspace SDK resolution.
-The external consumer remains an additional installation-isolation check.
+repeat the installation command. Repository reference-app commands use the V6
+workspace SDK and explicitly check its resolution. The external consumer
+always enforces installed-package resolution, including when the harness uses
+local tarballs rather than the registry.
 
 ## Publish the tested tarballs
 
@@ -63,7 +65,7 @@ to publish the SDK.
 npm login --registry=https://registry.npmjs.org
 npm whoami --registry=https://registry.npmjs.org
 npm publish ./artifacts/sdk/magna-protocol-core-0.1.1.tgz --access public --registry=https://registry.npmjs.org
-npm publish ./artifacts/sdk/magna-protocol-client-0.2.1.tgz --access public --registry=https://registry.npmjs.org
+npm publish ./artifacts/sdk/magna-protocol-client-0.3.0.tgz --access public --registry=https://registry.npmjs.org
 ```
 
 If an older npm CLI crashes during browser authentication, use a temporary
@@ -85,7 +87,7 @@ After publication:
 
 ```sh
 npm view @magna-protocol/core@0.1.1 dist.integrity --registry=https://registry.npmjs.org
-npm view @magna-protocol/client@0.2.1 dist.integrity --registry=https://registry.npmjs.org
+npm view @magna-protocol/client@0.3.0 dist.integrity --registry=https://registry.npmjs.org
 npm run test:sdk:consumer -- --from-registry
 ```
 

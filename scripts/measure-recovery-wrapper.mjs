@@ -1,8 +1,12 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { BackendType, Barretenberg } from "@aztec/bb.js";
+import { createRequire } from "node:module";
 import { ungzip } from "pako";
+
+// Resolve from the standalone recovery lane, never the network/Instagram hoist.
+const require = createRequire(new URL("../packages/magna-recovery-wrapper-proof/package.json", import.meta.url));
+const { BackendType, Barretenberg } = require("@aztec/bb.js");
 
 const artifactPath = resolve(
   "packages/magna-recovery-wrapper-proof/circuit-dev/bundle/magna_recovery_wrapper_proof_dev.json",

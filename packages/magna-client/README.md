@@ -2,13 +2,16 @@
 
 Relying-party connector for Login with Magna.
 
-```sh
-npm install @magna-protocol/client@0.2.1
-```
+This source is the 0.3.0 candidate for Aztec 6.0.0. It changes network
+compatibility from the published 0.2.1 client. V6 registry availability is not
+assumed. In this repository, the reference app uses the workspace SDK; verify
+an installed package with `npm run sdk:prepare && npm run test:sdk:consumer`.
+Install the audited local `artifacts/sdk/magna-protocol-client-0.3.0.tgz` in an
+external consumer until a separate release is published.
 
 ESM with TypeScript declarations. Use Node.js 24.12+ for tooling and a modern
 browser with Web Crypto. `@magna-protocol/core@0.1.1` is installed automatically. Aztec
-read-only verification dependencies are pinned to 5.1.0. Vite applications need
+read-only verification dependencies are pinned to 6.0.0. Vite applications need
 Node global/module polyfills, as configured in `apps/reference-dapp/vite.config.mjs`
 in the source repository.
 

@@ -70,13 +70,13 @@ export type PendingRecoveryV3Finalization = {
   updatedAt: string;
 };
 
-const CREDENTIALS_KEY = "magna-management:credential-refs:v1";
-const WALLET_PROFILE_KEY = "magna-management:wallet-profile:v1";
-const CHAIN_FINGERPRINT_KEY = "magna-management:chain-fingerprint:v1";
-const PASSPORT_A2_WITNESSES_KEY = "magna-management:passport-a2-witnesses:v1";
-const INSTAGRAM_V2_WITNESSES_KEY = "magna-management:instagram-v2-witnesses:v1";
-const RECOVERY_V3_FINALIZATION_KEY = "magna-management:recovery-v3-finalization:v1";
-const RECOVERY_TARGET_PROFILE_KEY = "magna-management:recovery-target-profile:v1";
+const CREDENTIALS_KEY = "magna-management:aztec6:credential-refs:v1";
+const WALLET_PROFILE_KEY = "magna-management:aztec6:wallet-profile:v1";
+const CHAIN_FINGERPRINT_KEY = "magna-management:aztec6:chain-fingerprint:v1";
+const PASSPORT_A2_WITNESSES_KEY = "magna-management:aztec6:passport-a2-witnesses:v1";
+const INSTAGRAM_V2_WITNESSES_KEY = "magna-management:aztec6:instagram-v2-witnesses:v1";
+const RECOVERY_V3_FINALIZATION_KEY = "magna-management:aztec6:recovery-v3-finalization:v1";
+const RECOVERY_TARGET_PROFILE_KEY = "magna-management:aztec6:recovery-target-profile:v1";
 
 type StoredPassportA2WitnessRecord = {
   issuerAddress?: string;

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, describe, it } from 'node:test';
-import { Barretenberg, BackendType } from '@aztec/bb.js';
+import { Barretenberg, BackendType } from '@aztec-foundation/bb.js';
 import { getContractClassFromArtifact } from '@aztec-labs/aztec.js/contracts';
 import { AztecAddress } from '@aztec-labs/aztec.js/addresses';
 import { PublicKeys } from '@aztec-labs/stdlib/keys';

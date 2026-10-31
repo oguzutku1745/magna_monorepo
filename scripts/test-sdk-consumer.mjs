@@ -17,6 +17,8 @@ for (const file of ['src', 'index.html', 'tsconfig.json', 'vite.config.mjs', 'ch
 }
 const manifest = JSON.parse(readFileSync(join(app, 'package.json'), 'utf8'));
 manifest.name = 'magna-installed-sdk-consumer';
+// The installed-package harness always enforces strict package resolution.
+for (const hook of ['predev', 'pretest', 'prebuild']) manifest.scripts[hook] = 'node check-sdk.mjs';
 for (const pkg of release.packages) {
   const tarball = join(output, pkg.filename);
   assert.equal(createHash('sha256').update(readFileSync(tarball)).digest('hex'), pkg.sha256, 'Tarball changed since audit');

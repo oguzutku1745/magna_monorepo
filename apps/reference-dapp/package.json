@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@magna-protocol/client": "https://registry.npmjs.org/@magna-protocol/client/-/client-0.2.1.tgz",
-    "@magna-protocol/core": "https://registry.npmjs.org/@magna-protocol/core/-/core-0.1.1.tgz",
+    "@magna-protocol/client": "file:../../packages/magna-client",
+    "@magna-protocol/core": "file:../../packages/magna-core",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
@@ -19,12 +19,12 @@
     "vitest": "^3.2.4"
   },
   "scripts": {
-    "predev": "node check-sdk.mjs",
+    "predev": "node check-sdk.mjs --workspace",
     "dev": "vite --port 5175",
-    "prebuild": "node check-sdk.mjs",
+    "prebuild": "node check-sdk.mjs --workspace",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 4175",
-    "pretest": "node check-sdk.mjs",
+    "pretest": "node check-sdk.mjs --workspace",
     "test": "vitest run",
     "lint": "npm run build"
   }

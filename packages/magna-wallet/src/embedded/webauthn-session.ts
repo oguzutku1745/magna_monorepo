@@ -94,7 +94,7 @@ export type WebAuthnRecoveryTarget = {
   materialOrigin: "new" | "recovered";
 };
 
-const STORAGE_KEY = "magna-webauthn-accounts-v1";
+const STORAGE_KEY = "magna-webauthn-accounts-aztec6-v1";
 const WEB_AUTHN_ACCOUNT_RESOLVERS_KEY = Symbol.for("magna.webauthn.accountResolvers");
 
 type WebAuthnAccountResolverMap = Map<string, () => Promise<Account>>;
