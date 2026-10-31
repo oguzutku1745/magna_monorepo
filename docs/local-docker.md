@@ -52,7 +52,7 @@ export/import credentials across the V5/V6 network boundary.
 The image build runs the repository build on Node 24 inside the official Aztec image. Because cached layers are deliberately ignored, the build and one-shot deployment can take several minutes. Follow deployment separately with:
 
 ```bash
-docker compose logs -f bootstrap
+docker compose --project-name magna-local-v6 --file compose.yaml logs -f bootstrap
 ```
 
 The bootstrap writes the generated deployment addresses and browser-safe local URLs before it exits. The verification API starts only after bootstrap exits successfully. The frontend services start only after the API passes its health check; management and the reference dApp are then health-gated in that order. Each frontend copies its generated environment file and starts the same Vite development server used by the manual local workflow. This keeps Aztec's worker and WASM resolution on the already-tested development path instead of introducing a second static-bundle runtime solely for Docker.
@@ -67,7 +67,7 @@ The bootstrap still validates its inputs defensively, but `npm run docker:local`
 npm run docker:local:resume
 ```
 
-This command uses `docker compose start` on existing containers without building
+This command starts existing containers in the explicitly pinned V6 project without building
 or bootstrapping. It is not a chain-persistence guarantee: this local profile's
 Anvil and Aztec processes keep chain state in memory. If those processes exited,
 retained application configuration does not restore their chain. Use a fresh
@@ -94,12 +94,9 @@ Open:
 
 - Management: <http://localhost:5174>
 - Reference dApp: <http://localhost:5175>
-
-The reference dApp installs the published `@magna-protocol/client@0.2.0` and
-`@magna-protocol/core@0.1.0` registry tarballs. Startup checks reject SDK workspace
-resolution. After changing its pinned SDK versions, rebuild the application
-image before recreating the reference frontend.
 - Verification API health: <http://localhost:4310/health>
+
+The repository and Docker reference dApp use the workspace V6 SDK: `@magna-protocol/client@0.3.0` and `@magna-protocol/core@0.1.1`. Its startup/build checks explicitly enable workspace mode. Separately, `npm run sdk:prepare` and `npm run test:sdk:consumer` pack and install the SDK tarballs outside the workspace; that strict consumer harness rejects workspace resolution. Those commands do not publish a registry release. Rebuild the image after changing SDK code or versions.
 
 When the reference dApp opens `http://localhost:5174/authorize`, the authorization popup first
 discovers an already-open management wallet through a same-origin `BroadcastChannel`. The tab that
@@ -116,9 +113,9 @@ Docker uses `VITE_MAGNA_DEPLOYMENT_PROFILE=development`. Only an explicit `VITE_
 ## Inspecting and stopping
 
 ```bash
-docker compose ps
-docker compose logs -f anvil aztec-localnet verification-api management
-docker compose down
+docker compose --project-name magna-local-v6 --file compose.yaml ps
+docker compose --project-name magna-local-v6 --file compose.yaml logs -f anvil aztec-localnet verification-api management
+docker compose --project-name magna-local-v6 --file compose.yaml down
 ```
 
 To remove the current project without immediately rebuilding it, use:
@@ -273,3 +270,30 @@ For public testnet, supply a trace-capable L1 RPC with `debug_traceTransaction`
 support, matching V6 node/RPC endpoints, and fresh V6 manifests/accounts. Read-only
 Sepolia registry access is a separate dependency. No remote deployment is
 performed by this migration's verification.
+
+## Migration validation checkpoint (2026-11-01)
+
+The clean arm64 application image built from runtime commit `cf8c18f` is
+`sha256:8cd42486087a496995fa50d40ba69a053dacce9f6d86ce429e96c914b3b96b03`.
+It compiled all eight V6 network contracts, the isolated Instagram beta.5 and
+Recovery beta.22 circuit lanes, generated bindings, and built all packages/apps
+and E2E TypeScript. A network-disabled verification matched 43 captured source
+file hashes and the unchanged frozen Recovery bundle. No old chain or volume
+was reset; the temporary V6 builder/cache was removed.
+
+Host verification at that commit passed: 381 workspace tests, the operational
+group (32 passed and one expected host-only skip), all workspace builds,
+14 compiler-isolation tests, and both Recovery/rights portal suites. The 29 live
+E2E tests skipped by the default workspace command are not live evidence.
+
+The existing `npm run test:instagram-proof:docker` gate also passed on this
+image: 7 unit tests and 1 real private-email proof/verification test, with no
+failures or skips. The fixture stayed private; this validates the preserved
+Instagram proof lane, independently of fresh-network operational acceptance.
+
+This is a build checkpoint. Final review identified corrections still required
+for the root operational `viem` dependency, the plain-host recipe, and the rights
+genesis account fixture. Managed-clock integration, fresh bootstrap and rights
+execution are held until those corrections are validated against the refreshed
+image. Fresh official human Passport/recovery and production `SALTED=1` proofs
+remain separate acceptance gates. No remote deployment was performed.

@@ -52,7 +52,7 @@ reference dApp; and real Instagram DKIM proof generation and verification.
 Then run live issuance uniqueness and inspect the clock:
 
 ```sh
-docker compose exec -T -e AZTEC_NODE_URL=http://aztec-localnet:8080 \
+docker compose --project-name magna-local-v6 --file compose.yaml exec -T -e AZTEC_NODE_URL=http://aztec-localnet:8080 \
   -e ETHEREUM_HOSTS=http://anvil:8545 management \
   npm run -w @magna/e2e-tests test:issuance-uniqueness
 npm run localnet:drift

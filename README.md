@@ -51,8 +51,8 @@ Passport freshness and recovery authorization checks are unchanged.
 
 ```sh
 npm run localnet:drift
-docker compose ps
-docker compose logs -f bootstrap
+docker compose --project-name magna-local-v6 --file compose.yaml ps
+docker compose --project-name magna-local-v6 --file compose.yaml logs -f bootstrap
 ```
 
 An old latest block with a current pending timestamp means the automining
