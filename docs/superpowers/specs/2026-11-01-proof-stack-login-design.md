@@ -16,6 +16,17 @@ On 2026-11-01 the candidate's manifest endpoints returned 404. Its circuit root 
 
 Add a reproducible read-only readiness check. Keep the active proof tuple working until official artifacts and trust roots are available. Do not inject candidate roots, fabricate proofs, weaken registry checks, or switch a default to an unavailable release. Validate the existing flows while the cutover is externally blocked; do not change login behavior.
 
+## Exact stable compiler probe
+
+A temporary source-only probe used the pinned PR170 libraries (including its
+seven updated public dependency versions) and the V6 protocol hash dependency.
+Noir `1.0.0+275d3ab1a5c916c6ea73e8d6b943f685f574500c` failed both `check` and
+`compile` for production/development Passport and development Recovery: four
+ambiguous `SaltedValue.get_hash` calls in upstream `utils/src/tests.nr`, lines
+496, 512, 518 and 539. No local dependency fork, active artifact or runtime pin
+was introduced. Upstream publication is therefore only one of the remaining
+gates; stable source compilation and actual proof acceptance must pass too.
+
 ## Login preservation
 
 Keep the existing `/authorize` interaction, wallet selection, passkey handling,

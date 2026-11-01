@@ -95,8 +95,9 @@ sponsorship, rights bridging, or fresh official-mobile recovery on V6. The
 [recorded V6 validation](local-docker.md#migration-validation-2026-11-01) now
 includes managed clock, fresh sponsor bootstrap/Recovery initialization, rights
 bridging and issuance uniqueness with the local simulated protocol prover.
-The broader main lifecycle suite and fresh official-mobile recovery remain
-unverified. Historical V5 receipts remain historical evidence.
+The main lifecycle cases now have split V6 acceptance as recorded below; fresh
+official-mobile recovery remains unverified. Historical V5 receipts remain
+historical evidence.
 
 ## Upstream proof upgrade availability (2026-11-01)
 
@@ -132,3 +133,60 @@ official upstream availability and end-to-end proof validation. See the
 Restoration checks: client18/18, management135/135 plus WASM routing, readiness13/13,
 and the freshly rebuilt SDK's isolated consumer5/5 plus TypeScript/Vite passed.
 Both connector source/test files match `3eb3d32` exactly.
+
+
+## V6 acceptance continuation (2026-11-01)
+
+The first full V6 critical run exposed resolver connection failures (42 issuer
+tests passed, 72 failed). V6 defaults to a CPU-sized TXE worker pool; this host
+selected ten workers despite serial Noir tests. The supported `TXE_WORKERS=1`
+mode passed all 114 issuer tests and the full critical suite. The test tooling
+now defaults to this mode and the Docker wrapper forwards it, while preserving
+explicit caller overrides. `npm run test:compiler-isolation` includes the two
+worker-budget regressions and passes 16 tests.
+
+The full critical run passed existing contract, wallet/client, API/UI, recovery
+wrapper/protocol/portal checks and real Instagram proof generation/verification.
+This does not activate the unavailable BB6/stable tuple or establish fresh
+hardware/mobile/public-proving acceptance. Login source/tests remain exactly
+at `3eb3d32`.
+
+A temporary exact-Noir-stable probe against PR170 also failed on four upstream
+`SaltedValue.get_hash` type ambiguities at utils test lines 496/512/518/539.
+See the [source-check scope](superpowers/specs/2026-11-01-proof-stack-login-design.md#exact-stable-compiler-probe).
+
+
+### Live lifecycle acceptance
+
+The existing 25-case main suite ran against a fresh disposable stock V6 network.
+The full run passed 24 cases and exposed the final WebAuthn fixture's missing
+V6 account metadata. After fixing that fixture, its targeted rerun passed
+(1 passed, 24 filtered). This is split acceptance, not a single green 25-case
+run. The final helper is used only by that last case.
+
+Test-only compatibility fixes align the gateway delay with the existing
+3,600-second contract policy, use V6's coordinated L1/L2 clock API, unwrap nested
+simulation results, and fund the separate Instagram fixture owner through the
+existing FeeJuice bridge/claim helpers. The WebAuthn fixture now stores metadata
+**after** deployment and calls the application's existing signing-key note
+discovery helper before authorization. The real custom account signs the
+transaction; account validation was not replaced or bypassed.
+
+Linked Instagram verification passed through Passport authority expiry and
+renewal, along with consumer routing, sponsor isolation/limits and secp256r1
+account authorization. These live cases use local simulated protocol proving
+and administrative credential fixtures. Real Instagram proof verification is
+covered separately by the critical suite. Hardware-passkey, official-mobile,
+OPFS and public real-proving gates remain open.
+
+
+The six remaining native contract projects also passed on V6: meter hook 7,
+instant hook 5, rights registry 9, L2 purchase 12, WebAuthn 23 and WebAuthn account
+4. With issuer 114 and sponsor 9 from the critical suite, all **183** network
+contract tests now have fresh V6 results. Recovery protocol's 3 Noir cases and
+portal's 10 Solidity cases passed separately in the critical suite.
+
+A read-only code review found no actionable issue in the final test/infrastructure
+changes. The existing Anvil/node IDs, start times and genesis were preserved;
+API and both frontend endpoints returned HTTP200. No app image or running stack
+was refreshed for this test-only continuation.

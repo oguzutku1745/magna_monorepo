@@ -389,3 +389,44 @@ Restoration verification passed: 18 existing client tests, 135 management tests
 and the isolated installed SDK consumer's 5 reference tests, TypeScript and Vite
 build. SDK tarballs were rebuilt from the restored source, and the installed
 connector matches that local build byte for byte. No new login behavior remains.
+
+
+## V6 acceptance continuation (2026-11-01)
+
+The full existing critical Docker suite now passes on V6, including 114 issuer
+and 9 sponsor Noir tests, Recovery wrapper/protocol/portal tests, wallet/client,
+API/UI and SDK checks, and real Instagram proof generation/verification.
+The test runner defaults to the supported `TXE_WORKERS=1` mode and the Docker
+wrapper forwards it; explicit worker overrides remain supported. The original
+CPU-sized worker pool produced resolver failures on this machine. Compiler
+isolation and worker-propagation regressions pass 16/16.
+
+The 25 main lifecycle cases have split acceptance on disposable stock V6
+networks: 24 passed in the full run, followed by a passing targeted rerun of the
+corrected final WebAuthn case (1 passed, 24 filtered). The final fixture helper
+is called only by that last case. This supersedes the earlier unverified main
+lifecycle gate, not the separate official-mobile or hardware-passkey gates.
+Test fixtures now use the contract's 3,600-second gateway delay, V6 coordinated
+clock warping, decoded simulation results and real fixture-owner FeeJuice
+funding. WebAuthn uses the app's existing deploy-then-persist and auth-note
+discovery behavior. No application login code or product feature changed.
+
+These lifecycle transactions use local simulated protocol proving and synthetic
+administrative credentials. They do not establish fresh official-mobile
+Passport/recovery, hardware passkeys/OPFS, production `SALTED=1`, or public
+real-proving acceptance. The unavailable zkPassport candidate and exact stable
+Noir cutover remain blocked as described above; active proof tuples are unchanged.
+
+The existing Anvil/node container IDs and start times and L1 genesis stayed
+unchanged. API health and both frontends returned HTTP200. No active chain,
+credential store, passkey or deployment configuration was reset; no remote
+deployment occurred. The app image was not rebuilt or refreshed for these
+test-only changes. The next normal clean build includes the updated test tools.
+
+
+The remaining six native contract projects passed 60/60: meter hook 7, instant
+hook 5, rights registry 9, L2 purchase 12, WebAuthn 23 and WebAuthn account 4.
+Together with issuer 114 and sponsor 9, all 183 network-contract Noir tests now
+have fresh V6 results. Recovery's 3 protocol Noir tests and 10 portal Solidity
+tests passed separately in the critical suite. E2E TypeScript and the final
+read-only review passed. Both connector files still match `3eb3d32` exactly.
