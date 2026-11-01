@@ -17,7 +17,7 @@ vi.mock("@aztec-labs/aztec.js/protocol",()=>({ProtocolContractAddress:{FeeJuice:
 vi.mock("@aztec-labs/stdlib/interfaces/client",()=>({createAztecNodeDebugClient:()=>({warpL2TimeAtLeastTo:m.warp})}));
 vi.mock("@aztec-labs/stdlib/messaging",()=>({getNonNullifiedL1ToL2MessageWitness:m.witness}));
 vi.mock("../../../../packages/magna-wallet/src/embedded/lifecycle.js",()=>({ensureImportedLocalTestAccountAddress:async()=>"0x123"}));
-vi.mock("../../../../packages/magna-wallet/node_modules/viem/_esm/index.js",async original=>({...await original<typeof import("viem")>(),createPublicClient:()=>({getChainId:async()=>31337,getBlock:m.l1Block,readContract:m.read})}));
+vi.mock("viem",async original=>({...await original<typeof import("viem")>(),createPublicClient:()=>({getChainId:async()=>31337,getBlock:m.l1Block,readContract:m.read})}));
 import { fundLocalFeeJuice } from "../../../../packages/magna-wallet/src/browser/local-fee-juice";
 const options={wallet:{} as never,recipient:`0x${"1".padStart(64,"0")}`,nodeUrl:"http://node",l1RpcUrl:"http://l1",l1PrivateKey:`0x${"1".repeat(64)}` as `0x${string}`};
 beforeEach(()=>{vi.clearAllMocks(); m.ready.mockResolvedValue(true); m.witness.mockResolvedValue([7n,{}]);m.l1Block.mockResolvedValue({timestamp:1n});});

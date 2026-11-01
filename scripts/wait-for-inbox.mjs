@@ -32,7 +32,9 @@ export async function waitForCommittedInboxWitness(options) {
       if (drift >= 180n) throw new Error(`Local L1 is ${drift}s ahead of the host; refusing another Inbox checkpoint.`);
       if (latest.timestamp < wall) {
         const before = await options.node.getBlockNumber();
-        await debug.warpL2TimeAtLeastTo(Number(wall));
+        // V6 rounds forward to the next slot. Advance only from the current
+        // chain time so historical bootstrap keeps headroom for later setup.
+        await debug.warpL2TimeAtLeastTo(Number(latest.timestamp + 1n));
         if (await options.node.getBlockNumber() > before) return;
       }
       await sleep(1_000);

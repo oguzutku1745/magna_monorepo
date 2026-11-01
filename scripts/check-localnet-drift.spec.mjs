@@ -2,7 +2,19 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { frontendEndpoints, resolveClockConfig } from "./localnet-clock-config.mjs";
+
+test("drift inspection selects the V6 runtime when Compose defaults select an older project or override", () => {
+  const composePath = fileURLToPath(new URL("../compose.yaml", import.meta.url));
+  const config = resolveClockConfig({}, (_command, args) => {
+    const pinned = args[args.indexOf("--project-name") + 1] === "magna-local-v6" &&
+      args[args.indexOf("--file") + 1] === composePath;
+    return {status: 0, stdout: `VITE_MAGNA_L1_RPC_URL=http://127.0.0.1:${pinned ? 18545 : 8545}\nVITE_AZTEC_NODE_URL=http://localhost:${pinned ? 8080 : 8081}\n`};
+  });
+  assert.equal(config.l1RpcUrl, "http://127.0.0.1:18545");
+  assert.equal(config.aztecNodeUrl, "http://localhost:8080");
+});
 
 test("active Docker public endpoints override the stale host manifest", () => {
   const config = resolveClockConfig({}, () => ({status: 0, stdout:

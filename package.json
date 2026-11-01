@@ -85,6 +85,7 @@
     "@zkpassport/registry": "0.14.0",
     "@zkpassport/sdk": "0.16.1",
     "@zkpassport/utils": "0.37.3",
-    "react-qr-code": "^2.0.18"
+    "react-qr-code": "^2.0.18",
+    "viem": "2.57.1"
   }
 }

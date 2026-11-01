@@ -33,7 +33,7 @@ export function resolveClockConfig(env = process.env, run = spawnSync) {
     source = "explicit deployment manifest";
   } else {
     // Read only public endpoint fields, never print the runtime's private keys.
-    const result = run("docker", ["compose", "exec", "-T", "management", "node", "--input-type=module", "-e",
+    const result = run("docker", ["compose", "--project-name", "magna-local-v6", "--file", resolve(repoRoot, "compose.yaml"), "exec", "-T", "management", "node", "--input-type=module", "-e",
       'import {readFileSync} from "node:fs"; const text=readFileSync("/runtime/magna-management.env","utf8"); console.log(text.split(/\\r?\\n/).filter(l=>/^(VITE_MAGNA_L1_RPC_URL|VITE_L1_RPC_URL|VITE_AZTEC_NODE_URL)=/.test(l)).join("\\n"));',
     ], { cwd: repoRoot, encoding: "utf8", timeout: 10_000 });
     if (result.status === 0) {

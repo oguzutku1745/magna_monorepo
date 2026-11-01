@@ -5,13 +5,20 @@ import {Fr} from "@aztec-labs/aztec.js/fields";
 import {waitForCommittedInboxWitness} from "./wait-for-inbox.mjs";
 async function localFixture(options={}) {
   let included=false,blocks=0,warps=0,witnesses=0;
+  let historicalTimestamp=BigInt(Math.floor(Date.now()/1000))-3600n;
   const server=createServer(async(req,res)=>{
     let text="";for await(const chunk of req)text+=chunk;const body=JSON.parse(text);
-    const respond=({method,id})=>{
+    const respond=({method,id,params})=>{
       let result;
       if(method==="eth_chainId")result="0x7a69";
-      else if(method==="eth_getBlockByNumber")result={number:"0x1",timestamp:`0x${(BigInt(Math.floor(Date.now()/1000))+(options.drift??-2n)).toString(16)}`};
-      else if(method==="aztecDebug_warpL2TimeAtLeastTo"){warps++;blocks++;if(!options.neverInclude)included=true;result=null;}
+      else if(method==="eth_getBlockByNumber")result={number:"0x1",timestamp:`0x${(options.historical?historicalTimestamp:BigInt(Math.floor(Date.now()/1000))+(options.drift??-2n)).toString(16)}`};
+      else if(method==="aztecDebug_warpL2TimeAtLeastTo"){
+        if(options.historical){
+          const target=BigInt(params[0]);
+          if(target>historicalTimestamp){historicalTimestamp=(target/8n+1n)*8n;blocks++;included=true;}
+        }else{blocks++;if(!options.neverInclude)included=true;}
+        warps++;result=null;
+      }
       else throw Error(`Unexpected RPC ${method}`);
       return {jsonrpc:"2.0",id,result};
     };
@@ -19,8 +26,17 @@ async function localFixture(options={}) {
   });
   await new Promise(resolve=>server.listen(0,"127.0.0.1",resolve));const url=`http://127.0.0.1:${server.address().port}`;
   const node={getNodeInfo:async()=>({l1ChainId:options.chainId??31337}),getBlockNumber:async()=>blocks,getL1ToL2MessageIndex:async()=>7n,getBlockData:async()=>({header:{state:{l1ToL2MessageTree:{nextAvailableLeafIndex:included?8:0}}}})};
-  return {input:{node,nodeUrl:url,l1RpcUrl:url,messageHash:new Fr(1n),expectedIndex:7n,getWitness:async()=>{witnesses++;return [options.wrongIndex?8n:7n,[]];},timeoutMs:200,pollMs:1},counts:()=>({warps,witnesses}),close:async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}};
+  return {input:{node,nodeUrl:url,l1RpcUrl:url,messageHash:new Fr(1n),expectedIndex:7n,getWitness:async()=>{witnesses++;return [options.wrongIndex?8n:7n,[]];},timeoutMs:200,pollMs:1},counts:()=>({warps,witnesses}),timestamp:()=>historicalTimestamp,close:async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}};
 }
+test("an idle historical Inbox commits without jumping to wall time and retains Recovery setup headroom",async()=>{
+  const f=await localFixture({historical:true});try {
+    const before=f.timestamp();
+    assert.equal((await waitForCommittedInboxWitness(f.input))[0],7n);
+    assert.deepEqual(f.counts(),{warps:1,witnesses:1});
+    assert.ok(f.timestamp()>before,"checkpoint must advance beyond current L1; an already-reached target is a no-op");
+    assert.ok(f.timestamp()+60n<BigInt(Math.floor(Date.now()/1000)),"subsequent Recovery deployments must retain historical headroom");
+  }finally{await f.close();}
+});
 test("an idle local Inbox makes progress only through guarded empty checkpoints, then validates the exact index",async()=>{
   const f=await localFixture();try {assert.equal((await waitForCommittedInboxWitness(f.input))[0],7n);assert.deepEqual(f.counts(),{warps:1,witnesses:1});}finally{await f.close();}
 });

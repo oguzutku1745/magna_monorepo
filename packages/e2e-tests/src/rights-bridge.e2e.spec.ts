@@ -188,7 +188,7 @@ suite("Magna rights local-network L1->L2 bridge flow", () => {
 
     const testAccounts = await getInitialTestAccountsData();
     const orchestrator = (
-      await embeddedWallet.createSchnorrAccount(
+      await embeddedWallet.createSchnorrInitializerlessAccount(
         testAccounts[0].secret,
         testAccounts[0].salt,
         testAccounts[0].signingKey,
@@ -196,13 +196,15 @@ suite("Magna rights local-network L1->L2 bridge flow", () => {
       )
     ).address;
     const activeOwner = (
-      await embeddedWallet.createSchnorrAccount(
+      await embeddedWallet.createSchnorrInitializerlessAccount(
         testAccounts[1].secret,
         testAccounts[1].salt,
         testAccounts[1].signingKey,
         "rights-bridge-active-owner",
       )
     ).address;
+    expect(orchestrator.toString()).toBe(testAccounts[0].address.toString());
+    expect(activeOwner.toString()).toBe(testAccounts[1].address.toString());
     await embeddedWallet.registerSender(orchestrator, "rights-bridge-orchestrator");
 
     const l1Client = createExtendedL1Client(L1_RPC_URLS, L1_MNEMONIC);
