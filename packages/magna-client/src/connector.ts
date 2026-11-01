@@ -147,13 +147,14 @@ export async function validateLoginResponse(
 
 type PopupLike = {
   closed: boolean;
+  location: { replace: (url: string) => void };
   postMessage: (msg: unknown, targetOrigin: string) => void;
   close: () => void;
 };
 
 export type WindowImpl = {
   open: (url: string, name: string, features: string) => PopupLike | null;
-  addMessageListener: (fn: (event: { origin: string; data: unknown }) => void) => () => void;
+  addMessageListener: (fn: (event: { origin: string; data: unknown; source: unknown }) => void) => () => void;
   origin: string;
 };
 
@@ -161,7 +162,7 @@ function browserWindowImpl(): WindowImpl {
   return {
     open: (url, name, features) => window.open(url, name, features),
     addMessageListener: fn => {
-      const handler = (event: MessageEvent) => fn({ origin: event.origin, data: event.data });
+      const handler = (event: MessageEvent) => fn({ origin: event.origin, data: event.data, source: event.source });
       window.addEventListener("message", handler);
       return () => window.removeEventListener("message", handler);
     },
@@ -184,17 +185,25 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+type LoginInput = {
+  policy: Policy;
+  policyHash: string;
+  requirements?: LoginRequest["requirements"];
+  authorizationRequirements: { id: string; kind: string; policy: Policy }[];
+};
+
 export class MagnaClient {
+  private loginPending = false;
+
   constructor(private readonly config: MagnaClientConfig) {}
 
   async login(policy: Policy): Promise<MagnaLoginResult> {
     const normalized = normalizePolicy(policy);
-    const policyHash = await computePolicyHash(normalized);
-    return this.openLoginRequest({
+    return this.openLoginRequest(async () => ({
       policy: normalized,
-      policyHash,
+      policyHash: await computePolicyHash(normalized),
       authorizationRequirements: [{ id: "default", kind: "policy", policy: normalized }],
-    });
+    }));
   }
 
   async loginWithRequirements(requirements: LoginRequirement[]): Promise<MagnaLoginResult> {
@@ -205,7 +214,6 @@ export class MagnaClient {
       throw new Error("loginWithRequirements requires at least one policy requirement");
     }
     const wireRequirements = loginRequirementsToWire(requirements);
-    const policyHash = await computeLoginRequirementsHash(wireRequirements);
     const authorizationRequirements = requirements.map(requirement => ({
       id: requirement.id,
       kind: requirement.kind,
@@ -213,100 +221,94 @@ export class MagnaClient {
         ? normalizePolicy(requirement.policy)
         : instagramHandlePolicy(requirement.handle),
     }));
-    return this.openLoginRequest({
+    return this.openLoginRequest(async () => ({
       policy: normalizePolicy(policyRequirement.policy),
-      policyHash,
+      policyHash: await computeLoginRequirementsHash(wireRequirements),
       requirements: wireRequirements,
       authorizationRequirements,
-    });
+    }));
   }
 
-  private async openLoginRequest(input: {
-    policy: Policy;
-    policyHash: string;
-    requirements?: LoginRequest["requirements"];
-    authorizationRequirements: { id: string; kind: string; policy: Policy }[];
-  }): Promise<MagnaLoginResult> {
+  private async openLoginRequest(buildInput: () => Promise<LoginInput>): Promise<MagnaLoginResult> {
+    if (this.loginPending) throw new Error("Magna login already in progress");
     const win = this.config.windowImpl ?? browserWindowImpl();
-    const requestId = randomHex(16);
-    const sessionChallenge = randomFieldHex();
-
-    const request: LoginRequest = {
-      v: 1,
-      kind: "magna:login-request",
-      clientId: this.config.clientId,
-      origin: win.origin,
-      requestId,
-      sessionChallenge,
-      policy: policyToWire(input.policy),
-      policyHash: input.policyHash,
-      requirements: input.requirements,
-      responseMode: "postMessage",
-    };
-
-    const popup = win.open(
-      `${this.config.walletOrigin}/authorize`,
-      "magna-login",
-      "popup,width=420,height=640",
-    );
-    if (!popup) throw new Error("popup blocked; use loginWithRedirect()");
-
-    const timeoutMs = this.config.timeoutMs ?? 120_000;
-    return new Promise<MagnaLoginResult>((resolve, reject) => {
-      let settled = false;
-      let requestPosted = false;
-      const cleanup: (() => void)[] = [];
-      const finish = (fn: () => void) => {
-        if (settled) return;
-        settled = true;
-        for (const cleanupFn of cleanup) cleanupFn();
-        fn();
-      };
-      const timer = setTimeout(
-        () => finish(() => reject(new Error("Magna login timed out"))),
-        timeoutMs,
-      );
-      cleanup.push(() => clearTimeout(timer));
-      const closePoll = setInterval(() => {
-        if (popup.closed) finish(() => reject(new Error("Magna login window was closed")));
-      }, 500);
-      cleanup.push(() => clearInterval(closePoll));
-      const unlisten = win.addMessageListener(event => {
-        if (event.origin !== this.config.walletOrigin) return;
-        if (!isObject(event.data)) return;
-        const data = event.data;
-        if (data.kind === "magna:ready") {
-          if (requestPosted) return;
-          requestPosted = true;
-          popup.postMessage(request, this.config.walletOrigin);
-          return;
-        }
-        if (data.requestId !== requestId) return;
-        if (data.kind === "magna:login-error") {
-          finish(() => reject(new Error(`Magna login failed: ${String(data.error ?? "unknown error")}`)));
-          return;
-        }
-        if (data.kind === "magna:login-response") {
-          const response = data as unknown as LoginResponse;
-          finish(() => {
-            popup.close();
-            validateLoginResponse(
-              response.assertion,
-              {
+    this.loginPending = true;
+    let popup: PopupLike | null = null;
+    const closePopup = () => { if (popup && !popup.closed) popup.close(); };
+    try {
+      // Reserve during the user gesture; hashing may otherwise outlive popup permission.
+      popup = win.open("about:blank", "magna-login", "popup,width=420,height=640");
+      if (!popup) throw new Error("popup blocked; use loginWithRedirect()");
+      const loginWindow = popup;
+      return await new Promise<MagnaLoginResult>((resolve, reject) => {
+        let settled = false;
+        let requestPosted = false;
+        let input: LoginInput | undefined;
+        let request: LoginRequest | undefined;
+        const cleanup: (() => void)[] = [];
+        const finish = (fn: () => void) => {
+          if (settled) return;
+          settled = true;
+          for (const cleanupFn of cleanup) cleanupFn();
+          closePopup();
+          fn();
+        };
+        const fail = (error: unknown) => finish(() => reject(error));
+        const timer = setTimeout(() => fail(new Error("Magna login timed out")), this.config.timeoutMs ?? 120_000);
+        cleanup.push(() => clearTimeout(timer));
+        const closePoll = setInterval(() => {
+          if (loginWindow.closed) fail(new Error("Magna login window was closed"));
+        }, 500);
+        cleanup.push(() => clearInterval(closePoll));
+        try {
+          const unlisten = win.addMessageListener(event => {
+            if (event.origin !== this.config.walletOrigin || event.source !== loginWindow) return;
+            if (!request || !input || !isObject(event.data)) return;
+            const data = event.data;
+            if (data.kind === "magna:ready") {
+              if (requestPosted) return;
+              requestPosted = true;
+              try { loginWindow.postMessage(request, this.config.walletOrigin); } catch (error) { fail(error); }
+              return;
+            }
+            if (data.requestId !== request.requestId) return;
+            if (data.kind === "magna:login-error") {
+              fail(new Error(`Magna login failed: ${String(data.error ?? "unknown error")}`));
+              return;
+            }
+            if (data.kind === "magna:login-response") {
+              const response = data as unknown as LoginResponse;
+              const expected = {
                 clientId: this.config.clientId,
                 origin: win.origin,
-                requestId,
-                sessionChallenge,
+                requestId: request.requestId,
+                sessionChallenge: request.sessionChallenge,
                 policyHash: input.policyHash,
                 consumerGatewayAddress: this.config.consumerGatewayAddress,
                 requirements: input.authorizationRequirements,
-              },
-              this.config,
-            ).then(resolve, reject);
+              };
+              finish(() => { validateLoginResponse(response.assertion, expected, this.config).then(resolve, reject); });
+            }
           });
-        }
+          cleanup.push(unlisten);
+          void buildInput().then(built => {
+            if (settled) return;
+            input = built;
+            request = {
+              v: 1, kind: "magna:login-request",
+              clientId: this.config.clientId, origin: win.origin,
+              requestId: randomHex(16), sessionChallenge: randomFieldHex(),
+              policy: policyToWire(input.policy), policyHash: input.policyHash,
+              requirements: input.requirements, responseMode: "postMessage",
+            };
+            // The ready listener must exist before the authorization page can load.
+            loginWindow.location.replace(`${this.config.walletOrigin}/authorize`);
+          }).catch(fail);
+        } catch (error) { fail(error); }
       });
-      cleanup.push(unlisten);
-    });
+    } finally {
+      closePopup();
+      this.loginPending = false;
+    }
   }
 }

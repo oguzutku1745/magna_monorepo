@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { webcrypto } from "node:crypto";
-import { MagnaClient, validateLoginResponse, verifyAztecSessionAuthorization, type MagnaClientConfig, type SessionChainVerifier } from "./connector.js";
+import { MagnaClient, validateLoginResponse, verifyAztecSessionAuthorization, type MagnaClientConfig, type SessionChainVerifier, type WindowImpl } from "./connector.js";
 import { ageGteConstraint, computePolicyHash, CredentialType, MAGNA_SESSION_AUTHORIZATION_DS, sessionAuthorizationFields, type SessionAssertion } from "@magna-protocol/core";
 import { AztecAddress } from "@aztec-labs/aztec.js/addresses";
 import { DomainSeparator } from "@aztec-labs/constants";
@@ -151,50 +151,178 @@ function popupConfig(overrides: Partial<MagnaClientConfig> = {}): MagnaClientCon
   };
 }
 
-test("MagnaClient.login times out if popup never responds", async () => {
-  const client = new MagnaClient(popupConfig({
-    timeoutMs: 25,
-    windowImpl: {
-      open: () => ({ closed: false, postMessage: () => {}, close: () => {} }),
-      addMessageListener: () => () => {},
-      origin: "http://localhost:5173",
+function popupHarness(overrides: Partial<MagnaClientConfig> = {}) {
+  type Event = { origin: string; data: unknown; source: unknown };
+  let listener: ((event: Event) => void) | undefined;
+  const opened: { url: string; popup: ReturnType<typeof makePopup> }[] = [];
+  const posted: Record<string, unknown>[] = [];
+  const navigated: string[] = [];
+  let removed = 0;
+  const makePopup = () => ({
+    closed: false,
+    closes: 0,
+    location: { replace: (url: string) => { navigated.push(url); } },
+    postMessage: (message: unknown, origin: string) => {
+      assert.equal(origin, "http://localhost:5999");
+      posted.push(message as Record<string, unknown>);
     },
-  }));
-  await assert.rejects(() => client.login(policy), /timed out/);
+    close() { this.closed = true; this.closes++; },
+  });
+  const windowImpl: WindowImpl = {
+    origin: "http://localhost:5173",
+    open: url => {
+      const popup = makePopup();
+      opened.push({ url, popup });
+      return popup;
+    },
+    addMessageListener: fn => {
+      listener = fn;
+      return () => { listener = undefined; removed++; };
+    },
+  };
+  const client = new MagnaClient(popupConfig({ timeoutMs: 100, windowImpl, ...overrides }));
+  const emit = (data: unknown, source: unknown = opened.at(-1)?.popup, origin = "http://localhost:5999") => {
+    listener?.({ origin, source, data });
+  };
+  const ready = async () => {
+    for (let i = 0; i < 100 && !(navigated.length || (opened.length && opened[0].url !== "about:blank" && listener)); i++) {
+      await new Promise(resolve => setTimeout(resolve, 1));
+    }
+    emit({ kind: "magna:ready" });
+  };
+  const start = () => {
+    const result = client.login(policy);
+    void result.catch(() => undefined);
+    return result;
+  };
+  const response = () => {
+    const request = posted.at(-1)!;
+    const now = Math.floor(Date.now() / 1000);
+    return {
+      kind: "magna:login-response", requestId: request.requestId,
+      assertion: {
+        v: 2, clientId: request.clientId, origin: request.origin,
+        requestId: request.requestId, sessionChallenge: request.sessionChallenge,
+        policyHash: request.policyHash, verified: true, issuedAt: now, expiresAt: now + 300,
+        authorizationContract: sponsor, receipt: txHash,
+        receipts: [{ id: "default", kind: "policy", receipt: txHash }],
+      },
+    };
+  };
+  return { client, opened, posted, navigated, emit, ready, start, response, get removed() { return removed; } };
+}
+
+for (const mode of ["policy", "requirements"] as const) {
+  test(`MagnaClient reserves the ${mode} login window during the initiating gesture`, async () => {
+    const h = popupHarness();
+    const result = mode === "policy" ? h.start()
+      : h.client.loginWithRequirements([{ id: "default", kind: "policy", policy }]);
+    void result.catch(() => undefined);
+    const openedSynchronously = h.opened.length;
+    await assert.rejects(result, /timed out/);
+    assert.equal(openedSynchronously, 1);
+    assert.equal(h.opened[0].url, "about:blank");
+    assert.deepEqual(h.navigated, ["http://localhost:5999/authorize"]);
+  });
+}
+
+test("MagnaClient closes the owned window and removes listeners on timeout", async () => {
+  const h = popupHarness();
+  await assert.rejects(h.start(), /timed out/);
+  assert.equal(h.opened[0].popup.closed, true);
+  assert.equal(h.removed, 1);
 });
 
-test("MagnaClient ignores messages from the wrong origin", async () => {
-  let listener: ((event: { origin: string; data: unknown }) => void) | undefined;
-  const client = new MagnaClient(popupConfig({
-    timeoutMs: 30,
-    windowImpl: {
-      open: () => ({ closed: false, postMessage: () => {}, close: () => {} }),
-      addMessageListener: fn => { listener = fn; return () => {}; },
-      origin: "http://localhost:5173",
-    },
-  }));
-  const login = client.login(policy);
-  while (!listener) await new Promise(resolve => setTimeout(resolve, 0));
-  listener({ origin: "http://evil.example", data: { kind: "magna:login-error", error: "x" } });
-  await assert.rejects(() => login, /timed out/);
+test("MagnaClient rejects overlapping calls without opening another window", async () => {
+  const h = popupHarness();
+  const first = h.start();
+  const second = h.start();
+  await assert.rejects(second, /already in progress/);
+  await assert.rejects(first, /timed out/);
+  assert.equal(h.opened.length, 1);
 });
 
-test("MagnaClient sends one field-safe request for duplicate ready messages", async () => {
-  let listener: ((event: { origin: string; data: unknown }) => void) | undefined;
-  const posted: unknown[] = [];
-  const client = new MagnaClient(popupConfig({
-    timeoutMs: 30,
-    windowImpl: {
-      open: () => ({ closed: false, postMessage: message => posted.push(message), close: () => {} }),
-      addMessageListener: fn => { listener = fn; return () => {}; },
-      origin: "http://localhost:5173",
-    },
-  }));
-  const login = client.login(policy);
-  while (!listener) await new Promise(resolve => setTimeout(resolve, 0));
-  listener({ origin: "http://localhost:5999", data: { kind: "magna:ready" } });
-  listener({ origin: "http://localhost:5999", data: { kind: "magna:ready" } });
-  assert.equal(posted.length, 1);
-  assert.match((posted[0] as { sessionChallenge: string }).sessionChallenge, /^00[0-9a-f]{62}$/);
-  await assert.rejects(() => login, /timed out/);
+test("MagnaClient ignores wrong origin and same-origin messages from another window", async () => {
+  const h = popupHarness();
+  const result = h.start();
+  await h.ready();
+  h.posted.length = 0;
+  // Start another request so the first ready message cannot mask source filtering.
+  h.emit({ kind: "magna:login-error", requestId: "unknown", error: "x" }, {}, "http://evil.example");
+  await assert.rejects(result, /timed out/);
+  const retry = h.start();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  h.emit({ kind: "magna:ready" }, {}, "http://evil.example");
+  h.emit({ kind: "magna:ready" }, {});
+  assert.equal(h.posted.length, 0);
+  h.emit({ kind: "magna:ready" });
+  h.emit({ kind: "magna:ready" });
+  assert.equal(h.posted.length, 1);
+  assert.match(h.posted[0].sessionChallenge as string, /^00[0-9a-f]{62}$/);
+  h.emit({ kind: "magna:login-error", requestId: h.posted[0].requestId, error: "denied" });
+  await assert.rejects(retry, /denied/);
+});
+
+test("MagnaClient closes an authorization error and allows a clean retry", async () => {
+  const h = popupHarness();
+  const first = h.start();
+  await h.ready();
+  h.emit({ kind: "magna:login-error", requestId: h.posted[0].requestId, error: "denied" });
+  await assert.rejects(first, /denied/);
+  assert.equal(h.opened[0].popup.closed, true);
+  const retry = h.start();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  h.emit({ kind: "magna:ready" });
+  h.emit(h.response());
+  assert.equal((await retry).verified, true);
+  assert.equal(h.opened.length, 2);
+  assert.equal(h.opened[1].popup.closed, true);
+  assert.equal(h.removed, 2);
+});
+
+test("MagnaClient accepts only its window response and stays busy until chain validation settles", async () => {
+  let release!: () => void;
+  let entered = false;
+  const h = popupHarness({ timeoutMs: 1000, chainVerifier: async () => {
+    entered = true;
+    await new Promise<void>(resolve => { release = resolve; });
+  } });
+  const result = h.start();
+  await h.ready();
+  h.emit({ kind: "magna:login-error", requestId: h.posted[0].requestId, error: "wrong window" }, {});
+  h.emit(h.response());
+  for (let i = 0; i < 100 && !entered; i++) await new Promise(resolve => setTimeout(resolve, 1));
+  assert.equal(entered, true);
+  const overlap = h.start();
+  release();
+  await assert.rejects(overlap, /already in progress/);
+  assert.equal((await result).verified, true);
+  assert.equal(h.opened.length, 1);
+  assert.equal(h.opened[0].popup.closes, 1);
+});
+
+test("MagnaClient detects cancellation and permits retry", async () => {
+  const h = popupHarness({ timeoutMs: 2000 });
+  const result = h.start();
+  await h.ready();
+  h.opened[0].popup.closed = true;
+  await assert.rejects(result, /window was closed/);
+  const retry = h.start();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  h.emit({ kind: "magna:ready" });
+  h.emit(h.response());
+  assert.equal((await retry).verified, true);
+  assert.equal(h.removed, 2);
+});
+
+test("MagnaClient can retry after a browser blocks the window", async () => {
+  let calls = 0;
+  const client = new MagnaClient(popupConfig({ windowImpl: {
+    origin: "http://localhost:5173",
+    open: () => { calls++; return null; },
+    addMessageListener: () => { throw new Error("unexpected listener"); },
+  } }));
+  await assert.rejects(client.login(policy), /popup blocked/);
+  await assert.rejects(client.login(policy), /popup blocked/);
+  assert.equal(calls, 2);
 });
