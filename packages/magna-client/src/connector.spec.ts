@@ -326,3 +326,69 @@ test("MagnaClient can retry after a browser blocks the window", async () => {
   await assert.rejects(client.login(policy), /popup blocked/);
   assert.equal(calls, 2);
 });
+
+test("MagnaClient times out stalled chain validation and allows a successful retry", async () => {
+  let calls = 0;
+  const h = popupHarness({ chainVerifier: async () => {
+    if (++calls === 1) await new Promise<void>(() => {});
+  } });
+  const first = h.start();
+  await h.ready();
+  h.emit(h.response());
+  const outcome = await Promise.race([
+    first.then(() => "unexpected success", error => String(error.message)),
+    new Promise<string>(resolve => setTimeout(() => resolve("deadline missing"), 250)),
+  ]);
+  assert.match(outcome, /timed out/);
+  const retry = h.start();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  h.emit({ kind: "magna:ready" });
+  h.emit(h.response());
+  assert.equal((await retry).verified, true);
+  assert.equal(calls, 2);
+  assert.equal(h.removed, 2);
+});
+
+for (const lateOutcome of ["resolve", "reject"] as const) {
+  test(`late validation ${lateOutcome} cannot settle or unlock a retry`, async () => {
+    let completeFirst!: () => void;
+    let completeRetry!: () => void;
+    let calls = 0;
+    const h = popupHarness({ timeoutMs: 150, chainVerifier: async () => {
+      if (++calls === 1) {
+        await new Promise<void>((resolve, reject) => {
+          completeFirst = lateOutcome === "resolve" ? resolve : () => reject(new Error("late RPC failure"));
+        });
+      } else {
+        await new Promise<void>(resolve => { completeRetry = resolve; });
+      }
+    } });
+    const first = h.start();
+    await h.ready();
+    h.emit(h.response());
+    try {
+      const outcome = await Promise.race([
+        first.then(() => "unexpected success", error => String(error.message)),
+        new Promise<string>(resolve => setTimeout(() => resolve("deadline missing"), 300)),
+      ]);
+      assert.match(outcome, /timed out/);
+      const retry = h.start();
+      let retrySettled = false;
+      void retry.then(() => { retrySettled = true; }, () => { retrySettled = true; });
+      await new Promise(resolve => setTimeout(resolve, 10));
+      h.emit({ kind: "magna:ready" });
+      h.emit(h.response());
+      completeFirst();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      assert.equal(retrySettled, false);
+      const overlap = h.start();
+      completeRetry();
+      await assert.rejects(overlap, /already in progress/);
+      assert.equal((await retry).verified, true);
+      assert.equal(h.opened.length, 2);
+    } finally {
+      completeFirst?.();
+      completeRetry?.();
+    }
+  });
+}

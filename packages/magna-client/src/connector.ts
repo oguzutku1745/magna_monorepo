@@ -243,19 +243,25 @@ export class MagnaClient {
       return await new Promise<MagnaLoginResult>((resolve, reject) => {
         let settled = false;
         let requestPosted = false;
+        let transportFinished = false;
         let input: LoginInput | undefined;
         let request: LoginRequest | undefined;
         const cleanup: (() => void)[] = [];
+        const stopTransport = () => {
+          if (transportFinished) return;
+          transportFinished = true;
+          for (const cleanupFn of cleanup) cleanupFn();
+          closePopup();
+        };
         const finish = (fn: () => void) => {
           if (settled) return;
           settled = true;
-          for (const cleanupFn of cleanup) cleanupFn();
-          closePopup();
+          clearTimeout(timer);
+          stopTransport();
           fn();
         };
         const fail = (error: unknown) => finish(() => reject(error));
         const timer = setTimeout(() => fail(new Error("Magna login timed out")), this.config.timeoutMs ?? 120_000);
-        cleanup.push(() => clearTimeout(timer));
         const closePoll = setInterval(() => {
           if (loginWindow.closed) fail(new Error("Magna login window was closed"));
         }, 500);
@@ -263,7 +269,7 @@ export class MagnaClient {
         try {
           const unlisten = win.addMessageListener(event => {
             if (event.origin !== this.config.walletOrigin || event.source !== loginWindow) return;
-            if (!request || !input || !isObject(event.data)) return;
+            if (transportFinished || !request || !input || !isObject(event.data)) return;
             const data = event.data;
             if (data.kind === "magna:ready") {
               if (requestPosted) return;
@@ -287,7 +293,12 @@ export class MagnaClient {
                 consumerGatewayAddress: this.config.consumerGatewayAddress,
                 requirements: input.authorizationRequirements,
               };
-              finish(() => { validateLoginResponse(response.assertion, expected, this.config).then(resolve, reject); });
+              stopTransport();
+              // The request deadline also bounds chain validation, not just popup transport.
+              void validateLoginResponse(response.assertion, expected, this.config).then(
+                result => finish(() => resolve(result)),
+                fail,
+              );
             }
           });
           cleanup.push(unlisten);
