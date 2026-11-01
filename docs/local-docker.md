@@ -357,64 +357,35 @@ documentation-only follow-up. Manual/browser/public-proof acceptance gates above
 remain open.
 
 
-## Proof-stack continuity and login checks (2026-11-01)
+## Proof-stack availability and login preservation (2026-11-01)
 
-This continuation keeps the active compiler/prover tuples above. The candidate
-zkPassport 0.22.0 release targets Noir rc.3 / BB6, but both official manifests
-returned HTTP404 and the published registry rejected its circuit root on
-mainnet and Sepolia. `npm run readiness:zkpassport-v6` checks those public
-prerequisites without changing application configuration. Full proof-stack
-migration, including exact stable Noir 1.0.0, remains incomplete; availability
-alone will not replace official-proof and EVM/browser acceptance.
+The user requested preservation of the existing login implementation during
+migration. The assistant's subsequent connector changes were outside that
+scope and have been removed. `connector.ts` and `connector.spec.ts` are restored
+exactly to commit `3eb3d32`, before that work. Popup behavior, wallet selection,
+passkey/session routing and the existing connector API remain as they were.
+Earlier 390/27 test counts and Chrome smoke results covered the reverted
+experiment; they are not acceptance evidence for new login behavior.
 
-Instagram remains available in the same application through its working
-beta.5 / BB0.84 lane. A fresh ephemeral-container run compiled the circuit,
-passed all 7 unit/audit tests, and generated and verified 1 real private-email
-proof (about 90 seconds). Its compiler, dependencies and artifact pins did not
-change. No email fixture or identity data was added to Git.
+The read-only `npm run readiness:zkpassport-v6` check remains. zkPassport's
+candidate 0.22.0 targets Noir rc.3 / BB6, but its official manifests returned
+HTTP404 and the published registry rejected its circuit root on mainnet and
+Sepolia. The complete proof upgrade, including exact stable Noir 1.0.0, remains
+blocked on official availability and subsequent official-proof acceptance.
+The active compiler/prover tuples are unchanged.
 
-The connector now reserves its authorization window synchronously before
-asynchronous hashing, installs the ready listener before navigation, accepts
-messages only from that window and origin, rejects overlapping calls, and
-closes failed/timed-out windows so retries work. All 27 client tests and 135
-management tests passed, including wallet login, the existing session broker,
-recovery/lifecycle routing and exact WASM paths. A temporary Chrome harness
-using the real connector passed immediate-ready delivery, one popup for
-overlapping clicks, receipt-response validation, cancellation/timeout cleanup
-and successful retries. Its final run also checked a stalled chain verifier
-and a combined Passport-policy/Instagram-handle request with two receipts.
-That harness used a fake chain verifier; it does not
-establish hardware passkey, mobile scan, OPFS or real-chain proof acceptance.
+Instagram remains on its working beta.5 / BB0.84 lane in the same application.
+The earlier ephemeral-container validation compiled its unchanged circuit,
+passed 7 unit/audit tests and generated/verified 1 real private-email proof.
+No private email fixture or identity data was added to Git.
 
-Fresh `npm test` and all workspace builds passed. After the review fix,
-`npm test` passed **390 tests**, with **29 live E2E cases skipped**. The 14 compiler
-isolation tests and all six runtime-resolution checks passed. Fresh SDK
-tarballs passed installation, reference tests, TypeScript and Vite build in an
-isolated consumer outside the monorepo. These commands did not publish a release.
+The Docker image and running stack were not rebuilt or refreshed for either
+the experimental login edits or their removal. No chain, generated deployment
+configuration, credential store or passkey was reset. Hardware/mobile/OPFS and
+public-proof acceptance gates from the earlier V6 validation remain open.
 
-The existing Docker image and running stack were not rebuilt or refreshed in
-this continuation. Package code is pinned inside that image, so the connector
-change reaches Docker's installed SDK consumer only after rebuilding the
-application image and refreshing the frontends as described above. No existing
-chain, configuration, credential store or passkey was reset.
-
-
-A fresh-context review found one timeout issue: receipt validation could outlive
-the popup timeout and block retries. Three regressions reproduced stalled
-validation and late success/failure, then passed after keeping the deadline
-active until validation settles. The final client suite passed 27/27; late
-results cannot settle or unlock a newer request. No review minors were deferred.
-
-Review scope follows the approved design: concurrency is guaranteed per
-connector; the existing shared popup name across independent instances/tabs
-was not redesigned. Clean breaking changes are intentional, so injected
-`WindowImpl` adapters now supply popup `location.replace` and message `source`.
-The existing branch and unrelated onboarding/gas files were preserved. Private
-fixture contents were excluded from review; the real proof execution supplies
-its validation evidence. Hardware/mobile/OPFS/public-proof acceptance and the
-Docker SDK refresh remain the separate gates described above.
-
-The post-review whole-workspace suite passed 390 tests with 29 live cases skipped.
-The repacked SDK consumer and final Chrome transport smoke both passed again.
-The complete stable/BB6 proof cutover remains blocked; this does not close the
-manual or public-proof gates above.
+Restoration verification passed: 18 existing client tests, 135 management tests
+(including wallet login/session broker), exact WASM routing, 13 readiness tests,
+and the isolated installed SDK consumer's 5 reference tests, TypeScript and Vite
+build. SDK tarballs were rebuilt from the restored source, and the installed
+connector matches that local build byte for byte. No new login behavior remains.

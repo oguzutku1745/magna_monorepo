@@ -1,76 +1,39 @@
-# Proof Stack and Login Continuity Implementation Plan
+# Proof migration scope correction and status
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
+**Goal:** Update proof/network tooling while preserving working Instagram and
+login. The user's caution about past login problems requires the existing login
+implementation to remain unchanged; it did not authorize connector improvements.
 
-**Goal:** Prepare the upstream proof upgrade without breaking current issuance, Instagram or login; activate only a publicly usable, fully verified proof tuple.
+**Spec:** `docs/superpowers/specs/2026-11-01-proof-stack-login-design.md`.
 
-**Architecture:** Preserve the working proof runtimes while testing upstream readiness. Keep the existing authorization popup and wallet broker, fixing lifecycle races without changing credential semantics.
+## Preserved boundaries
 
-**Tech Stack:** Aztec 6.0.0, Noir, Barretenberg, TypeScript/Node 24, React/Vite.
+- Stay on `feat/credential-linking-recovery`; preserve unrelated `.gitignore`
+  and onboarding/gas-policy changes.
+- Restore `connector.ts` and `connector.spec.ts` exactly from `3eb3d32`.
+- Preserve wallet selection, authorization windows, passkey/PXE/session routing
+  and the existing login API. No login redesign or extra features.
+- Keep Instagram functional on its compatible isolated proof runtime.
+- No push, publish, remote deployment or reset of existing chain/browser data.
 
-**Spec:** `docs/superpowers/specs/2026-11-01-proof-stack-login-design.md` (user-approved scope captured after approval; no further approval round).
+## Retained readiness work
 
-## Global Constraints
+- [x] Add the read-only zkPassport candidate availability command and 13 tests.
+- [x] Check official manifest/artifact endpoints and published registry roots.
+- [x] Keep the working active tuple: candidate manifests returned 404 and its
+  circuit root was invalid on both networks.
 
-- Stay on `feat/credential-linking-recovery`; preserve user changes in `.gitignore` and `docs/onboarding-gas-policy.md`.
-- Instagram stays functional on Noir beta.5/BB 0.84.0 until a newer working stack is verified. No blanket dependency overrides.
-- Retain credential privacy, owner revocation, root attachment, claim/expiry semantics, recovery bindings and chain-bound login verification.
-- Do not activate an upstream tuple with unavailable manifests or invalid trust roots. No mock proofs or injected registry roots as acceptance evidence.
-- No remote deploy, reset of existing chain data, push or publish. No legacy credential adapters or new product features.
+## Remove the unauthorized login work
 
-## Review Focus
+- [x] Restore both connector files to the pre-continuation version.
+- [x] Correct documentation that described login changes as approved work.
+- [x] Run existing client, management/session-broker and reference/SDK consumer
+  checks, and rebuild local SDK tarballs from the restored implementation.
+- [x] Commit the restoration without rewriting history or touching user files.
 
-- Slow asynchronous hashing must not lose the initiating gesture or miss the popup-ready event (Task 2).
-- Same-origin messages from another tab must not settle or steal an authorization handshake (Task 2).
-- Timeout, popup cancellation and overlapping login calls must not leave stale windows/listeners or break retry (Task 2).
-- SDK support alone must not mark an unavailable/unregistered circuit release ready (Task 1).
-- Instagram must still generate/verify its real proof and retain wallet routing after shared tooling changes (Task 3).
+## Remaining migration gate
 
-### Task 1: Upstream readiness gate
-
-**Files:** Create `scripts/check-zkpassport-v6-readiness.mjs`, `scripts/check-zkpassport-v6-readiness.spec.mjs`; modify `package.json`, `docs/reviewer-guide.md`.
-
-**Interfaces:** Export `checkZkPassportV6Readiness({ fetchImpl, checkRoot }) -> Promise<{ ready, checks }>`; default implementation reads official manifest endpoints and RootRegistry on mainnet/Sepolia. Pin candidate source/version/root/key in this script. A CLI returns nonzero unless all checks pass; never mutates runtime configuration.
-
-- [x] Write tests for missing manifests, wrong version/root/key, failed RPC, invalid root, and a fully matched tuple; assert readiness and specific failure records.
-- [x] Run `node --test scripts/check-zkpassport-v6-readiness.spec.mjs` and observe the intended missing-implementation failure.
-- [x] Implement bounded read-only checks and add `readiness:zkpassport-v6` / `test:zkpassport-v6-readiness` npm commands. No fallback to local or unregistered roots.
-- [x] Run the tests, then the actual readiness command; expect current upstream failure and record the public evidence without changing the active proof stack.
-- [x] Commit owned files and record the external activation blocker.
-
-### Task 2: Preserve one authorization window and clean retry
-
-**Files:** Modify `packages/magna-client/src/connector.ts`, `packages/magna-client/src/connector.spec.ts`; related connector `WindowImpl` test fixtures only as needed.
-
-**Interfaces:** `login` / `loginWithRequirements` keep their promise/result API; reserve one `PopupLike` synchronously, add `location.replace(url)` and message `source` to the injected browser interface. Keep one pending request until validation settles.
-
-- [x] Write failing connector tests for synchronous reservation, overlapping calls, wrong source, error/timeout cleanup, successful one-request handshake and retry.
-- [x] Run `npm run -w @magna-protocol/client test`; verify the failures reproduce the lifecycle defects.
-- [x] Reserve `about:blank` during the gesture, install handlers before navigation, and clean up consistently. Retain all origin/request/challenge/policy/chain checks.
-- [x] Run connector and management wallet-login/session-broker suites, WASM routing and SDK consumer tests. Expected: all pass.
-- [x] Exercise the actual browser handshake on a temporary local harness without identity data; verify exactly one popup, no lost ready event, and cancellation/retry. Do not claim hardware passkey or chain proof acceptance from this harness.
-- [x] Commit owned files and record evidence.
-
-### Task 3: Full regression and conditional proof cutover
-
-**Files:** Update `docs/local-docker.md`, `docs/reviewer-guide.md`, this plan; proof/compiler/deployment files only if upstream is actually ready.
-
-**Interfaces:** Consumes Task 1 readiness report and Task 2 connector. Existing network remains V6; candidate cutover requires an available SDK/mobile/circuit/registry tuple.
-
-- [x] Run `npm test`, `npm run test:compiler-isolation`, `npm run check:proof-runtimes`, all builds and SDK consumer checks. Report live E2E skips explicitly.
-- [x] Run real Instagram private-fixture proof validation and confirm no compiler/runtime/artifact pins changed.
-- [x] If readiness is false, preserve the working runtime and document the blocked cutover. Do not mark the whole proof migration complete.
-- [ ] (Not applicable: availability is false.) If readiness passes, pin and migrate the full Passport/Recovery tuple, test rc.3 and stable, update all artifacts/verifiers and perform official-proof acceptance before switching the active tuple. This branch is not permitted to bypass the availability gate.
-- [x] Run a fresh-context whole-change review, fix important findings with regressions, commit evidence and report the remaining activation gate.
-
-
-## Execution status
-
-Tasks 1–3 completed on the unavailable-upstream branch of the plan. Full proof
-cutover remains blocked; no active compiler/prover tuple was changed.
-Fresh-context review: one Important stalled-validation finding fixed in 9ca60ad
-with 3 RED→GREEN regressions; no Critical findings or deferred minors.
-Post-fix workspace 390 passed / 29 live skipped; client 27, management 135,
-readiness 13 and isolation 14 passed. Real Instagram proof, SDK consumer and actual
-Chrome transport checks passed. Hardware/mobile/OPFS/public-proof acceptance and
-refreshing the existing Docker SDK remain separate gates.
+Full stable-Noir/BB6 cutover remains blocked on official upstream availability,
+then requires official mobile proof, recursive-wrapper/EVM and browser acceptance.
+No active proof compiler, dependency or artifact pin changed in this continuation.
+Historical test results for the removed login experiment are superseded.

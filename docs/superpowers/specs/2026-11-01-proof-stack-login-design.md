@@ -1,6 +1,10 @@
-# Proof stack migration and login continuity
+# Proof-stack migration with unchanged login
 
-The user approved a clean breaking proof-stack upgrade because Magna is not live. Instagram must remain usable throughout. Existing login, wallet selection, passkey and PXE session behavior must continue working without additional windows or prompts. This approval covers execution in the current `feat/credential-linking-recovery` checkout; preserve the user's `.gitignore` and onboarding-gas note.
+The user authorized infrastructure/proof-tooling migration and required
+Instagram and the current login implementation to keep working. The caution
+about past login problems did not authorize login improvements. The assistant's
+connector changes and associated new tests are removed; both files match
+pre-continuation commit `3eb3d32`. Preserve the current branch and unrelated files.
 
 ## Approach
 
@@ -10,16 +14,18 @@ Use zkPassport's upstream BB6 migration instead of maintaining our own library f
 
 On 2026-11-01 the candidate's manifest endpoints returned 404. Its circuit root `0x0efa41b10bd6472a36da098fe5cef870bd583a94375ae4875f1e3719f7f6a73b` returned `false` from the published RootRegistry `0x1D0000020038d6E40E1d98e09fA1bb3A7DAA8B70` on mainnet block 26320491 and Sepolia block 12041574. Therefore activating this tuple would break official issuance/recovery. The published SDK 0.19.3 contains BB6 verification support, but does not establish circuit/root availability.
 
-Add a reproducible read-only readiness check. Keep the active proof tuple working until official artifacts and trust roots are available. Do not inject candidate roots, fabricate proofs, weaken registry checks, or switch a default to an unavailable release. Complete independent login and regression work while the cutover is externally blocked.
+Add a reproducible read-only readiness check. Keep the active proof tuple working until official artifacts and trust roots are available. Do not inject candidate roots, fabricate proofs, weaken registry checks, or switch a default to an unavailable release. Validate the existing flows while the cutover is externally blocked; do not change login behavior.
 
-## Login behavior
+## Login preservation
 
-Keep the existing one-window `/authorize` interaction and selected-wallet session broker. Reserve that window during the initiating browser gesture, before asynchronous hashing; then attach the message handler and navigate it. Bind messages to that exact window as well as the wallet origin. A second request on the same connector must not open another window while the first is pending. Close owned windows and remove handlers/timers on cancellation, timeout, error and success; allow a clean retry. Preserve chain-bound receipt validation and wallet-side passkey ownership checks.
+Keep the existing `/authorize` interaction, wallet selection, passkey handling,
+PXE/session broker and connector implementation unchanged. Regression checks
+validate that implementation rather than adding login behavior.
 
 ## Acceptance
 
 - Readiness is false for missing/mismatched artifacts, invalid roots or failed RPCs; only report ready when every required public check passes. No user identity data enters this check.
-- Connector regressions cover synchronous window reservation, one pending request, exact source/origin checks, one request per handshake, timeout/error cleanup, retry, and chain-bound successful response verification.
+- Preserve the existing connector source/tests and login API. No popup, concurrency, timeout or session-handling redesign is in scope.
 - Existing wallet broker, linked/independent Instagram login and passkey routing tests pass. Exercise the browser authorization handshake where available; distinguish it from a real hardware passkey/credential transaction.
 - Keep Instagram compiler/runtime pins and circuit bytes unchanged; run its real private-fixture proof test without printing the email or handle.
 - Run the workspace suite, compiler isolation, WASM routing and SDK consumer checks. Record exact unavailable acceptance gates rather than claiming a complete proof migration.

@@ -115,25 +115,20 @@ published BB6 support alone is not evidence that issuance can use 0.22.0.
 Run `npm run test:zkpassport-v6-readiness` for the availability gate regressions.
 
 
-## Login and Instagram continuity validation (2026-11-01)
+## Login preservation boundary (2026-11-01)
 
-The popup connector reserves one window during the initiating gesture and
-keeps the request pending through chain validation, including its deadline. Messages require both
-its exact window source and configured origin; timeout/error/cancel cleanup
-allows retry. `npm run test:client` covers the connector and redirect routes;
-management's tests cover the existing wallet login/session broker. A temporary
-Chrome transport smoke also passed, with no hardware passkey or live chain
-acceptance claimed.
+The user's migration constraint is to keep the existing login implementation.
+The assistant's out-of-scope connector/popup edits and their new tests have
+been removed; both connector files match pre-continuation commit `3eb3d32`.
+Migration work must validate the current flow without redesigning its popup,
+wallet selection, passkey handling or session broker.
 
-Fresh `npm test`, all workspace builds, compiler-isolation/runtime checks, isolated SDK consumer
-installation/build and a real Instagram private-email proof passed. The 29
-live E2E cases remain skipped in the default host run. See the
-[continuity evidence and Docker application boundary](local-docker.md#proof-stack-continuity-and-login-checks-2026-11-01).
-The active proof tuple remains unchanged; exact Noir stable and the full BB6
-Passport/Recovery cutover are still gated on official upstream availability
-and end-to-end proof validation.
+The read-only upstream availability check above remains. The active proof
+runtimes are unchanged, including Instagram's functional beta.5 / BB0.84 lane.
+Exact stable Noir and the full BB6 Passport/Recovery cutover remain blocked on
+official upstream availability and end-to-end proof validation. See the
+[corrected scope record](local-docker.md#proof-stack-availability-and-login-preservation-2026-11-01).
 
-The fresh-context review's one Important stalled-validation finding is fixed;
-three RED→GREEN regressions cover timeout/retry and late validation success or
-failure. Client acceptance is 27/27, including the unchanged redirect checks.
-No Critical findings or deferred minors were reported.
+Restoration checks: client18/18, management135/135 plus WASM routing, readiness13/13,
+and the freshly rebuilt SDK's isolated consumer5/5 plus TypeScript/Vite passed.
+Both connector source/test files match `3eb3d32` exactly.
