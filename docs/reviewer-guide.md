@@ -72,8 +72,9 @@ private-note/UI observations from independently checked public chain receipts.
 It includes private/public mutation rejection, replay rejection, canonical
 Inbox ingestion, Ghost funding and successful recovery at L2 block 45.
 
-Recovery rotates the rooted passport note set. Instagram V2 currently uses the
-rootless lane and is issued again from a fresh signed email on the new wallet.
+Recovery restores the Passport credential. Instagram V2 can be standalone or
+attached to a Passport root; it must be issued again from a fresh signed email
+on the recovered wallet.
 
 Production `SALTED=1`, production orchestrator custody/rotation, public-network
 deployment, benchmarks and a demo video
@@ -90,6 +91,9 @@ Operational regressions: `node --test scripts/v6-operations.spec.mjs scripts/inb
 Fresh bootstrap instructions, preservation boundaries, digest and trace-capable
 testnet RPC requirements are in [the Docker guide](local-docker.md).
 A successful build or health check does not establish issuance/link/revoke,
-sponsorship, rights bridging, or fresh official-mobile recovery on V6. Retain
-those as explicit gates until measured on the fresh network. Historical V5
-receipts remain historical evidence.
+sponsorship, rights bridging, or fresh official-mobile recovery on V6. The
+[recorded V6 validation](local-docker.md#migration-validation-2026-11-01) now
+includes managed clock, fresh sponsor bootstrap/Recovery initialization, rights
+bridging and issuance uniqueness with the local simulated protocol prover.
+The broader main lifecycle suite and fresh official-mobile recovery remain
+unverified. Historical V5 receipts remain historical evidence.

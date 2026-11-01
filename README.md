@@ -58,7 +58,9 @@ docker compose --project-name magna-local-v6 --file compose.yaml logs -f bootstr
 An old latest block with a current pending timestamp means the automining
 network is idle. A future pending timestamp is an actual clock problem. Use the
 [Docker guide](docs/local-docker.md) for lifecycle and troubleshooting; the
-unmanaged host `network:local` command does not install the Docker clock hooks.
+unmanaged host `network:local` command requires an external L1 RPC and does not
+install the Docker clock hooks. The complete fresh bootstrap uses managed Docker;
+the plain-host sequence is not a validated complete setup.
 
 V6 requires fresh contracts, accounts and credential issuance. Existing Recovery V3
 operates within one deployed network and is not a V5-to-V6 credential migration
@@ -73,8 +75,8 @@ mobile or production Passport acceptance run; see the [reviewer guide](docs/revi
 4. Log in through the reference dApp. The SDK checks the request-bound
    authorization nullifier in the successful Aztec transaction.
 5. Recover the passport into a new passkey using a fresh official mobile proof.
-   Recovery consumes the old root lineage. Instagram uses the rootless issuance
-   lane and must be issued again on the recovered wallet.
+   Recovery consumes the old root lineage. Instagram can be standalone or attached
+   to a Passport root and must be issued again on the recovered wallet.
 
 The dApp receives public request metadata and transaction hashes. Private notes,
 credential witnesses, passkey secrets, and email/passport data stay in the wallet.

@@ -229,29 +229,32 @@ own latency; this is not a three-minute guarantee for mobile scanning and the
 complete browser proof/recovery flow. A wait timeout does not cancel a submitted
 portal transaction.
 
-## Fresh host configuration and V6 acceptance
+## Host configuration and V6 acceptance
 
 Host bootstraps default to `deployments/local-v6.json` and generate
 `.runtime/aztec6/management/.env` and `.runtime/aztec6/reference-dapp/.env`.
 They refuse existing output files at the start of a fresh bootstrap; preserve
 those files and choose new output paths when creating another deployment.
-The existing apps' `.env` files are not overwritten. Install Aztec 6.0.0 side by
-side, then start a fresh local network and deploy:
+The existing apps' `.env` files are not overwritten. The complete supported fresh
+local bootstrap uses `npm run docker:local` and its managed historical clock.
+The plain-host `network:local` / `bootstrap:local` sequence is not a validated
+complete bootstrap: the V6 CLI requires an external L1 RPC and does not start
+Anvil, and the activation warp on an unmanaged wall-time chain conflicts with
+the local drift guard. Do not weaken the guard to run that sequence.
+
+For an operator-configured compatible node and generated deployment environment,
+host frontend selection remains explicit:
 
 ```sh
-npm run network:local
-# In another terminal:
-npm run bootstrap:local
-MAGNA_DEPLOYMENT_MANIFEST=deployments/local-v6.json npm run recovery-v3:bootstrap:local
 MAGNA_ENV_DIR="$PWD/.runtime/aztec6/management" npm run -w @magna/management dev
 MAGNA_ENV_DIR="$PWD/.runtime/aztec6/reference-dapp" npm run -w @magna/reference-dapp dev
 ```
 
 Set `MAGNA_ENV_DIR` to an absolute generated directory for each host frontend;
 Vite then loads that directory's environment instead of the old app `.env`.
-Host mode does not install the Docker clock hooks: observe drift and run the
-verification API with the fresh deployment's explicit configuration. Docker is
-the complete managed bootstrap path.
+Host mode does not install the Docker clock hooks. Its operator must supply the
+L1/node/clock prerequisites and the verification API's explicit deployment
+configuration; the frontend commands alone do not establish those prerequisites.
 
 V6 Fast Inbox has no `LAG()` contract method. Funding/recovery/rights waits
 observe committed inclusion, then require the exact message leaf and global
@@ -271,29 +274,55 @@ support, matching V6 node/RPC endpoints, and fresh V6 manifests/accounts. Read-o
 Sepolia registry access is a separate dependency. No remote deployment is
 performed by this migration's verification.
 
-## Migration validation checkpoint (2026-11-01)
+## Migration validation (2026-11-01)
 
-The clean arm64 application image built from runtime commit `cf8c18f` is
+Runtime fixes are committed as `229ee14`. The successful clean arm64 base from
+`cf8c18f` is
 `sha256:8cd42486087a496995fa50d40ba69a053dacce9f6d86ce429e96c914b3b96b03`.
-It compiled all eight V6 network contracts, the isolated Instagram beta.5 and
-Recovery beta.22 circuit lanes, generated bindings, and built all packages/apps
-and E2E TypeScript. A network-disabled verification matched 43 captured source
-file hashes and the unchanged frozen Recovery bundle. No old chain or volume
-was reset; the temporary V6 builder/cache was removed.
+It compiled all eight V6 network contracts/VKs, both isolated circuit lanes,
+generated bindings, and built all packages/apps/E2E TypeScript. The tracked
+[validation overlay](../docker/Dockerfile.v6-validation) installs the corrected
+root lockfile with `npm ci`, rebuilds all workspaces, then adds the narrowly
+tested waiter/monitor corrections. It retains those clean compiled artifacts;
+it is not a second clean full-source build. `Dockerfile.local` remains the
+clean-build recipe. Final image:
+`sha256:4c64445e3bae5fb331bb57a4dcbfe0fc5286590ed3c47427b3bef8cafb4f67cf`.
+All 46 captured source hashes and the frozen Recovery bundle match. Root,
+E2E and wallet actually resolve upstream `viem@2.57.1`; all independent proof
+runtime checks pass.
 
-Host verification at that commit passed: 381 workspace tests, the operational
-group (32 passed and one expected host-only skip), all workspace builds,
-14 compiler-isolation tests, and both Recovery/rights portal suites. The 29 live
-E2E tests skipped by the default workspace command are not live evidence.
+After the dependency fix, serial host verification passed all 381 workspace
+tests and all workspace builds. Final-image operational tests pass **35/35**,
+with no skips, including actual V6 compiled clock hooks. Earlier unchanged
+evidence includes 183 Noir tests, 14 compiler-isolation tests and the
+Recovery/rights Solidity suites. The clean-image Instagram gate passed 7 unit
+tests and 1 real private-email proof/verification test; its fixture stayed private.
 
-The existing `npm run test:instagram-proof:docker` gate also passed on this
-image: 7 unit tests and 1 real private-email proof/verification test, with no
-failures or skips. The fixture stayed private; this validates the preserved
-Instagram proof lane, independently of fresh-network operational acceptance.
+Actual managed-clock integration passed the full activation delay, future-warp
+refusal, two Fee Juice bridge/inclusion/claim cycles and a subsequent Aztec
+transaction (40.28s combined). The first fresh bootstrap exposed a clock bug:
+the idle Inbox waiter jumped historical L1 to wall time before Recovery setup,
+so final activation refused future mined time. A regression reproduced it;
+requesting only `latest L1 + 1` preserves historical headroom while V6 rounds
+to a new checkpoint. The second genuinely fresh bootstrap passed sponsor
+funding/claim, both generated-env refreshes, Recovery portal/verifier and issuer
+initialization, and real-time activation with zero pending drift. API and both
+frontend endpoints returned HTTP200. The rights suite passed all 3 cases
+(initialization, exact Inbox credit/replay, sponsor isolation); the separate
+issuance-uniqueness case passed. No unrelated L2 producer supplied Inbox progress.
 
-This is a build checkpoint. Final review identified corrections still required
-for the root operational `viem` dependency, the plain-host recipe, and the rights
-genesis account fixture. Managed-clock integration, fresh bootstrap and rights
-execution are held until those corrections are validated against the refreshed
-image. Fresh official human Passport/recovery and production `SALTED=1` proofs
-remain separate acceptance gates. No remote deployment was performed.
+The clock test used the initial dependency-corrected overlay; bootstrap/rights/
+issuance used its waiter-corrected image `72e9119079d1`. The final image adds only
+the read-only monitor pin. API/frontends were refreshed to it without resetting
+the chain, and their health checks passed again. All local protocol execution
+used actual V6 contracts with `realProofs=false`. Issuance uniqueness uses
+administrative synthetic credential inputs. The default host command skipped
+29 live cases; 4 were later executed as above. The other 25 main cases, fresh
+official human Passport/recovery, production `SALTED=1`, actual browser passkey/
+OPFS and public real proving remain unverified. No remote deployment occurred.
+
+Old V5 resources were preserved. The temporary clean builder/export were removed;
+remaining overlay cache shares the retained images, and older unrelated cache
+was left alone. Final Docker free space was about **8.33 GiB**, below the existing
+**12 GiB** clean-build guard. Additional free space is required before another
+clean rebuild; the guard was not lowered and no global prune or resize was used.
