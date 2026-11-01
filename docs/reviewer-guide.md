@@ -118,7 +118,7 @@ Run `npm run test:zkpassport-v6-readiness` for the availability gate regressions
 ## Login and Instagram continuity validation (2026-11-01)
 
 The popup connector reserves one window during the initiating gesture and
-keeps the request pending through chain validation. Messages require both
+keeps the request pending through chain validation, including its deadline. Messages require both
 its exact window source and configured origin; timeout/error/cancel cleanup
 allows retry. `npm run test:client` covers the connector and redirect routes;
 management's tests cover the existing wallet login/session broker. A temporary
@@ -132,3 +132,8 @@ live E2E cases remain skipped in the default host run. See the
 The active proof tuple remains unchanged; exact Noir stable and the full BB6
 Passport/Recovery cutover are still gated on official upstream availability
 and end-to-end proof validation.
+
+The fresh-context review's one Important stalled-validation finding is fixed;
+three RED→GREEN regressions cover timeout/retry and late validation success or
+failure. Client acceptance is 27/27, including the unchanged redirect checks.
+No Critical findings or deferred minors were reported.

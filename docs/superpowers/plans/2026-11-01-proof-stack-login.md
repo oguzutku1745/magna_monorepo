@@ -61,4 +61,16 @@
 - [x] Run real Instagram private-fixture proof validation and confirm no compiler/runtime/artifact pins changed.
 - [x] If readiness is false, preserve the working runtime and document the blocked cutover. Do not mark the whole proof migration complete.
 - [ ] (Not applicable: availability is false.) If readiness passes, pin and migrate the full Passport/Recovery tuple, test rc.3 and stable, update all artifacts/verifiers and perform official-proof acceptance before switching the active tuple. This branch is not permitted to bypass the availability gate.
-- [ ] Run a fresh-context whole-change review, fix important findings with regressions, commit evidence and report the remaining activation gate.
+- [x] Run a fresh-context whole-change review, fix important findings with regressions, commit evidence and report the remaining activation gate.
+
+
+## Execution status
+
+Tasks 1–3 completed on the unavailable-upstream branch of the plan. Full proof
+cutover remains blocked; no active compiler/prover tuple was changed.
+Fresh-context review: one Important stalled-validation finding fixed in 9ca60ad
+with 3 RED→GREEN regressions; no Critical findings or deferred minors.
+Post-fix workspace 390 passed / 29 live skipped; client 27, management 135,
+readiness 13 and isolation 14 passed. Real Instagram proof, SDK consumer and actual
+Chrome transport checks passed. Hardware/mobile/OPFS/public-proof acceptance and
+refreshing the existing Docker SDK remain separate gates.

@@ -376,16 +376,18 @@ change. No email fixture or identity data was added to Git.
 The connector now reserves its authorization window synchronously before
 asynchronous hashing, installs the ready listener before navigation, accepts
 messages only from that window and origin, rejects overlapping calls, and
-closes failed/timed-out windows so retries work. All 24 client tests and 135
+closes failed/timed-out windows so retries work. All 27 client tests and 135
 management tests passed, including wallet login, the existing session broker,
 recovery/lifecycle routing and exact WASM paths. A temporary Chrome harness
 using the real connector passed immediate-ready delivery, one popup for
 overlapping clicks, receipt-response validation, cancellation/timeout cleanup
-and successful retries. That harness used a fake chain verifier; it does not
+and successful retries. Its final run also checked a stalled chain verifier
+and a combined Passport-policy/Instagram-handle request with two receipts.
+That harness used a fake chain verifier; it does not
 establish hardware passkey, mobile scan, OPFS or real-chain proof acceptance.
 
-Fresh `npm test` and all workspace builds passed; the default test run skipped
-its 29 live E2E cases. The 14 compiler
+Fresh `npm test` and all workspace builds passed. After the review fix,
+`npm test` passed **390 tests**, with **29 live E2E cases skipped**. The 14 compiler
 isolation tests and all six runtime-resolution checks passed. Fresh SDK
 tarballs passed installation, reference tests, TypeScript and Vite build in an
 isolated consumer outside the monorepo. These commands did not publish a release.
@@ -395,3 +397,24 @@ this continuation. Package code is pinned inside that image, so the connector
 change reaches Docker's installed SDK consumer only after rebuilding the
 application image and refreshing the frontends as described above. No existing
 chain, configuration, credential store or passkey was reset.
+
+
+A fresh-context review found one timeout issue: receipt validation could outlive
+the popup timeout and block retries. Three regressions reproduced stalled
+validation and late success/failure, then passed after keeping the deadline
+active until validation settles. The final client suite passed 27/27; late
+results cannot settle or unlock a newer request. No review minors were deferred.
+
+Review scope follows the approved design: concurrency is guaranteed per
+connector; the existing shared popup name across independent instances/tabs
+was not redesigned. Clean breaking changes are intentional, so injected
+`WindowImpl` adapters now supply popup `location.replace` and message `source`.
+The existing branch and unrelated onboarding/gas files were preserved. Private
+fixture contents were excluded from review; the real proof execution supplies
+its validation evidence. Hardware/mobile/OPFS/public-proof acceptance and the
+Docker SDK refresh remain the separate gates described above.
+
+The post-review whole-workspace suite passed 390 tests with 29 live cases skipped.
+The repacked SDK consumer and final Chrome transport smoke both passed again.
+The complete stable/BB6 proof cutover remains blocked; this does not close the
+manual or public-proof gates above.
