@@ -326,3 +326,32 @@ remaining overlay cache shares the retained images, and older unrelated cache
 was left alone. Final Docker free space was about **8.33 GiB**, below the existing
 **12 GiB** clean-build guard. Additional free space is required before another
 clean rebuild; the guard was not lowered and no global prune or resize was used.
+
+
+## Final-source clean build after cleanup (2026-11-01)
+
+After user-authorized removal of obsolete builds/cache, the runtime source at
+`16d5683` passed `npm run docker:local -- --build-only` through
+`Dockerfile.local`, with no cached build layers or validation overlay. Image:
+`sha256:53787516abcf2fe2b4e810cc1e7886790e825d67d4342c92452d8e982a1238fe`.
+All eight network contracts/VKs, isolated Instagram and Recovery circuits,
+generated bindings, packages/apps and E2E TypeScript built successfully.
+
+Inside that clean image, all six runtime-resolution lanes and **35/35**
+operational tests passed with no skips. All **134** changed source files copied
+into the image matched the committed source, the frozen Recovery bundle was
+unchanged, and all eight contract class IDs matched the previous deployed V6
+image. This closes the earlier clean-final-source build limitation.
+
+Only the API and frontend containers were refreshed. Their endpoints returned
+HTTP200; Anvil/node container IDs, chain genesis, deployment-manifest hash and
+all three shared runtime-configuration hashes stayed unchanged. No contracts
+were redeployed and no chain or data volume was reset.
+
+Superseded validation images/cache and the completed old bootstrap job container
+were removed; named volumes and unrelated projects were retained. Docker then
+had **17.93 GiB free**, and the existing 12 GiB rebuild-space check passed.
+The earlier overlay recipe and image IDs above are historical validation evidence.
+No runtime source or product feature was added in this continuation; this is a
+documentation-only follow-up. Manual/browser/public-proof acceptance gates above
+remain open.
