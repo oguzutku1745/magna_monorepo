@@ -355,3 +355,43 @@ The earlier overlay recipe and image IDs above are historical validation evidenc
 No runtime source or product feature was added in this continuation; this is a
 documentation-only follow-up. Manual/browser/public-proof acceptance gates above
 remain open.
+
+
+## Proof-stack continuity and login checks (2026-11-01)
+
+This continuation keeps the active compiler/prover tuples above. The candidate
+zkPassport 0.22.0 release targets Noir rc.3 / BB6, but both official manifests
+returned HTTP404 and the published registry rejected its circuit root on
+mainnet and Sepolia. `npm run readiness:zkpassport-v6` checks those public
+prerequisites without changing application configuration. Full proof-stack
+migration, including exact stable Noir 1.0.0, remains incomplete; availability
+alone will not replace official-proof and EVM/browser acceptance.
+
+Instagram remains available in the same application through its working
+beta.5 / BB0.84 lane. A fresh ephemeral-container run compiled the circuit,
+passed all 7 unit/audit tests, and generated and verified 1 real private-email
+proof (about 90 seconds). Its compiler, dependencies and artifact pins did not
+change. No email fixture or identity data was added to Git.
+
+The connector now reserves its authorization window synchronously before
+asynchronous hashing, installs the ready listener before navigation, accepts
+messages only from that window and origin, rejects overlapping calls, and
+closes failed/timed-out windows so retries work. All 24 client tests and 135
+management tests passed, including wallet login, the existing session broker,
+recovery/lifecycle routing and exact WASM paths. A temporary Chrome harness
+using the real connector passed immediate-ready delivery, one popup for
+overlapping clicks, receipt-response validation, cancellation/timeout cleanup
+and successful retries. That harness used a fake chain verifier; it does not
+establish hardware passkey, mobile scan, OPFS or real-chain proof acceptance.
+
+Fresh `npm test` and all workspace builds passed; the default test run skipped
+its 29 live E2E cases. The 14 compiler
+isolation tests and all six runtime-resolution checks passed. Fresh SDK
+tarballs passed installation, reference tests, TypeScript and Vite build in an
+isolated consumer outside the monorepo. These commands did not publish a release.
+
+The existing Docker image and running stack were not rebuilt or refreshed in
+this continuation. Package code is pinned inside that image, so the connector
+change reaches Docker's installed SDK consumer only after rebuilding the
+application image and refreshing the frontends as described above. No existing
+chain, configuration, credential store or passkey was reset.

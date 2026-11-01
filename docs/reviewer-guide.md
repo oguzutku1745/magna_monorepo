@@ -97,7 +97,8 @@ includes managed clock, fresh sponsor bootstrap/Recovery initialization, rights
 bridging and issuance uniqueness with the local simulated protocol prover.
 The broader main lifecycle suite and fresh official-mobile recovery remain
 unverified. Historical V5 receipts remain historical evidence.
-# Upstream proof upgrade availability (2026-11-01)
+
+## Upstream proof upgrade availability (2026-11-01)
 
 `npm run readiness:zkpassport-v6` is a read-only public availability check for
 zkPassport's candidate circuits 0.22.0 at commit
@@ -112,3 +113,22 @@ during the 2026-11-01 investigation. The active beta.22/BB5 Passport and Recover
 tuple and beta.5/BB0.84 Instagram tuple therefore remain selected. The SDK's
 published BB6 support alone is not evidence that issuance can use 0.22.0.
 Run `npm run test:zkpassport-v6-readiness` for the availability gate regressions.
+
+
+## Login and Instagram continuity validation (2026-11-01)
+
+The popup connector reserves one window during the initiating gesture and
+keeps the request pending through chain validation. Messages require both
+its exact window source and configured origin; timeout/error/cancel cleanup
+allows retry. `npm run test:client` covers the connector and redirect routes;
+management's tests cover the existing wallet login/session broker. A temporary
+Chrome transport smoke also passed, with no hardware passkey or live chain
+acceptance claimed.
+
+Fresh `npm test`, all workspace builds, compiler-isolation/runtime checks, isolated SDK consumer
+installation/build and a real Instagram private-email proof passed. The 29
+live E2E cases remain skipped in the default host run. See the
+[continuity evidence and Docker application boundary](local-docker.md#proof-stack-continuity-and-login-checks-2026-11-01).
+The active proof tuple remains unchanged; exact Noir stable and the full BB6
+Passport/Recovery cutover are still gated on official upstream availability
+and end-to-end proof validation.
