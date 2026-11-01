@@ -97,3 +97,18 @@ includes managed clock, fresh sponsor bootstrap/Recovery initialization, rights
 bridging and issuance uniqueness with the local simulated protocol prover.
 The broader main lifecycle suite and fresh official-mobile recovery remain
 unverified. Historical V5 receipts remain historical evidence.
+# Upstream proof upgrade availability (2026-11-01)
+
+`npm run readiness:zkpassport-v6` is a read-only public availability check for
+zkPassport's candidate circuits 0.22.0 at commit
+`b04153038a7ee9f80f4ae93fd1b9ea32eaf833e3` (Noir rc.3 / BB6). It checks the
+official manifest/key artifact endpoints and the published RootRegistry at the
+same observed block on Ethereum and Sepolia. Nonzero means no cutover. Passing
+this check establishes availability only; official mobile proof, recursive
+wrapper, EVM verifier and browser acceptance remain required.
+
+The candidate manifests returned 404 and its root was invalid on both chains
+during the 2026-11-01 investigation. The active beta.22/BB5 Passport and Recovery
+tuple and beta.5/BB0.84 Instagram tuple therefore remain selected. The SDK's
+published BB6 support alone is not evidence that issuance can use 0.22.0.
+Run `npm run test:zkpassport-v6-readiness` for the availability gate regressions.
