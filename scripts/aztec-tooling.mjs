@@ -55,6 +55,8 @@ function getAztecEnv() {
 function getAztecTestEnv() {
   const env = getAztecEnv();
   env.LOG_LEVEL ??= "error";
+  // V6 otherwise grows a CPU-sized TXE pool even when Noir tests run serially.
+  env.TXE_WORKERS ??= "1";
   env.NARGO_FOREIGN_CALL_TIMEOUT ??= "300000";
   return env;
 }

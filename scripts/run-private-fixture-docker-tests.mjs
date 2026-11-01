@@ -19,6 +19,7 @@ const result = spawnSync('docker', [
   '-e', `MAGNA_INSTAGRAM_TEST_HANDLE=${process.env.MAGNA_INSTAGRAM_TEST_HANDLE || 'akinspur'}`,
   '-e', `NODE_OPTIONS=${process.env.NODE_OPTIONS || '--max-old-space-size=3072'}`,
   '-e', `HARDWARE_CONCURRENCY=${process.env.HARDWARE_CONCURRENCY || '2'}`,
+  '-e', `TXE_WORKERS=${process.env.TXE_WORKERS || '1'}`,
   '-e', 'NARGO_BIN=/usr/local/bin/nargo-instagram',
   '--workdir', '/workspace', '--entrypoint', 'npm',
   'magna-local-app:aztec-6.0.0', 'run', command,

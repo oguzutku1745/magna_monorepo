@@ -41,7 +41,7 @@
     "vectors:sync": "node ./scripts/sync-golden-vectors.mjs",
     "vectors:webauthn": "node ./scripts/gen-webauthn-fixtures.mjs",
     "check:proof-runtimes": "node scripts/check-proof-runtime-versions.mjs",
-    "test:compiler-isolation": "node --test scripts/compile-standalone-circuit.spec.mjs scripts/sync-recovery-wrapper-artifact.spec.mjs",
+    "test:compiler-isolation": "node --test scripts/compile-standalone-circuit.spec.mjs scripts/sync-recovery-wrapper-artifact.spec.mjs scripts/run-private-fixture-docker-tests.spec.mjs",
     "aztec:version": "VERSION=6.0.0 aztec --version",
     "compile:issuer": "HARDWARE_CONCURRENCY=1 node ./scripts/aztec-tooling.mjs compile ./contracts/magna-issuer",
     "compile:company-rights-registry": "node ./scripts/aztec-tooling.mjs compile ./contracts/magna-company-rights-registry",
