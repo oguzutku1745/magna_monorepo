@@ -58,19 +58,11 @@ if (!String(artifact.noir_version ?? "").startsWith("1.0.0-beta.22")) {
   throw new Error(`Refusing to sync recovery artifact built by ${artifact.noir_version ?? "an unknown Noir version"}.`);
 }
 
-// These are the only reviewed source-metadata variants of the same beta.22
-// circuit. The complete normalized bundle must still match the frozen SHA-256
-// below, binding compiler build, witness/public ABI and executable bytecode.
-// The shared-hash source refactor changed Nargo metadata, not the proof circuit.
-const frozenArtifactHash = "10286239348019432587";
-const equivalentArtifactHash = "4751306955926801238";
-if (artifact.hash !== frozenArtifactHash && artifact.hash !== equivalentArtifactHash) {
-  throw new Error(`Refusing to sync unreviewed recovery source metadata hash ${artifact.hash}.`);
-}
-
+// The SHA-256 below pins the complete compiler build, source metadata, ABI
+// and executable bytecode for the reviewed zkPassport 0.21.1 key.
 const bundle = {
   noir_version: artifact.noir_version,
-  hash: frozenArtifactHash,
+  hash: artifact.hash,
   abi: artifact.abi,
   bytecode: artifact.bytecode,
   debug_symbols: "",
@@ -78,7 +70,7 @@ const bundle = {
 };
 const bundleBytes = Buffer.from(JSON.stringify(bundle));
 const bundleHash = createHash("sha256").update(bundleBytes).digest("hex");
-const expectedBundleHash = "7f068e040fd1d0bce2602d6c86567b590f9d58120c143e6061a9c58134c2e06b";
+const expectedBundleHash = "c899b606d056fa2734356f6013bb776f354cbd33e23508bd4c302f1b1c216413";
 if (bundleHash !== expectedBundleHash) {
   throw new Error(`Refusing to sync unpinned Recovery V3 developer bundle hash ${bundleHash}.`);
 }

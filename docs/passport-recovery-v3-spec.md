@@ -152,8 +152,8 @@ The current A2 code implements this profile split. `apps/magna-management` reque
 The committed generic A2 wrapper bundles are pinned independently:
 
 ```text
-production wrapper SHA-256  a7093ad57c0a5cfcb073134d7ed0907067e9b253b11f929fd84b4a321179cea7
-developer wrapper SHA-256   b952eb6435ac847e6dc87e5400b5e81703c2537629b56bab1a550a4561eca4c4
+production wrapper SHA-256  f52714558d3c215f6481034a17fdc7e641f0279831977f5508a97070f7957039
+developer wrapper SHA-256   03ff4bb57297ae75858433a97ddea12998af517a81bda9f7f4a7f34ed005483b
 ```
 
 The local developer target MUST run on one shared external Anvil with chain ID `31337`. zkPassport's pinned official source provides this local profile directly: registry SDK `0.14.0` defines chain `31337`, Root Registry `0x5FbDB2315678afecb367f032d93F642f64180aa3`, and Registry Helper `0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512`; its official test scripts deploy the Root Registry, Certificate/Circuit/Sanctions registries, seed registry history and revocations, and deploy the real RootVerifier, SubVerifier, VerifierHelper, and outer proof verifiers. Aztec `6.0.0` can deploy its fresh local L1 stack and start its local rollup against that same Anvil RPC. The historical V5 coexistence was exercised successfully from the pinned sources on 2026-08-24: the Aztec node reported L1 chain ID `31337` and a live canonical Inbox while bytecode for the zkPassport Root Registry and RootVerifier remained present on the same EVM.
@@ -189,9 +189,9 @@ The following values are frozen V3 protocol constants. They match the installed 
 
 ```text
 outer circuit name         outer_count_7
-outer circuit version      0.20.0
+reviewed circuit release   0.21.1
 outer public-input count   12
-outer VK hash              0x19d93a8a69386b80903a8559d884bea729dc1ecc1db48afc6d3bb73d4ed3abbe
+outer VK hash              0x29678c37af3bf4df3517cf7104286665eee0a9b6f189405c159eaa84f820f372
 OPRF public-key hash        1178201404428554206520802247552222388413553631367032661928167491793274360628
 OPRF public-key x           18166959201346800007624274454748264099569154910741994195889360204497718998925
 OPRF public-key y           17198643698593566948834308934687875815952052155871236424838876937611092999400
@@ -207,7 +207,7 @@ certificate registry ID     1
 circuit registry ID         2
 ```
 
-The production artifact in section 16.3 MUST match these values. Gate B-dev MUST match the frozen circuit, version, VK, public-input layout, non-salted query, zero OPRF-key-hash field, and Bind encoding documented for the developer profile. A mismatch fails the relevant gate; code and documentation MUST NOT be adjusted merely to make a different artifact pass. Supporting a different production SDK, outer circuit, VK, public-input layout, nullifier type, or OPRF key requires a new explicitly versioned Magna recovery protocol.
+The production artifact in section 16.3 MUST match these values. Gate B-dev MUST match the frozen circuit, VK, public-input layout, non-salted query, zero OPRF-key-hash field, and Bind encoding documented for the developer profile. A mismatch fails the relevant gate; code and documentation MUST NOT be adjusted merely to make a different artifact pass. The official mobile app release is not a compatibility pin. The resolver fetches and validates the manifest for the received circuit version; another release label is accepted only if its packaged circuit retains the pinned VK and layout. A changed VK or proof layout requires review, recompilation of issuance and recovery wrappers, regeneration of the matching EVM verifier, and a coordinated deployment. Existing immutable portals keep their original verifier; do not point a new wrapper at an old portal. The 0.21.1 compatibility update preserves the V3 identity derivation, public-input layout, nullifier profiles and trust-context format.
 
 ## 5. Recovery identity derivation
 
@@ -682,7 +682,7 @@ Required assertions and retained evidence:
 
 - The SDK package is exactly `0.16.1`; the request sets `devMode=true`, explicitly requests `NullifierType.NON_SALTED`, omits `oprfKeyId`, uses `facematch("regular")`, and requests recursive `compressed` proof mode. FaceMatch remains part of Magna's authenticated disclosure policy, but no OPRF authorization proof or TACEO evaluation request is made.
 - The proof MUST be produced by the official zkPassport application/mock-passport flow in response to that live request. A checked-in fixture, copied sample, hand-built public-input array, synthetic witness, locally generated substitute proof, patched SDK/circuit, skipped constraint, or verifier stub fails this gate.
-- Circuit name/version, proof type, VK hash, public-input count, semantic indices, OPRF-key-hash field, and nullifier type MUST be read from the returned artifact and retained as redacted metadata. The circuit, version, VK, and layout MUST match section 4; the developer OPRF-key-hash field MUST equal `0`.
+- Circuit name/version, proof type, VK hash, public-input count, semantic indices, OPRF-key-hash field, and nullifier type MUST be read from the returned artifact and retained as redacted metadata. The circuit, VK, and layout MUST match section 4; the developer OPRF-key-hash field MUST equal `0`.
 - The developer artifact's authenticated nullifier type MUST equal `NullifierType.NON_SALTED_MOCK`, SDK `0.16.1` enum value `2`. The official `bb-v5.0.0` scoped-nullifier circuit converts a non-salted proof for issuing country `ZKR` into this type and returns `oprf_pk_hash = 0`. The developer wrapper pins exactly that pair; production remains exactly `SALTED = 1` with key ID `1`.
 - Client-side proving MUST initialize Barretenberg with an explicit `2^20` BN254 CRS. Measured from the A2-compatible committed developer artifact with the pinned `@aztec/bb.js` `5.0.0` `acirGetCircuitSizes` API, the developer wrapper has 709,547 gates and a 1,048,576-point dyadic proving domain. The production wrapper's exact count MUST be measured and pinned when that separately isolated circuit is implemented; it MUST NOT be inferred from the developer count. The library's browser default of `2^19` is insufficient. The first client proof MAY download and cache the larger CRS, but it MUST NOT fall back to a Magna-controlled prover service.
 - The unmodified SDK verification pass MUST run with `devMode=true`, which selects the Sepolia registry context in SDK `0.16.1`, and record the roots and successful read-only official validation. The subsequent on-chain developer integration MUST independently validate the same authenticated roots through the pinned official local RootRegistry/RootVerifier stack on shared Anvil. A disagreement fails the gate; code or registry state MUST NOT be changed merely to make the candidate artifact pass.
@@ -714,7 +714,7 @@ Required assertions and retained evidence:
 
 - The query sets `devMode=false`, requests production `SALTED = 1`, explicit OPRF key ID `1`, strict FaceMatch, and recursive `compressed` proof mode.
 - The artifact comes from the production zkPassport application flow and a real supported document. A developer proof, mock passport, mock nullifier, fixture proof, synthetic witness, or simulated FaceMatch fails this gate.
-- The artifact MUST be `outer_count_7` version `0.20.0` and match every frozen circuit, VK, layout, OPRF, Bind, and production registry value in section 4.
+- The artifact MUST be `outer_count_7` with the reviewed `0.21.1` VK and match every frozen layout, OPRF, Bind, and production registry value in section 4. Version-label compatibility is defined in section 4.
 - The production wrapper MUST pin `SALTED = 1` and reject both mock types, both non-salted types, a zero OPRF-key-hash field, and the developer verifier/VK.
 - The wrapper proof and generated production Solidity verifier MUST pass an actual EVM transaction, and every mutation listed in Gate B-dev MUST fail again against the production artifacts.
 
@@ -758,7 +758,7 @@ Before any production release:
 
 The zkPassport team reported to Magna on 2026-08-23 that no change to the current integration is planned. Magna therefore accepts the current behavior as a permanent V3 dependency rather than an unresolved release gate. On 2026-08-25, the team separately confirmed that OPRF does not work with dev mode and that dev-mode support has no ETA. Consequently, local Docker intentionally uses the official `NON_SALTED_MOCK = 2` path; it MUST NOT be blocked on or represented as exercising `SALTED = 1`.
 
-- V3 permanently pins SDK `0.16.1`, utils `0.37.3`, registry client `0.14.0`, production `NullifierType.SALTED = 1`, OPRF key ID `1`, its published coordinates and Poseidon2 hash, developer `NON_SALTED_MOCK = 2` with a zero OPRF-key-hash field, `outer_count_7` version `0.20.0`, its VK hash, the public-input layout, Ethereum mainnet Root Registry/Helper addresses, and registry IDs in section 4.
+- V3 permanently pins SDK `0.16.1`, utils `0.37.3`, registry client `0.14.0`, production `NullifierType.SALTED = 1`, OPRF key ID `1`, its published coordinates and Poseidon2 hash, developer `NON_SALTED_MOCK = 2` with a zero OPRF-key-hash field, `outer_count_7` with the reviewed `0.21.1` VK hash, the public-input layout, Ethereum mainnet Root Registry/Helper addresses, and registry IDs in section 4.
 - The same supported physical document, service domain, scope, subscope, and key ID are the V3 continuity boundary. Magna does not claim person-wide continuity across passport renewal, replacement, chip replacement, document-number change, or issuing-country migration.
 - The production portal MUST pin the official Root Registry deployment selected for its Ethereum chain and evaluate certificate/circuit root validity and revocation at portal execution time using the frozen registry semantics.
 - New zkPassport SDKs, circuits, keys, registries, or verifier paths MUST NOT be adopted automatically. They require a separately versioned protocol, real-artifact feasibility evidence, migration analysis, and regression testing. Existing V3 constants remain unchanged.

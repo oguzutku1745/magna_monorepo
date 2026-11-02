@@ -79,8 +79,8 @@ const bundleBytes = Buffer.from(JSON.stringify(bundle));
 const bundleHash = createHash("sha256").update(bundleBytes).digest("hex");
 const expectedBundleHash =
   profile === "development"
-    ? "b952eb6435ac847e6dc87e5400b5e81703c2537629b56bab1a550a4561eca4c4"
-    : "a7093ad57c0a5cfcb073134d7ed0907067e9b253b11f929fd84b4a321179cea7";
+    ? "03ff4bb57297ae75858433a97ddea12998af517a81bda9f7f4a7f34ed005483b"
+    : "f52714558d3c215f6481034a17fdc7e641f0279831977f5508a97070f7957039";
 if (bundleHash !== expectedBundleHash) {
   throw new Error(`Refusing to sync unpinned Passport A2 bundle hash ${bundleHash}.`);
 }

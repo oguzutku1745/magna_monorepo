@@ -7,7 +7,6 @@ import test from 'node:test';
 
 const script = readFileSync(resolve('scripts/sync-recovery-wrapper-artifact.mjs'), 'utf8');
 const frozenBytes = readFileSync(resolve('packages/magna-recovery-wrapper-proof/circuit-dev/bundle/magna_recovery_wrapper_proof_dev.json'));
-const reviewedMetadataHash = '4751306955926801238';
 function runSync(change, check) {
   const root = mkdtempSync(join(tmpdir(), 'magna-recovery-sync-'));
   const scripts = join(root, 'scripts');
@@ -30,9 +29,6 @@ function runSync(change, check) {
 test('sync accepts the original pinned bundle', () => {
   runSync(() => {}, result => assert.equal(result.status, 0, result.stderr));
 });
-test('sync accepts the exact reviewed source-metadata change while preserving the frozen bundle', () => {
-  runSync(artifact => { artifact.hash = reviewedMetadataHash; }, result => assert.equal(result.status, 0, result.stderr));
-});
 for (const [name, mutate] of [
   ['executable bytecode', artifact => { artifact.bytecode = Buffer.from('different ACIR').toString('base64'); }],
   ['witness ABI', artifact => { artifact.abi.parameters[0].visibility = 'public'; }],
@@ -40,7 +36,7 @@ for (const [name, mutate] of [
   ['unreviewed source metadata', artifact => { artifact.hash = '123456789'; }],
 ]) {
   test(`sync rejects changed ${name} without modifying the trusted bundle`, () => {
-    runSync(artifact => { artifact.hash = reviewedMetadataHash; mutate(artifact); }, result => {
+    runSync(artifact => { mutate(artifact); }, result => {
       assert.notEqual(result.status, 0);
       assert.match(result.stderr, /Refusing to sync/);
     });

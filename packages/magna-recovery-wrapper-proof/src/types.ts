@@ -4,7 +4,7 @@ import type { BigintLike, RegistryClientLike, ZkPassportCompressedProof } from "
 
 export const RECOVERY_WRAPPER_VERSION = 1n;
 export const RECOVERY_WRAPPER_ARTIFACT_SHA256 =
-  "7f068e040fd1d0bce2602d6c86567b590f9d58120c143e6061a9c58134c2e06b" as const;
+  "c899b606d056fa2734356f6013bb776f354cbd33e23508bd4c302f1b1c216413" as const;
 export const RECOVERY_WRAPPER_PUBLIC_INPUT_COUNT = 7;
 export const RECOVERY_WRAPPER_SRS_SIZE = 2 ** 20;
 

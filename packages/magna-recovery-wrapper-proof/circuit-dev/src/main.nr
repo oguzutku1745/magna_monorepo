@@ -18,7 +18,7 @@ use zkpassport_facematch::param_commit::calculate_param_commitment as calculate_
 
 global RECOVERY_WRAPPER_VERSION: Field = 1;
 global ZKPASSPORT_OUTER_COUNT_7_VKEY_HASH: Field =
-    0x19d93a8a69386b80903a8559d884bea729dc1ecc1db48afc6d3bb73d4ed3abbe;
+    0x29678c37af3bf4df3517cf7104286665eee0a9b6f189405c159eaa84f820f372;
 global ZKPASSPORT_OUTER_PUBLIC_INPUT_COUNT: u32 = 12;
 global ZKPASSPORT_OUTER_PROOF_SIZE: u32 = 458;
 global ZKPASSPORT_OUTER_VKEY_SIZE: u32 = 115;

@@ -20,8 +20,8 @@ const completion: VerifiedPassportCompletion = {
     {
       proof: "0x1234",
       name: "outer_count_7",
-      version: "0.20.0",
-      vkeyHash: "0x19d93a8a69386b80903a8559d884bea729dc1ecc1db48afc6d3bb73d4ed3abbe",
+      version: "0.21.1",
+      vkeyHash: "0x29678c37af3bf4df3517cf7104286665eee0a9b6f189405c159eaa84f820f372",
       index: 1,
       total: 1,
       committedInputs: {
@@ -98,15 +98,15 @@ describe("passport A2 management flow", () => {
       a2BindCustomData: "private-bind-data",
       action: "issue",
     }, {
-      provePassportWrapper: vi.fn().mockRejectedValue(new Error("Passport A2 requires zkPassport circuits 0.20.0.")),
+      provePassportWrapper: vi.fn().mockRejectedValue(new Error("Passport A2 requires zkPassport circuits 0.21.1.")),
       nowMs: () => Date.UTC(2026, 0, 1),
       randomField: () => 111n,
     }).catch(error => error as Error);
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain("outer_count_7");
     expect((error as Error).message).toContain("0.21.0");
-    expect((error as Error).message).toContain("0x19d93a8a69386b80903a8559d884bea729dc1ecc1db48afc6d3bb73d4ed3abbe");
-    expect((error as Error).message).toContain("requires zkPassport circuits 0.20.0");
+    expect((error as Error).message).toContain("0x29678c37af3bf4df3517cf7104286665eee0a9b6f189405c159eaa84f820f372");
+    expect((error as Error).message).toContain("requires zkPassport circuits 0.21.1");
     for (const privateValue of ["0x1234", "12345", "TUR", "2031-07-20", "private-bind-data"]) {
       expect((error as Error).message).not.toContain(privateValue);
     }
