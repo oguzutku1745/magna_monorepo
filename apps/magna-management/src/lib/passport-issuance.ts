@@ -348,7 +348,18 @@ export async function buildPassportA2ProofMaterial(
     },
   };
   dependencies.onA2Progress?.({ type: "generating_wrapper_proof" });
-  const wrapper = await dependencies.provePassportWrapper(witness);
+  let wrapper: PassportWrapperProofArtifact;
+  try {
+    wrapper = await dependencies.provePassportWrapper(witness);
+  } catch (error) {
+    // Circuit identity is public. Keep the proof, disclosures and witness local.
+    const proof = witness.zkPassportOuterProof;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Passport wrapper failed for ${proof.name}, circuits ${proof.version}, ` +
+      `verification key ${proof.vkeyHash}: ${detail}`,
+    );
+  }
   const payload: PassportA2ProofPayload = {
     schema: "passport-a2-v1",
     credentialValidUntil: wrapper.outputs.credentialValidUntil,

@@ -4,6 +4,7 @@ import {
   PASSPORT_A2_LOCAL_WITNESS_MISSING_MESSAGE,
   REDISCOVERED_PASSPORT_WITNESS_MISSING_MESSAGE,
   assertNoPassportA2PrivateArtifacts,
+  buildPassportA2ProofMaterial,
   issuePassportThroughConfiguredBackend,
   passportA2BindCustomData,
   passportCredentialUsageBlock,
@@ -79,6 +80,38 @@ function wrapperArtifact() {
 }
 
 describe("passport A2 management flow", () => {
+  it("reports the returned circuit metadata on wrapper failure without exposing Passport material", async () => {
+    const received: VerifiedPassportCompletion = {
+      ...completion,
+      proofs: completion.proofs.map(proof => ({ ...proof, version: "0.21.0" })),
+    };
+    const error = await buildPassportA2ProofMaterial({
+      issuanceKind: "a2",
+      verificationApiUrl: "http://localhost:4310",
+      completion: received,
+      activeOwner: "0xactive",
+      issuerAddress: "0xissuer",
+      ghostOwner: "0xghost",
+      ageThreshold: 21,
+      mode: "rooted",
+      ghostDerivationVersion: "v2_scoped",
+      a2BindCustomData: "private-bind-data",
+      action: "issue",
+    }, {
+      provePassportWrapper: vi.fn().mockRejectedValue(new Error("Passport A2 requires zkPassport circuits 0.20.0.")),
+      nowMs: () => Date.UTC(2026, 0, 1),
+      randomField: () => 111n,
+    }).catch(error => error as Error);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("outer_count_7");
+    expect((error as Error).message).toContain("0.21.0");
+    expect((error as Error).message).toContain("0x19d93a8a69386b80903a8559d884bea729dc1ecc1db48afc6d3bb73d4ed3abbe");
+    expect((error as Error).message).toContain("requires zkPassport circuits 0.20.0");
+    for (const privateValue of ["0x1234", "12345", "TUR", "2031-07-20", "private-bind-data"]) {
+      expect((error as Error).message).not.toContain(privateValue);
+    }
+  });
+
   it("requests the standard compressed proof and binds every action distinctly", () => {
     expect(proofModeForPassportIssuanceKind("a2")).toBe("compressed");
     expect(
