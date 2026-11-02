@@ -128,6 +128,11 @@ export type EmbeddedWalletWithInternals = EmbeddedWallet & {
   pxe?: {
     debug?: {
       sync?: () => Promise<void>;
+      getNotes?: (filter: {
+        contractAddress: AztecAddress;
+        owner: AztecAddress;
+        scopes: AztecAddress[];
+      }) => Promise<unknown[]>;
     };
   };
   getAccountFromAddress?: (address: AztecAddress) => Promise<Account>;
@@ -216,6 +221,14 @@ export async function readAccountInitializationStatus(
   return metadata.initializationStatus;
 }
 
+async function discoverAccountConfigurationNotes(wallet: EmbeddedWallet, address: AztecAddress): Promise<void> {
+  // Discover with the real account artifact before WalletDB enables the SDK's
+  // estimation stub. V6's ECDSA stub cannot decode Magna's WebAuthn note and can
+  // otherwise discard its encrypted message on the first gas simulation.
+  const debug = (wallet as EmbeddedWalletWithInternals).pxe?.debug;
+  await debug?.getNotes?.({ contractAddress: address, owner: address, scopes: [address] });
+}
+
 export async function ensureAccountManagerDeployed(
   wallet: EmbeddedWallet,
   accountManager: AccountManager,
@@ -226,6 +239,7 @@ export async function ensureAccountManagerDeployed(
   }
   const initializationStatus = await readAccountInitializationStatus(wallet, accountManager.address);
   if (initializationStatus === ContractInitializationStatus.INITIALIZED) {
+    await discoverAccountConfigurationNotes(wallet, accountManager.address);
     return { isReady: true };
   }
   let feePayerAddress: AztecAddress | undefined;
@@ -254,6 +268,7 @@ export async function ensureAccountManagerDeployed(
     }
   }
 
+  await discoverAccountConfigurationNotes(wallet, accountManager.address);
   return {
     isReady: true,
     feePayerAddress: feePayerAddress.toString(),

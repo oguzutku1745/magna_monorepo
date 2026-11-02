@@ -61,6 +61,7 @@
     "test:contracts:webauthn-account": "node ./scripts/aztec-tooling.mjs test ./contracts/magna-webauthn-account",
     "test:client": "npm run -w @magna-protocol/client test",
     "test:wallet": "npm run -w @magna/wallet test",
+    "test:passkey-note-restore": "node scripts/test-passkey-note-restore.mjs",
     "test:recovery-v3": "npm run -w @magna/recovery-v3 test && npm run -w @magna/recovery-v3 test:noir",
     "test:recovery-portal": "cd contracts/magna-recovery-portal && forge test",
     "recovery-v3:compile-wrapper": "npm run -w @magna/recovery-wrapper-proof compile:circuit",
