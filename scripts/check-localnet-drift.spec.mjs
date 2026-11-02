@@ -30,8 +30,16 @@ test("explicit endpoints work without Docker and inaccessible Docker fails close
   assert.deepEqual(frontendEndpoints('PRIVATE_KEY=secret\nVITE_L1_RPC_URL="http://l1"'),
     {l1RpcUrl: "http://l1", aztecNodeUrl: undefined});
 });
-for (const [drift, pendingDrift, expected] of [[30, 30, 0], [2707, 2707, 1], [-517848, -517848, 1], [-600, 0, 0], [0, 2707, 1]]) {
-  test(`CLI reports drift ${drift} with exit ${expected}`, async () => {
+for (const [drift, pendingDrift, anchorDrift, expected] of [
+  [30, 30, 30, 0],
+  [2707, 2707, 2707, 1],
+  [-517848, -517848, -517848, 1],
+  [-600, 0, -600, 0],
+  [0, 2707, 0, 1],
+  [-141000, 0, -141000, 1],
+  [0, 0, -141000, 1],
+]) {
+  test(`CLI checks L1 drift ${drift}, pending ${pendingDrift} and L2 anchor ${anchorDrift} with exit ${expected}`, async () => {
     const server = createServer(async (req, res) => {
       let body = "";
       for await (const chunk of req) body += chunk;
@@ -39,6 +47,9 @@ for (const [drift, pendingDrift, expected] of [[30, 30, 0], [2707, 2707, 1], [-5
       const offset = params?.[0] === "pending" ? pendingDrift : drift;
       const result = method === "eth_getBlockByNumber"
         ? {timestamp: `0x${(Math.floor(Date.now()/1000) + offset).toString(16)}`, number: "0x42"}
+        : method === "node_getBlockData" ? {header: {globalVariables: {
+          timestamp: String(Math.floor(Date.now()/1000) + anchorDrift), blockNumber: 42,
+        }}}
         : method === "aztec_getNodeInfo" ? {l1ContractAddresses: {rollupAddress: "0x123"}} : "0x08";
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify({jsonrpc: "2.0", id: 1, result}));
@@ -56,6 +67,7 @@ for (const [drift, pendingDrift, expected] of [[30, 30, 0], [2707, 2707, 1], [-5
       assert.equal(code, expected, output);
       assert.match(output, /L1 block: 0x42; L1 timestamp: \d+; host timestamp: \d+/);
       if (expected) assert.doesNotMatch(output, /Network usable/);
+      if (anchorDrift === -141000) assert.match(output, /L2 anchor is stale/);
     } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
   });
 }

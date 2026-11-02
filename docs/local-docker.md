@@ -110,6 +110,33 @@ The management flow remains `devMode=true`: scan the official zkPassport develop
 
 Docker uses `VITE_MAGNA_DEPLOYMENT_PROFILE=development`. Only an explicit `VITE_MAGNA_DEPLOYMENT_PROFILE=production` selects mainnet-safe frontend restrictions such as rejecting the local faucet, local test accounts, zkPassport developer mode, and developer orchestrator.
 
+## Checking a stack after a long idle period
+
+Run `npm run localnet:drift` before handing over an existing stack. V6 derives
+transaction expiry from the L2 anchor block, with a maximum lifetime of 24 hours.
+Anvil's pending timestamp can track the host while the latest L2 block is much
+older. The readiness command therefore checks L2 freshness as well as L1 drift,
+and rejects an L2 anchor older than one hour.
+
+For the managed Docker network, synchronize the existing chain through its
+internal clock control endpoint:
+
+```bash
+docker compose --project-name magna-local-v6 --file compose.yaml exec -T verification-api node --input-type=module -e 'const r=await fetch("http://aztec-localnet:8090/activate",{method:"POST"}); const status=await r.json(); if(!r.ok)throw new Error(JSON.stringify(status)); console.log(status);'
+npm run localnet:drift
+```
+
+This uses the existing forward-only L1/L2 synchronization and preserves genesis,
+deployments and browser/passkey data. Reopen the saved wallet to rebuild a failed
+transaction against the fresh block. A pending clock check or HTTP health check
+alone does not establish that a long-idle node can accept wallet deployment.
+
+On November 2, a synthetic wallet reproduced the reported `Invalid expiration
+timestamp` against a roughly 39-hour-old L2 anchor. The same deployment flow
+passed after synchronization without resetting the chain. The two stale-anchor
+regressions failed before the readiness fix and passed afterward; all 12 clock/
+readiness checks passed in the pinned V6 image. No application login code changed.
+
 ## Inspecting and stopping
 
 ```bash
