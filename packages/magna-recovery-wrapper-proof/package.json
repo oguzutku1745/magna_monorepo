@@ -21,7 +21,7 @@
   },
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json",
-    "compile:circuit": "${AZTEC_NARGO_BIN:-aztec-nargo} compile --program-dir circuit-dev && node ../../scripts/sync-recovery-wrapper-artifact.mjs",
+    "compile:circuit": "node ../../scripts/compile-standalone-circuit.mjs circuit-dev && node ../../scripts/sync-recovery-wrapper-artifact.mjs",
     "generate:solidity-verifier": "npm run build && node ../../scripts/generate-recovery-wrapper-solidity-verifier.mjs",
     "test": "npm run build && node ../../scripts/node-test-runner.mjs 'dist/**/*.spec.js'",
     "lint": "tsc -p tsconfig.json --noEmit"

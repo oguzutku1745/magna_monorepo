@@ -1,27 +1,30 @@
 #!/usr/bin/env node
 
+import { assertV6Manifest, assertFreshOutput, v6NodeProverEnabled } from "./v6-operations.mjs";
+
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
-import { getInitialTestAccountsData, INITIAL_TEST_SIGNING_KEYS } from "@aztec/accounts/testing";
-import { SetPublicAuthwitContractInteraction } from "@aztec/aztec.js/authorization";
-import { AztecAddress } from "@aztec/aztec.js/addresses";
-import { createAztecNodeClient } from "@aztec/aztec.js/node";
-import { Fr } from "@aztec/aztec.js/fields";
-import { FeeJuiceContract, ProtocolContractAddress } from "@aztec/aztec.js/protocol";
-import { getFeeJuiceBalance } from "@aztec/aztec.js/utils";
-import { createExtendedL1Client } from "@aztec/ethereum/client";
-import { deployL1Contract } from "@aztec/ethereum/deploy-l1-contract";
-import { EthCheatCodes } from "@aztec/ethereum/test";
-import { L1FeeJuicePortalManager } from "@aztec/aztec.js/ethereum";
-import { createLogger } from "@aztec/foundation/log";
-import { TestDateProvider } from "@aztec/foundation/timer";
-import { retryUntil } from "@aztec/foundation/retry";
-import { getNonNullifiedL1ToL2MessageWitness } from "@aztec/stdlib/messaging";
-import { EmbeddedWallet } from "@aztec/wallets/embedded";
-import { TokenContract } from "@aztec/noir-contracts.js/Token";
+import { getInitialTestAccountsData, INITIAL_TEST_SIGNING_KEYS } from "@aztec-labs/accounts/testing";
+import { SetPublicAuthwitContractInteraction } from "@aztec-labs/aztec.js/authorization";
+import { AztecAddress } from "@aztec-labs/aztec.js/addresses";
+import { createAztecNodeClient } from "@aztec-labs/aztec.js/node";
+import { Fr } from "@aztec-labs/aztec.js/fields";
+import { FeeJuiceContract, ProtocolContractAddress } from "@aztec-labs/aztec.js/protocol";
+import { waitForCommittedInboxWitness } from "./wait-for-inbox.mjs";
+import { getFeeJuiceBalance } from "@aztec-labs/aztec.js/utils";
+import { createExtendedL1Client } from "@aztec-labs/ethereum/client";
+import { deployL1Contract } from "@aztec-labs/ethereum/deploy-l1-contract";
+import { EthCheatCodes } from "@aztec-labs/ethereum/test";
+import { L1FeeJuicePortalManager } from "@aztec-labs/aztec.js/ethereum";
+import { createLogger } from "@aztec-labs/foundation/log";
+import { TestDateProvider } from "@aztec-labs/foundation/timer";
+import { retryUntil } from "@aztec-labs/foundation/retry";
+import { getNonNullifiedL1ToL2MessageWitness } from "@aztec-labs/stdlib/messaging";
+import { EmbeddedWallet } from "@aztec-labs/wallets/embedded";
+import { TokenContract } from "@aztec-labs/noir-contracts.js/Token";
 
 import { MagnaIssuerContract } from "../packages/contracts-bindings/src/MagnaIssuer.ts";
 import { MagnaCompanySponsorContract } from "../packages/contracts-bindings/src/MagnaCompanySponsor.ts";
@@ -29,7 +32,7 @@ import { MagnaConsumerContract } from "../packages/contracts-bindings/src/MagnaC
 import { MagnaCompanyRightsRegistryContract } from "../packages/contracts-bindings/src/MagnaCompanyRightsRegistry.ts";
 import { MagnaRightsPurchaseL2Contract } from "../packages/contracts-bindings/src/MagnaRightsPurchaseL2.ts";
 
-const DEFAULT_NETWORK_NAME = "local";
+const DEFAULT_NETWORK_NAME = "local-v6";
 const DEFAULT_WAIT_FOR_NODE_MS = 120_000;
 const DEFAULT_FEE_JUICE_WITNESS_WAIT_MS = 420_000;
 const DEFAULT_FEE_JUICE_WITNESS_POLL_MS = 15_000;
@@ -96,10 +99,10 @@ function usage() {
   node ./scripts/bootstrap-local-apps.mjs [options]
 
 Options:
-  --network-name <name>               Default: local
+  --network-name <name>               Default: local-v6
   --manifest <path>                   Default: deployments/<network>.json
-  --management-env-out <path>         Default: apps/magna-management/.env
-  --reference-dapp-env-out <path>     Default: apps/reference-dapp/.env
+  --management-env-out <path>         Default: .runtime/aztec6/management/.env
+  --reference-dapp-env-out <path>     Default: .runtime/aztec6/reference-dapp/.env
   --aztec-node-url <url>              Optional override for node URL
   --l1-rpc-url <url>                  Optional override for L1 RPC URL
   --public-aztec-node-url <url>       Optional browser-facing node URL (Docker/local proxy)
@@ -308,7 +311,7 @@ async function warpForwardSeconds({ l1RpcUrls, l1Mnemonic, label, seconds, walle
   await syncWalletPxeAfterWarp(label, wallet);
 }
 
-async function mineThreeL2BlocksForBridgeIngestion(l2NudgeToken, orchestrator, label = "bridge ingestion") {
+async function mineGatewayActivationBlocks(l2NudgeToken, orchestrator, label = "bridge ingestion") {
   const nudgeRecipient = await AztecAddress.random();
   await runRetriedStep(`${label} L2 nudge #1`, async () => {
     return await l2NudgeToken.methods.mint_to_public(nudgeRecipient, 1n).send({ from: orchestrator });
@@ -342,29 +345,16 @@ async function claimBridgedFeeJuice(
   claim,
   waitMs,
   pollMs,
+  nodeUrl,
+  l1RpcUrl,
 ) {
-  const startedAt = Date.now();
-  let lastError = "unknown";
-  while (Date.now() - startedAt < waitMs) {
-    try {
-      await getNonNullifiedL1ToL2MessageWitness(
-        node,
-        ProtocolContractAddress.FeeJuice,
-        Fr.fromHexString(claim.messageHash),
-        claim.claimSecret,
-      );
-      break;
-    } catch (error) {
-      lastError = errorDetails(error);
-      await sleep(pollMs);
-    }
-  }
-
-  if (Date.now() - startedAt >= waitMs) {
-    throw new Error(
-      `Timeout awaiting Fee Juice bridge message witness after ${waitMs}ms. last_error=${lastError}`,
-    );
-  }
+  await waitForCommittedInboxWitness({
+    node, nodeUrl, l1RpcUrl, messageHash: Fr.fromHexString(claim.messageHash), expectedIndex: claim.messageLeafIndex,
+    getWitness: () => getNonNullifiedL1ToL2MessageWitness(
+      node, ProtocolContractAddress.FeeJuice, Fr.fromHexString(claim.messageHash), claim.claimSecret,
+    ),
+    timeoutMs: waitMs, pollMs,
+  });
 
   const feeJuice = FeeJuiceContract.at(wallet);
   const claimReceipt = await runRetriedStep(`FeeJuice.claim(${recipient.toString()})`, async () => {
@@ -623,9 +613,12 @@ async function main() {
   const repoRoot = resolve(here, "..");
   const networkName = String(args.networkName ?? DEFAULT_NETWORK_NAME);
   const manifestPath = resolve(repoRoot, String(args.manifest ?? `deployments/${networkName}.json`));
-  const managementEnvOutPath = resolve(repoRoot, String(args.managementEnvOut ?? "apps/magna-management/.env"));
-  const referenceDappEnvOutPath = resolve(repoRoot, String(args.referenceDappEnvOut ?? "apps/reference-dapp/.env"));
+  const managementEnvOutPath = resolve(repoRoot, String(args.managementEnvOut ?? ".runtime/aztec6/management/.env"));
+  const referenceDappEnvOutPath = resolve(repoRoot, String(args.referenceDappEnvOut ?? ".runtime/aztec6/reference-dapp/.env"));
   const existingManifest = existsSync(manifestPath) ? readJson(manifestPath, "Deployment manifest") : undefined;
+  if (existingManifest) assertV6Manifest(existingManifest);
+  assertFreshOutput(managementEnvOutPath);
+  assertFreshOutput(referenceDappEnvOutPath);
   const nodeUrl = String(
     args.aztecNodeUrl ?? existingManifest?.endpoints?.aztecNodeUrl ?? process.env.AZTEC_NODE_URL ?? "http://127.0.0.1:8080",
   );
@@ -667,6 +660,11 @@ async function main() {
     DEFAULT_INITIAL_SPONSOR_RIGHTS,
     "initial-sponsor-rights",
   );
+  const node = createAztecNodeClient(nodeUrl);
+  await waitForNode(node, waitForNodeMs);
+  const proverEnabled = v6NodeProverEnabled(await node.getNodeInfo(), { localOnly: true });
+  console.info(`[app-bootstrap] Aztec 6.0.0 local node ready (${nodeUrl})`);
+
   if (!args.skipRightsDeploy) {
     const l1Client = createExtendedL1Client(l1RpcUrls, l1Mnemonic);
     const initialAccounts = await getInitialTestAccountsData();
@@ -732,13 +730,10 @@ async function main() {
     );
   }
 
-  const node = createAztecNodeClient(nodeUrl);
-  await waitForNode(node, waitForNodeMs);
-  console.info(`[app-bootstrap] aztec node ready (${nodeUrl})`);
 
   const wallet = await EmbeddedWallet.create(node, {
     ephemeral: true,
-    pxeConfig: { proverEnabled: false },
+    pxeConfig: { proverEnabled },
   });
 
   try {
@@ -847,7 +842,7 @@ async function main() {
       seconds: MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS,
       wallet,
     });
-    await mineThreeL2BlocksForBridgeIngestion(
+    await mineGatewayActivationBlocks(
       l2PaymentToken,
       orchestrator,
       "consumer gateway activation",
@@ -875,11 +870,6 @@ async function main() {
     const sponsorFeeJuiceBefore = await getFeeJuiceBalance(companySponsor.address, node);
     if (sponsorFeeJuiceBefore === 0n) {
       const sponsorFundingClaim = await bridgeFeeJuiceToAddress(node, l1RpcUrls, l1Mnemonic, companySponsor.address);
-      await mineThreeL2BlocksForBridgeIngestion(
-        l2PaymentToken,
-        orchestrator,
-        "sponsor Fee Juice bridge ingestion",
-      );
       const sponsorFunding = await claimBridgedFeeJuice(
         node,
         wallet,
@@ -888,6 +878,8 @@ async function main() {
         sponsorFundingClaim,
         feeJuiceWitnessWaitMs,
         feeJuiceWitnessPollMs,
+        nodeUrl,
+        l1RpcUrls[0],
       );
       sponsorFeeJuiceClaimTxHash = sponsorFunding.claimTxHash;
     }
@@ -937,6 +929,11 @@ async function main() {
         2,
       ),
     );
+    if (process.send && process.env.MAGNA_BOOTSTRAP_RUN_ID) {
+      await new Promise((resolveComplete, rejectComplete) => process.send({
+        type: "magna-bootstrap-complete", runId: process.env.MAGNA_BOOTSTRAP_RUN_ID,
+      }, error => error ? rejectComplete(error) : resolveComplete()));
+    }
   } finally {
     // Avoid explicit native wallet shutdown on macOS; the process owns this short-lived wallet.
     // This one-shot local bootstrap exits immediately, so OS process cleanup is safer by default.

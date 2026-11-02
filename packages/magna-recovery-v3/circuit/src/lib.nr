@@ -1,7 +1,12 @@
-use aztec::{
-    hash::compute_secret_hash,
-    protocol::hash::poseidon2_hash_with_separator,
-};
+// Compiler-neutral recovery hashes: the exact prepend-domain fixed-length
+// Poseidon2 formula from official Aztec 5.1 and 6.0 protocol_types::hash.
+// Both beta.22 and rc.3 pass the unchanged recovery golden vectors with this
+// pinned standalone-compatible Poseidon implementation.
+#[no_predicates]
+fn poseidon2_hash_with_separator<let N: u32>(inputs: [Field; N], separator: u32) -> Field {
+    let separated = [separator as Field].concat(inputs);
+    poseidon::poseidon2::Poseidon2::hash(separated, N + 1)
+}
 
 pub global MAGNA_RECOVERY_V3_SCHEMA: Field = 3;
 pub global MAGNA_PASSPORT_CREDENTIAL_TYPE: Field = 1;
@@ -183,7 +188,8 @@ pub fn format_recovery_bind_data(recovery_intent: Field) -> [u8; 509] {
 
 #[test]
 unconstrained fn recovery_v3_matches_typescript_golden_vector() {
-    let message_secret_hash = compute_secret_hash([8]);
+    // Official Aztec DOM_SEP__SECRET_HASH, unchanged in V5.1 and V6.0.
+    let message_secret_hash = poseidon2_hash_with_separator([8], 4199652938);
     assert_eq(
         message_secret_hash,
         10983938823970359692003842531941101377775130826861974616012302461719711391382,

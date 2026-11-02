@@ -1,26 +1,50 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { accessSync, constants, copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { connect } from "node:net";
-import { resolve, join, basename } from "node:path";
+import { resolve, join, basename, delimiter } from "node:path";
+import { homedir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const NODE_MAJOR = Number.parseInt(process.versions.node.split(".")[0] ?? "0", 10);
 if (NODE_MAJOR < 24) {
   throw new Error(
-    `Magna's Aztec 5.1 tooling requires Node.js >=24; received ${process.versions.node}. ` +
+    `Magna's Aztec 6.0 tooling requires Node.js >=24; received ${process.versions.node}. ` +
       "Older runtimes lack Set.prototype.intersection and make TXE note operations fail misleadingly.",
   );
 }
 
-const PINNED_AZTEC_VERSION = process.env.AZTEC_VERSION_PIN ?? "5.1.0";
+const PINNED_AZTEC_VERSION = process.env.AZTEC_VERSION_PIN ?? "6.0.0";
+// Native installs and container images must provide these versioned entrypoints.
+// Container builds may symlink their exact V6 CLI/native nargo into this directory.
+const PINNED_AZTEC_BIN = resolve(process.env.AZTEC_HOME ?? join(homedir(), ".aztec"), "versions", PINNED_AZTEC_VERSION, "bin");
+
+function pinnedExecutable(command) {
+  const executable = join(PINNED_AZTEC_BIN, command);
+  try {
+    accessSync(executable, constants.X_OK);
+    if (!statSync(executable).isFile()) throw new Error("not a file");
+  } catch {
+    throw new Error(
+      `Pinned Aztec ${PINNED_AZTEC_VERSION} executable is missing or not executable: ${executable}. ` +
+        `Run aztec-up install ${PINNED_AZTEC_VERSION}, or install the exact version's entrypoints in ${PINNED_AZTEC_BIN}.`,
+    );
+  }
+  return executable;
+}
+
 const TXE_PORT = Number(process.env.AZTEC_TXE_PORT ?? "8081");
 const TXE_START_TIMEOUT_MS = Number(process.env.AZTEC_TXE_START_TIMEOUT_MS ?? "30000");
 const NARGO_TEST_THREADS = process.env.AZTEC_NARGO_TEST_THREADS ?? "1";
 
 function getAztecEnv() {
   const env = { ...process.env };
+  // Select the side-by-side native compiler as well as the CLI version.
+  env.PATH = `${PINNED_AZTEC_BIN}${delimiter}${env.PATH ?? ""}`;
+  // The V6 CLI honors NARGO for its child compiler. Never inherit an older override.
+  env.NARGO = join(PINNED_AZTEC_BIN, "aztec-nargo");
+  env.AZTEC_VERSIONED = "1";
   // Pin CLI container/image tag unless caller explicitly sets VERSION.
   if (!env.VERSION) {
     env.VERSION = PINNED_AZTEC_VERSION;
@@ -31,12 +55,14 @@ function getAztecEnv() {
 function getAztecTestEnv() {
   const env = getAztecEnv();
   env.LOG_LEVEL ??= "error";
+  // V6 otherwise grows a CPU-sized TXE pool even when Noir tests run serially.
+  env.TXE_WORKERS ??= "1";
   env.NARGO_FOREIGN_CALL_TIMEOUT ??= "300000";
   return env;
 }
 
 function run(command, args, cwd, env = getAztecEnv()) {
-  const result = spawnSync(command, args, {
+  const result = spawnSync(pinnedExecutable(command), args, {
     cwd,
     stdio: "inherit",
     shell: false,
@@ -46,7 +72,7 @@ function run(command, args, cwd, env = getAztecEnv()) {
 }
 
 function runCapture(command, args, cwd, env = getAztecEnv()) {
-  const result = spawnSync(command, args, {
+  const result = spawnSync(pinnedExecutable(command), args, {
     cwd,
     stdio: ["ignore", "pipe", "pipe"],
     shell: false,
@@ -67,6 +93,7 @@ function hasAztecCompile(cwd) {
 }
 
 function compileProject(projectPath) {
+  pinnedExecutable("aztec-nargo");
   const cwd = resolve(projectPath);
   if (hasAztecCompile(cwd)) {
     process.exit(run("aztec", ["compile"], cwd));
@@ -80,6 +107,7 @@ function compileProject(projectPath) {
 }
 
 function compileProjectReturn(projectPath) {
+  pinnedExecutable("aztec-nargo");
   const cwd = resolve(projectPath);
   if (hasAztecCompile(cwd)) {
     return run("aztec", ["compile"], cwd);
@@ -151,13 +179,21 @@ function ensureCrossContractTestArtifacts(projectPath) {
   }
 
   if (cwd.endsWith(`${join("contracts", "magna-company-sponsor")}`)) {
-    // Sponsor tests deploy `MagnaIssuer` from the sponsor project.
-    return ensureArtifactInTarget(
+    // Sponsor tests deploy the issuer and a real rights registry from this project.
+    const issuerStatus = ensureArtifactInTarget(
       repoRoot,
       cwd,
       "magna-issuer",
       "magna_issuer-MagnaIssuer.json",
       "magna_company_sponsor-MagnaIssuer.json",
+    );
+    if (issuerStatus !== 0) return issuerStatus;
+    return ensureArtifactInTarget(
+      repoRoot,
+      cwd,
+      "magna-company-rights-registry",
+      "magna_company_rights_registry-MagnaCompanyRightsRegistry.json",
+      "magna_company_sponsor-MagnaCompanyRightsRegistry.json",
     );
   }
 
@@ -174,7 +210,7 @@ function ensureCrossContractTestArtifacts(projectPath) {
     const bundledTokenArtifact = join(
       repoRoot,
       "node_modules",
-      "@aztec",
+      "@aztec-labs",
       "noir-contracts.js",
       "artifacts",
       "token_contract-Token.json",
@@ -183,19 +219,7 @@ function ensureCrossContractTestArtifacts(projectPath) {
       return ensureArtifactFromFilePath(cwd, bundledTokenArtifact, "token_contract-Token.json");
     }
 
-    const tokenProjectPath = resolve(
-      process.env.HOME ?? "",
-      "nargo",
-      "github.com",
-      "AztecProtocol",
-      "aztec-packages",
-      PINNED_AZTEC_VERSION,
-      "noir-projects",
-      "noir-contracts",
-      "contracts",
-      "app",
-      "token_contract",
-    );
+    const tokenProjectPath = join(repoRoot, "contracts", "vendor", "token_contract");
     return ensureArtifactFromProjectPath(cwd, tokenProjectPath, "token_contract-Token.json", "token_contract-Token.json");
   }
 
@@ -276,6 +300,8 @@ function stopChild(child) {
 }
 
 async function testProject(projectPath) {
+  pinnedExecutable("aztec");
+  pinnedExecutable("aztec-nargo");
   const cwd = resolve(projectPath);
   const prep = ensureCrossContractTestArtifacts(cwd);
   if (prep !== 0) process.exit(prep);
@@ -284,7 +310,7 @@ async function testProject(projectPath) {
   // contract suites exercise TXE/world-state state machines that are not stable
   // under parallel execution. Run tests serially by default and allow opt-in
   // overrides when the upstream runtime issue is resolved.
-  const txe = spawn("aztec", ["start", "--txe", "--port", String(TXE_PORT)], {
+  const txe = spawn(pinnedExecutable("aztec"), ["start", "--txe", "--port", String(TXE_PORT)], {
     cwd,
     stdio: "inherit",
     shell: false,
@@ -318,7 +344,7 @@ const [, , action, arg1, arg2] = process.argv;
 
 if (!action || !arg1) {
   process.stderr.write(
-    "Usage:\n  node scripts/aztec-tooling.mjs compile <project-path>\n  node scripts/aztec-tooling.mjs test <project-path>\n  node scripts/aztec-tooling.mjs codegen <project-path> <out-dir>\n",
+    "Usage:\n  node scripts/aztec-tooling.mjs compile <project-path>\n  node scripts/aztec-tooling.mjs test <project-path>\n  node scripts/aztec-tooling.mjs test-pure <project-path>\n  node scripts/aztec-tooling.mjs codegen <project-path> <out-dir>\n",
   );
   process.exit(1);
 }
@@ -326,6 +352,8 @@ if (!action || !arg1) {
 async function main() {
   if (action === "compile") {
     compileProject(arg1);
+  } else if (action === "test-pure") {
+    process.exit(run("aztec-nargo", ["test"], resolve(arg1), getAztecTestEnv()));
   } else if (action === "test") {
     await testProject(arg1);
   } else if (action === "codegen") {

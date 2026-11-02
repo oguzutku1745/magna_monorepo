@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearPendingRecoveryV3Finalization,
+  clearStoredWalletState,
   commitStoredChainFingerprint,
   loadCredentialRefs,
   loadPendingRecoveryV3Finalization,
@@ -59,6 +60,48 @@ describe("credential ref storage", () => {
         removeItem: vi.fn((key: string) => store.delete(key)),
       },
     });
+  });
+
+  it("isolates V6 wallet, recovery and private witnesses while preserving V5 browser data", () => {
+    const ref = passportRef({ issuerAddress: "0xissuer", passportCommittedClaimsV2Witness: witness });
+    const profile = { address: ownerAddress, walletKind: "passkey", createdAt: ref.createdAt, publicKey: "04public" };
+    const pending = { version: 1 as const, phase: "prepared" as const, target: profile,
+      recoveredCredential: ref, createdAt: ref.createdAt, updatedAt: ref.createdAt };
+    const legacy: Record<string, string> = {
+      "magna-management:credential-refs:v1": JSON.stringify([ref]),
+      "magna-management:wallet-profile:v1": JSON.stringify(profile),
+      "magna-management:chain-fingerprint:v1": "v5-chain",
+      "magna-management:passport-a2-witnesses:v1": JSON.stringify({
+        "0xissuer:0xowner:rooted:99:123": { ...ref, witness },
+      }),
+      "magna-management:instagram-v2-witnesses:v1": JSON.stringify({
+        "0xissuer:0xowner:456": { ownerAddress, claimsHash: "456", instagramHandle: "v5", handleHash: "1", handleBlind: "2" },
+      }),
+      "magna-management:recovery-v3-finalization:v1": JSON.stringify(pending),
+      "magna-management:recovery-target-profile:v1": JSON.stringify(profile),
+    };
+    for (const [key, value] of Object.entries(legacy)) window.localStorage.setItem(key, value);
+
+    expect(loadCredentialRefs()).toEqual([]);
+    expect(loadWalletProfile()).toBeNull();
+    expect(loadPendingRecoveryV3Finalization()).toBeNull();
+    expect(loadRecoveryTargetProfile()).toBeNull();
+    expect(storedChainFingerprintChanged("v6-chain")).toBe(false);
+    expect(readPassportA2Witness(ref)).toBeUndefined();
+    const instagram = { ...ref, kind: "instagram" as const, claimsHash: "456" };
+    expect(replaceCredentialRefsForOwnerFromChain(ownerAddress, "0xissuer", [instagram])[0].instagramHandle).toBeUndefined();
+
+    saveCredentialRefs([ref]);
+    saveWalletProfile(profile);
+    saveRecoveryTargetProfile(profile);
+    savePendingRecoveryV3Finalization(pending);
+    commitStoredChainFingerprint("v6-chain", false);
+    expect(loadCredentialRefs()).toEqual([ref]);
+    expect(loadWalletProfile()).toEqual(profile);
+    expect(loadPendingRecoveryV3Finalization()).toEqual(pending);
+    clearStoredWalletState();
+    expect(loadCredentialRefs()).toEqual([]);
+    for (const [key, value] of Object.entries(legacy)) expect(window.localStorage.getItem(key)).toBe(value);
   });
 
   it("filters refs to the configured issuer", () => {
@@ -202,6 +245,19 @@ describe("credential ref storage", () => {
     });
 
     clearPendingRecoveryV3Finalization();
+    expect(loadPendingRecoveryV3Finalization()).toBeNull();
+  });
+
+  it("loads destination-only pending recovery without a source credential", () => {
+    const pending = {
+      version: 1, phase: "submitted",
+      target: { address: "0xtarget", publicKey: "04abcd", walletKind: "passkey", createdAt: "2026-10-28" },
+      recoveredCredential: passportRef({ id: "new", ownerAddress: "0xtarget" }),
+      createdAt: "2026-10-28", updatedAt: "2026-10-28",
+    } as const;
+    window.localStorage.setItem("magna-management:aztec6:recovery-v3-finalization:v1", JSON.stringify(pending));
+    expect(loadPendingRecoveryV3Finalization()).toEqual(pending);
+    window.localStorage.setItem("magna-management:aztec6:recovery-v3-finalization:v1", JSON.stringify({ ...pending, sourceCredentialId: 123 }));
     expect(loadPendingRecoveryV3Finalization()).toBeNull();
   });
 

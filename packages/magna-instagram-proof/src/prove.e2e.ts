@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { pedersenHash } from "@aztec/foundation/crypto/sync";
+import { pedersenHash } from "@aztec-labs/foundation/crypto/sync";
 import { instagramFixtureHandle, loadVerifiedInstagramFixture, readInstagramFixture } from "./fixture-dkim.js";
 import { packInstagramHandle } from "./inputs.js";
 import { proveInstagramEmail } from "./prove.js";

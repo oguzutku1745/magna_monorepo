@@ -456,7 +456,7 @@ export async function buildPassportWrapperInputs(
     outputs,
     metadata: {
       innerProofName: PASSPORT_A2_INNER_NAME,
-      innerProofVersion: "0.20.0",
+      innerProofVersion: witness.zkPassportOuterProof.version,
       innerVkeyHash: PASSPORT_A2_INNER_VKEY_HASH,
       mrzLayout: disclosureMatch.layout,
       nationalityAlpha3Packed: packAlpha3(witness.nationalityAlpha3),

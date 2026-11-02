@@ -1,9 +1,9 @@
 import type { FeeConfig } from "./fees.js";
-import { AztecAddress } from "@aztec/aztec.js/addresses";
-import type { FeePaymentMethod } from "@aztec/aztec.js/fee";
-import { createAztecNodeClient } from "@aztec/aztec.js/node";
-import { GasFees, ManaUsageEstimate } from "@aztec/stdlib/gas";
-import { ExecutionPayload } from "@aztec/aztec.js/tx";
+import { AztecAddress } from "@aztec-labs/aztec.js/addresses";
+import type { FeePaymentMethod } from "@aztec-labs/aztec.js/fee";
+import { createAztecNodeClient } from "@aztec-labs/aztec.js/node";
+import { GasFees, ManaUsageEstimate } from "@aztec-labs/stdlib/gas";
+import { ExecutionPayload } from "@aztec-labs/aztec.js/tx";
 
 const COMPANY_SPONSOR_MAX_FEE_PADDING = 0.5;
 
@@ -118,7 +118,7 @@ export async function buildCompanySponsorNetworkFeeConfig(
 export async function buildSponsoredFeeConfig(
   sponsoredFpcAddress: string,
 ): Promise<FeeConfig> {
-  const { SponsoredFeePaymentMethod } = await import("@aztec/aztec.js/fee/testing");
+  const { SponsoredFeePaymentMethod } = await import("@aztec-labs/aztec.js/fee/testing");
   return {
     paymentMethod: new SponsoredFeePaymentMethod(AztecAddress.fromStringUnsafe(sponsoredFpcAddress)),
     estimateGas: true,

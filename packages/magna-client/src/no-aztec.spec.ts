@@ -9,9 +9,9 @@ test("@magna-protocol/client ships only chain-verification Aztec dependencies an
   const pkg = JSON.parse(readFileSync(join(distDir, "..", "package.json"), "utf8"));
   const allDeps = { ...pkg.dependencies, ...pkg.peerDependencies };
   for (const dep of Object.keys(allDeps)) {
-    if (dep.startsWith("@aztec/")) {
+    if (/^@aztec(?:-labs|-foundation)?\//.test(dep)) {
       assert.ok(
-        ["@aztec/aztec.js", "@aztec/constants", "@aztec/foundation"].includes(dep),
+        ["@aztec-labs/aztec.js", "@aztec-labs/constants", "@aztec-labs/foundation"].includes(dep),
         `Aztec dependency ${dep} is not required for chain verification`,
       );
     }

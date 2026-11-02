@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { AztecNode } from "@aztec/aztec.js/node";
+import type { AztecNode } from "@aztec-labs/aztec.js/node";
 import { readRootedCredentialChainState } from "./credential-chain-state.js";
 import type { RootedPassportHints } from "./client.js";
 
@@ -66,7 +66,7 @@ function nodeWithMembership(memberIndexes: number[], timestamp = 1_000n) {
 }
 
 describe("readRootedCredentialChainState", () => {
-  it("reports active only after all three chain nullifiers are absent at one pinned block", async () => {
+  it("reports active only after all four chain nullifiers are absent at one pinned block", async () => {
     const { node, references } = nodeWithMembership([]);
     const state = await readRootedCredentialChainState({
       node,
@@ -80,7 +80,7 @@ describe("readRootedCredentialChainState", () => {
       checkedAtBlock: 77,
       checkedAtTimestamp: "1000",
     });
-    assert.deepEqual(references, [77, 77, 77, 77]);
+    assert.deepEqual(references, [77, 77, 77, 77, 77]);
   });
 
   it("treats a root kill-switch nullifier as inactive even while old notes remain readable", async () => {
@@ -123,4 +123,10 @@ describe("readRootedCredentialChainState", () => {
       /Root status does not match/,
     );
   });
+});
+
+it("reports owner root revocation separately from recovery", async () => {
+  const { node } = nodeWithMembership([3]);
+  const state = await readRootedCredentialChainState({ node, issuerAddress: ISSUER, hints: hints() });
+  assert.equal(state.reason, "root-owner-revoked");
 });

@@ -3,7 +3,7 @@ mod issuance_tests;
 mod verify_tests;
 mod recovery_tests;
 mod entrypoint_tests;
-mod root_linked_tests;
+pub mod root_linked_tests;
 mod sponsorship_tests;
 mod consumer_gateway_tests;
 mod instagram_tests;

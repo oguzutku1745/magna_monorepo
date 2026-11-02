@@ -10,12 +10,12 @@ const artifactProfiles = [
   {
     name: "production",
     path: "packages/magna-passport-wrapper-proof/circuit/bundle/magna_passport_wrapper_proof.json",
-    hash: "a7093ad57c0a5cfcb073134d7ed0907067e9b253b11f929fd84b4a321179cea7",
+    hash: "f52714558d3c215f6481034a17fdc7e641f0279831977f5508a97070f7957039",
   },
   {
     name: "development",
     path: "packages/magna-passport-wrapper-proof/circuit-dev/bundle/magna_passport_wrapper_proof_dev.json",
-    hash: "b952eb6435ac847e6dc87e5400b5e81703c2537629b56bab1a550a4561eca4c4",
+    hash: "03ff4bb57297ae75858433a97ddea12998af517a81bda9f7f4a7f34ed005483b",
   },
 ];
 const productionCircuitPath = resolve(

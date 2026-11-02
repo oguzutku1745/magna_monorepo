@@ -31,7 +31,7 @@
     "buffer": "^6.0.3"
   },
   "devDependencies": {
-    "@aztec/foundation": "5.1.0",
+    "@aztec-labs/foundation": "6.0.0",
     "@types/node": "^22.5.5",
     "@zk-email/helpers": "6.4.2",
     "typescript": "^5.9.3"

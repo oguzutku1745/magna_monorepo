@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { webcrypto } from "node:crypto";
 import { MagnaClient, validateLoginResponse, verifyAztecSessionAuthorization, type MagnaClientConfig, type SessionChainVerifier } from "./connector.js";
 import { ageGteConstraint, computePolicyHash, CredentialType, MAGNA_SESSION_AUTHORIZATION_DS, sessionAuthorizationFields, type SessionAssertion } from "@magna-protocol/core";
-import { AztecAddress } from "@aztec/aztec.js/addresses";
-import { DomainSeparator } from "@aztec/constants";
-import { poseidon2HashWithSeparator } from "@aztec/foundation/crypto/sync";
+import { AztecAddress } from "@aztec-labs/aztec.js/addresses";
+import { DomainSeparator } from "@aztec-labs/constants";
+import { poseidon2HashWithSeparator } from "@aztec-labs/foundation/crypto/sync";
 
 (globalThis as Record<string, unknown>).crypto ??= webcrypto;
 

@@ -10,52 +10,53 @@ const repoRoot = resolve(appRoot, "../..");
 
 const aztecBrowserDependencies = [
   "@aztec/bb.js",
+  "@aztec-foundation/bb.js",
   // The repository intentionally carries separate Noir runtime lanes:
   // beta.5 for zkEmail and beta.22 for the zkPassport wrappers. Prebundling
   // these bare specifiers can flatten a stale copy into the Instagram bundle.
   "@noir-lang/acvm_js",
   "@noir-lang/noir_js",
   "@noir-lang/noirc_abi",
-  "@aztec/accounts/testing",
-  "@aztec/aztec.js/abi",
-  "@aztec/aztec.js/account",
-  "@aztec/aztec.js/authorization",
-  "@aztec/aztec.js/contracts",
-  "@aztec/aztec.js/keys",
-  "@aztec/aztec.js/node",
-  "@aztec/aztec.js/addresses",
-  "@aztec/aztec.js/fields",
-  "@aztec/aztec.js/fee",
-  "@aztec/aztec.js/wallet",
-  "@aztec/entrypoints/account",
-  "@aztec/entrypoints/default",
-  "@aztec/entrypoints/interfaces",
-  "@aztec/entrypoints",
-  "@aztec/foundation/collection",
-  "@aztec/foundation/curves/bn254",
-  "@aztec/foundation/crypto/poseidon",
-  "@aztec/foundation/crypto/ecdsa",
-  "@aztec/foundation/log",
-  "@aztec/foundation/serialize",
-  "@aztec/foundation/types",
-  "@aztec/kv-store/sqlite-opfs",
-  "@aztec/noir-acvm_js",
-  "@aztec/noir-noirc_abi",
-  "@aztec/noir-contracts.js/Token",
-  "@aztec/pxe/client/lazy",
-  "@aztec/pxe/server",
-  "@aztec/stdlib/abi",
-  "@aztec/stdlib/errors",
-  "@aztec/stdlib/gas",
-  "@aztec/stdlib/interfaces/client",
-  "@aztec/stdlib/auth-witness",
-  "@aztec/stdlib/aztec-address",
-  "@aztec/stdlib/contract",
-  "@aztec/stdlib/hash",
-  "@aztec/stdlib/tx",
-  "@aztec/wallet-sdk/base-wallet",
+  "@aztec-labs/accounts/testing",
+  "@aztec-labs/aztec.js/abi",
+  "@aztec-labs/aztec.js/account",
+  "@aztec-labs/aztec.js/authorization",
+  "@aztec-labs/aztec.js/contracts",
+  "@aztec-labs/aztec.js/keys",
+  "@aztec-labs/aztec.js/node",
+  "@aztec-labs/aztec.js/addresses",
+  "@aztec-labs/aztec.js/fields",
+  "@aztec-labs/aztec.js/fee",
+  "@aztec-labs/aztec.js/wallet",
+  "@aztec-labs/entrypoints/account",
+  "@aztec-labs/entrypoints/default",
+  "@aztec-labs/entrypoints/interfaces",
+  "@aztec-labs/entrypoints",
+  "@aztec-labs/foundation/collection",
+  "@aztec-labs/foundation/curves/bn254",
+  "@aztec-labs/foundation/crypto/poseidon",
+  "@aztec-labs/foundation/crypto/ecdsa",
+  "@aztec-labs/foundation/log",
+  "@aztec-labs/foundation/serialize",
+  "@aztec-labs/foundation/types",
+  "@aztec-labs/kv-store/sqlite-opfs",
+  "@aztec-foundation/noir-acvm_js",
+  "@aztec-foundation/noir-noirc_abi",
+  "@aztec-labs/noir-contracts.js/Token",
+  "@aztec-labs/pxe/client/lazy",
+  "@aztec-labs/pxe/server",
+  "@aztec-labs/stdlib/abi",
+  "@aztec-labs/stdlib/errors",
+  "@aztec-labs/stdlib/gas",
+  "@aztec-labs/stdlib/interfaces/client",
+  "@aztec-labs/stdlib/auth-witness",
+  "@aztec-labs/stdlib/aztec-address",
+  "@aztec-labs/stdlib/contract",
+  "@aztec-labs/stdlib/hash",
+  "@aztec-labs/stdlib/tx",
+  "@aztec-labs/wallet-sdk/base-wallet",
   "@magna/contracts-bindings",
-  "@aztec/wallets/embedded",
+  "@aztec-labs/wallets/embedded",
 ];
 
 const magnaWorkspaceDependencies = [
@@ -67,7 +68,7 @@ const magnaWorkspaceDependencies = [
 
 const NOIR_WASM_BASENAMES = new Set(["acvm_js_bg.wasm", "noirc_abi_wasm_bg.wasm"]);
 const NOIR_WASM_PACKAGE_PATH =
-  /[/\\]node_modules[/\\](?:@aztec[/\\]noir-(?:acvm_js|noirc_abi)|@noir-lang[/\\](?:acvm_js|noirc_abi))[/\\](?:web|nodejs)[/\\](?:acvm_js_bg|noirc_abi_wasm_bg)\.wasm$/u;
+  /[/\\]node_modules[/\\](?:@aztec-foundation[/\\]noir-(?:acvm_js|noirc_abi)|@noir-lang[/\\](?:acvm_js|noirc_abi))[/\\](?:web|nodejs)[/\\](?:acvm_js_bg|noirc_abi_wasm_bg)\.wasm$/u;
 
 export function resolveNoirWasmDevAsset(requestUrl) {
   const rawPathname = requestUrl ? requestUrl.split("?")[0] : "";
@@ -110,13 +111,14 @@ function noirWasmDevAssets() {
 }
 
 export default defineConfig({
+  envDir: process.env.MAGNA_ENV_DIR ? resolve(process.env.MAGNA_ENV_DIR) : appRoot,
   root: appRoot,
   publicDir: false,
   cacheDir: resolve(appRoot, "node_modules/.vite"),
   resolve: {
     alias: [
       {
-        // @aztec/kv-store uses this package-import alias in browser builds.
+        // @aztec-labs/kv-store uses this package-import alias in browser builds.
         // Route it through the ESM facade for msgpackr's CommonJS no-eval bundle.
         find: /^#msgpackr$/,
         replacement: resolve(
@@ -194,7 +196,7 @@ export default defineConfig({
     // Magna workspace packages are also excluded so local dist rebuilds are not
     // hidden behind a stale Vite dependency cache during wallet-flow debugging.
     exclude: [...aztecBrowserDependencies, ...magnaWorkspaceDependencies],
-    // @aztec/kv-store maps its browser-only #msgpackr import to the CommonJS
+    // @aztec-labs/kv-store maps its browser-only #msgpackr import to the CommonJS
     // no-eval build. Because the parent Aztec entrypoints are excluded above,
     // Vite would otherwise serve that CJS file directly and named imports such
     // as `Encoder` would fail in the browser. Pre-bundle only this leaf module

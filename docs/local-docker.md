@@ -1,13 +1,13 @@
 # Magna local Docker stack
 
-This Compose profile packages the same local developer flow that passed the manual Recovery V3 Gate B-dev run. It does not replace the official zkPassport mobile scan and does not weaken any proof, mutation, replay, Inbox, Ghost, or issuer check.
+This Aztec 6.0.0 Compose profile implements the existing local developer flow. The dated Recovery V3 Gate B-dev evidence was produced on V5 and must be repeated on a fresh V6 deployment. It does not replace the official zkPassport mobile scan and does not weaken any proof, mutation, replay, Inbox, Ghost, or issuer check.
 
 ## What starts
 
 One command starts, in dependency order:
 
-1. one Anvil process from the official digest-pinned Aztec `5.1.0` image;
-2. the official Aztec `5.1.0` local-network process connected explicitly to that Anvil RPC;
+1. one Anvil process from the official digest-pinned Aztec `6.0.0` image;
+2. the official Aztec `6.0.0` local-network process connected explicitly to that Anvil RPC;
 3. a one-shot bootstrap that deploys the rights/application contracts and then Recovery V3;
 4. the verification API;
 5. the management wallet and reference dApp running through their Vite development servers with the generated deployment configuration.
@@ -22,10 +22,10 @@ Stop any host processes already using ports `8080`, `18545`, `4310`, `5174`, or 
 npm run docker:local
 ```
 
-This is intentionally a destructive reset of **only the `magna-local` Compose project**. Every invocation:
+This is intentionally a destructive reset of **only the `magna-local-v6` Compose project**. Every invocation:
 
-1. removes unused prior Magna application-image generations, identified by Magna's image label, without globally pruning Docker;
-2. creates a dedicated empty `magna-local-clean-builder`, rebuilds with `--no-cache`, exports the result to a temporary host file, loads it, and then deletes that builder and all of its cache;
+1. removes unused prior Magna application-image generations, identified by both `io.magna.local-app=true` and `io.magna.aztec-version=6.0.0`, without globally pruning Docker;
+2. creates a dedicated empty `magna-local-v6-clean-builder`, rebuilds with `--no-cache`, exports the result to a temporary host file, loads it, and then deletes that builder and all of its cache;
 3. only after that replacement image is safely loaded, removes the previous Magna containers and named volumes containing Anvil/Aztec state, the deployment manifest, generated runtime configuration, and frontend bundles;
 4. removes the now-unused previous Magna image and starts new L1/L2 processes for a completely new application and Recovery V3 deployment.
 
@@ -41,12 +41,18 @@ inspect `docker system df` and remove only cache you can identify or increase
 Docker Desktop's disk allocation. Its 12 GiB reserve is an early guard, not a
 guarantee against concurrent disk use by other projects.
 
-The command cannot and must not delete the user's OS/cloud passkey credentials. Each fresh bootstrap does, however, generate a new deployment-instance ID. On the next page load, the management and login apps detect that ID, clear the prior Aztec `pxe_data` and `wallet_data` SQLite-OPFS stores for this local network, and discard chain-specific credential metadata before allowing automatic wallet restoration. The underlying passkey remains available and can be used to deploy the same user-controlled address on the fresh chain, or the tester can create a new passkey.
+V5 images, Compose volumes and stopped resources are preserved. The V6 project uses
+`deployments/local-v6.json`, separate named volumes and generated runtime files.
+Old or unversioned manifests are rejected before reuse or writes. The browser uses
+new V6 PXE and wallet store names, preserving V5 stores. Passkeys remain available,
+but V6 requires fresh contract deployments, accounts and credential issuance.
+Recovery V3 transfers a root lineage within its deployed network; it does not
+export/import credentials across the V5/V6 network boundary.
 
 The image build runs the repository build on Node 24 inside the official Aztec image. Because cached layers are deliberately ignored, the build and one-shot deployment can take several minutes. Follow deployment separately with:
 
 ```bash
-docker compose logs -f bootstrap
+docker compose --project-name magna-local-v6 --file compose.yaml logs -f bootstrap
 ```
 
 The bootstrap writes the generated deployment addresses and browser-safe local URLs before it exits. The verification API starts only after bootstrap exits successfully. The frontend services start only after the API passes its health check; management and the reference dApp are then health-gated in that order. Each frontend copies its generated environment file and starts the same Vite development server used by the manual local workflow. This keeps Aztec's worker and WASM resolution on the already-tested development path instead of introducing a second static-bundle runtime solely for Docker.
@@ -61,7 +67,7 @@ The bootstrap still validates its inputs defensively, but `npm run docker:local`
 npm run docker:local:resume
 ```
 
-This command uses `docker compose start` on existing containers without building
+This command starts existing containers in the explicitly pinned V6 project without building
 or bootstrapping. It is not a chain-persistence guarantee: this local profile's
 Anvil and Aztec processes keep chain state in memory. If those processes exited,
 retained application configuration does not restore their chain. Use a fresh
@@ -88,12 +94,9 @@ Open:
 
 - Management: <http://localhost:5174>
 - Reference dApp: <http://localhost:5175>
-
-The reference dApp installs the published `@magna-protocol/client@0.2.0` and
-`@magna-protocol/core@0.1.0` registry tarballs. Startup checks reject SDK workspace
-resolution. After changing its pinned SDK versions, rebuild the application
-image before recreating the reference frontend.
 - Verification API health: <http://localhost:4310/health>
+
+The repository and Docker reference dApp use the workspace V6 SDK: `@magna-protocol/client@0.3.0` and `@magna-protocol/core@0.1.1`. Its startup/build checks explicitly enable workspace mode. Separately, `npm run sdk:prepare` and `npm run test:sdk:consumer` pack and install the SDK tarballs outside the workspace; that strict consumer harness rejects workspace resolution. Those commands do not publish a registry release. Rebuild the image after changing SDK code or versions.
 
 When the reference dApp opens `http://localhost:5174/authorize`, the authorization popup first
 discovers an already-open management wallet through a same-origin `BroadcastChannel`. The tab that
@@ -107,12 +110,39 @@ The management flow remains `devMode=true`: scan the official zkPassport develop
 
 Docker uses `VITE_MAGNA_DEPLOYMENT_PROFILE=development`. Only an explicit `VITE_MAGNA_DEPLOYMENT_PROFILE=production` selects mainnet-safe frontend restrictions such as rejecting the local faucet, local test accounts, zkPassport developer mode, and developer orchestrator.
 
+## Checking a stack after a long idle period
+
+Run `npm run localnet:drift` before handing over an existing stack. V6 derives
+transaction expiry from the L2 anchor block, with a maximum lifetime of 24 hours.
+Anvil's pending timestamp can track the host while the latest L2 block is much
+older. The readiness command therefore checks L2 freshness as well as L1 drift,
+and rejects an L2 anchor older than one hour.
+
+For the managed Docker network, synchronize the existing chain through its
+internal clock control endpoint:
+
+```bash
+docker compose --project-name magna-local-v6 --file compose.yaml exec -T verification-api node --input-type=module -e 'const r=await fetch("http://aztec-localnet:8090/activate",{method:"POST"}); const status=await r.json(); if(!r.ok)throw new Error(JSON.stringify(status)); console.log(status);'
+npm run localnet:drift
+```
+
+This uses the existing forward-only L1/L2 synchronization and preserves genesis,
+deployments and browser/passkey data. Reopen the saved wallet to rebuild a failed
+transaction against the fresh block. A pending clock check or HTTP health check
+alone does not establish that a long-idle node can accept wallet deployment.
+
+On November 2, a synthetic wallet reproduced the reported `Invalid expiration
+timestamp` against a roughly 39-hour-old L2 anchor. The same deployment flow
+passed after synchronization without resetting the chain. The two stale-anchor
+regressions failed before the readiness fix and passed afterward; all 12 clock/
+readiness checks passed in the pinned V6 image. No application login code changed.
+
 ## Inspecting and stopping
 
 ```bash
-docker compose ps
-docker compose logs -f anvil aztec-localnet verification-api management
-docker compose down
+docker compose --project-name magna-local-v6 --file compose.yaml ps
+docker compose --project-name magna-local-v6 --file compose.yaml logs -f anvil aztec-localnet verification-api management
+docker compose --project-name magna-local-v6 --file compose.yaml down
 ```
 
 To remove the current project without immediately rebuilding it, use:
@@ -123,15 +153,16 @@ npm run docker:local:down
 
 That command removes only this Compose project's containers and named volumes. It destroys the disposable local chain and deployment. Browser passkeys are not deleted, but credentials tied to the removed chain are no longer usable, so create new local wallets after the reset.
 
-Docker build cache is different from Magna runtime state: it contains immutable intermediate image layers, not an Anvil database, Aztec state, a deployment manifest, or browser/PXE data. The clean command nevertheless isolates and deletes Magna's build cache on every run. It does not run a global `docker builder prune`; caches belonging to unrelated projects are untouched. Runnable Magna images carry `io.magna.local-app=true`, and the clean command removes unused older generations with that label. A narrowly matched legacy signature cleans images built before the label existed. After a successful build, Docker retains only the current runnable Magna image rather than Magna's intermediate builder cache.
+Docker build cache is different from Magna runtime state: it contains immutable intermediate image layers, not an Anvil database, Aztec state, a deployment manifest, or browser/PXE data. The clean command nevertheless isolates and deletes Magna's build cache on every run. It does not run a global `docker builder prune`; caches belonging to unrelated projects are untouched. Only V6 application images carrying both version and application labels are eligible for cleanup. Unlabelled legacy images and labelled V5 images remain untouched.
 
 ## Configuration boundary
 
-- Aztec is pinned to `aztecprotocol/aztec:5.1.0` and immutable multi-architecture digest `sha256:dd26a01042caf0f34760c4221bd1c855862181842e0cbe3c8c6b4e3f6a5b4128`.
+- Aztec is pinned to `azteclabs/aztec:6.0.0` and immutable multi-architecture digest `sha256:59b10cc8e89bb9226db1f771a5abbe5d5f8d71483c00c7472187e6ddc7adab8d`.
 - Anvil is the Foundry binary bundled in that same immutable image. There is exactly one L1 process; the Aztec local-network service receives it through the documented `--l1-rpc-urls` option rather than silently starting another chain.
 - The image installs the portal's exactly pinned Solidity `0.8.30` compiler during the build and immediately proves that the same portal compiles in Foundry offline mode. Runtime Recovery V3 bootstrap remains offline for compilation and cannot silently select another compiler.
 - The Instagram/zkEmail circuit is an isolated `zkemail.nr v2.0.0` / Noir `1.0.0-beta.5` lane, matching upstream zkEmail CI. Its Noir.js runtime is also beta.5 and its `@aztec/bb.js` backend is `0.84.0`, matching Noir beta.5's own integration tests. The image downloads the official beta.5 Nargo archive for its target architecture, verifies the pinned SHA-256, checks the reported compiler version, and compiles the Instagram artifact from a clean dependency cache. It never uses the Aztec Nargo, a host-specific absolute path, or the host's Nargo dependency cache for that circuit. Real-DKIM input checks and full proof generation are the explicit `npm run test:instagram-proof` acceptance test because the full proof takes about 80 seconds and close to 1 GiB for the optimized circuit.
-- The local timing profile is the validated 4-second Ethereum slot, 8-second Aztec slot, and 1-second block cadence.
+- Network Nargo is `1.0.0-rc.3` at `/root/.aztec/versions/6.0.0/bin/aztec-nargo`, alongside the exact V6 CLI shim. Passport/recovery standalone compilation explicitly selects checksum-pinned `1.0.0-beta.22` via `AZTEC_NARGO_BIN`; Instagram explicitly selects beta.5 via `NARGO_BIN`. The frozen recovery bundle and verification key remain unchanged.
+- The local timing profile uses the source-checked 4-second Ethereum slot, 8-second Aztec slot, and 1-second block cadence.
 - The disposable Anvil account-zero key is injected only into the Vite development bundle for portal relaying and the chain-`31337` Fee Juice faucet. It is not a production custody design.
 - Login with Magna uses no shared frontend signing key. Bootstrap writes the public Aztec node,
   consumer-gateway, and active sponsor addresses to the two app environments. The relying party
@@ -169,7 +200,7 @@ the email, witness, prover, or verifier.
 
 ## Official mobile developer evidence
 
-The September 6 managed-clock deployment passed an official mobile developer
+The historical V5 September 6 managed-clock deployment passed an official mobile developer
 recovery with mutation/replay rejection, canonical Inbox ingestion and successful
 Aztec execution at block 45. See the [public receipt and browser evidence](evidence/recovery-v3-mobile-2026-09-06.md).
 Future acceptance runs still require a fresh official mobile proof; a container
@@ -192,7 +223,7 @@ increment, resets the injected clock, and verifies readiness before the API and
 apps start. Authenticated passport dates and contract freshness rules are unchanged.
 
 The local-only loader in `docker/local-clock` checks exact integration points in
-the digest-pinned Aztec 5.1.0 runtime and refuses an unsupported runtime. It paces
+the digest-pinned Aztec 6.0.0 runtime and refuses an unsupported runtime. It paces
 both ordinary and explicit checkpoints at the sequencer: a future slot waits for
 wall time instead of making L1 advance ahead of it. The 8s Aztec / 4s Ethereum
 protocol slot configuration is preserved. The internal clock control endpoint
@@ -224,3 +255,205 @@ of entering an additional six-minute polling wait. RPC/proof processing has its
 own latency; this is not a three-minute guarantee for mobile scanning and the
 complete browser proof/recovery flow. A wait timeout does not cancel a submitted
 portal transaction.
+
+## Host configuration and V6 acceptance
+
+Host bootstraps default to `deployments/local-v6.json` and generate
+`.runtime/aztec6/management/.env` and `.runtime/aztec6/reference-dapp/.env`.
+They refuse existing output files at the start of a fresh bootstrap; preserve
+those files and choose new output paths when creating another deployment.
+The existing apps' `.env` files are not overwritten. The complete supported fresh
+local bootstrap uses `npm run docker:local` and its managed historical clock.
+The plain-host `network:local` / `bootstrap:local` sequence is not a validated
+complete bootstrap: the V6 CLI requires an external L1 RPC and does not start
+Anvil, and the activation warp on an unmanaged wall-time chain conflicts with
+the local drift guard. Do not weaken the guard to run that sequence.
+
+For an operator-configured compatible node and generated deployment environment,
+host frontend selection remains explicit:
+
+```sh
+MAGNA_ENV_DIR="$PWD/.runtime/aztec6/management" npm run -w @magna/management dev
+MAGNA_ENV_DIR="$PWD/.runtime/aztec6/reference-dapp" npm run -w @magna/reference-dapp dev
+```
+
+Set `MAGNA_ENV_DIR` to an absolute generated directory for each host frontend;
+Vite then loads that directory's environment instead of the old app `.env`.
+Host mode does not install the Docker clock hooks. Its operator must supply the
+L1/node/clock prerequisites and the verification API's explicit deployment
+configuration; the frontend commands alone do not establish those prerequisites.
+
+V6 Fast Inbox has no `LAG()` contract method. Funding/recovery/rights waits
+observe committed inclusion, then require the exact message leaf and global
+index; Fee Juice and rights consumption retain the nullifier/replay checks.
+Local debug advancement remains restricted to chain 31337, paced by wall time,
+and bounded by a three-minute deadline. No fixed two-checkpoint delay remains.
+
+The Passport issuance freshness bound is **300 seconds**. Recovery V3 retains
+its existing **3600-second** proof freshness bound; the consumer-gateway and
+sponsorship-policy activation delay is separately **3600 seconds**. Historical
+bootstrap time may satisfy activation delays; it cannot make a stale live proof
+fresh. A new official mobile developer proof and a supported-document production
+`SALTED=1` proof are separate acceptance gates.
+
+For public testnet, supply a trace-capable L1 RPC with `debug_traceTransaction`
+support, matching V6 node/RPC endpoints, and fresh V6 manifests/accounts. Read-only
+Sepolia registry access is a separate dependency. No remote deployment is
+performed by this migration's verification.
+
+## Migration validation (2026-11-01)
+
+Runtime fixes are committed as `229ee14`. The successful clean arm64 base from
+`cf8c18f` is
+`sha256:8cd42486087a496995fa50d40ba69a053dacce9f6d86ce429e96c914b3b96b03`.
+It compiled all eight V6 network contracts/VKs, both isolated circuit lanes,
+generated bindings, and built all packages/apps/E2E TypeScript. The tracked
+[validation overlay](../docker/Dockerfile.v6-validation) installs the corrected
+root lockfile with `npm ci`, rebuilds all workspaces, then adds the narrowly
+tested waiter/monitor corrections. It retains those clean compiled artifacts;
+it is not a second clean full-source build. `Dockerfile.local` remains the
+clean-build recipe. Final image:
+`sha256:4c64445e3bae5fb331bb57a4dcbfe0fc5286590ed3c47427b3bef8cafb4f67cf`.
+All 46 captured source hashes and the frozen Recovery bundle match. Root,
+E2E and wallet actually resolve upstream `viem@2.57.1`; all independent proof
+runtime checks pass.
+
+After the dependency fix, serial host verification passed all 381 workspace
+tests and all workspace builds. Final-image operational tests pass **35/35**,
+with no skips, including actual V6 compiled clock hooks. Earlier unchanged
+evidence includes 183 Noir tests, 14 compiler-isolation tests and the
+Recovery/rights Solidity suites. The clean-image Instagram gate passed 7 unit
+tests and 1 real private-email proof/verification test; its fixture stayed private.
+
+Actual managed-clock integration passed the full activation delay, future-warp
+refusal, two Fee Juice bridge/inclusion/claim cycles and a subsequent Aztec
+transaction (40.28s combined). The first fresh bootstrap exposed a clock bug:
+the idle Inbox waiter jumped historical L1 to wall time before Recovery setup,
+so final activation refused future mined time. A regression reproduced it;
+requesting only `latest L1 + 1` preserves historical headroom while V6 rounds
+to a new checkpoint. The second genuinely fresh bootstrap passed sponsor
+funding/claim, both generated-env refreshes, Recovery portal/verifier and issuer
+initialization, and real-time activation with zero pending drift. API and both
+frontend endpoints returned HTTP200. The rights suite passed all 3 cases
+(initialization, exact Inbox credit/replay, sponsor isolation); the separate
+issuance-uniqueness case passed. No unrelated L2 producer supplied Inbox progress.
+
+The clock test used the initial dependency-corrected overlay; bootstrap/rights/
+issuance used its waiter-corrected image `72e9119079d1`. The final image adds only
+the read-only monitor pin. API/frontends were refreshed to it without resetting
+the chain, and their health checks passed again. All local protocol execution
+used actual V6 contracts with `realProofs=false`. Issuance uniqueness uses
+administrative synthetic credential inputs. The default host command skipped
+29 live cases; 4 were later executed as above. The other 25 main cases, fresh
+official human Passport/recovery, production `SALTED=1`, actual browser passkey/
+OPFS and public real proving remain unverified. No remote deployment occurred.
+
+Old V5 resources were preserved. The temporary clean builder/export were removed;
+remaining overlay cache shares the retained images, and older unrelated cache
+was left alone. Final Docker free space was about **8.33 GiB**, below the existing
+**12 GiB** clean-build guard. Additional free space is required before another
+clean rebuild; the guard was not lowered and no global prune or resize was used.
+
+
+## Final-source clean build after cleanup (2026-11-01)
+
+After user-authorized removal of obsolete builds/cache, the runtime source at
+`16d5683` passed `npm run docker:local -- --build-only` through
+`Dockerfile.local`, with no cached build layers or validation overlay. Image:
+`sha256:53787516abcf2fe2b4e810cc1e7886790e825d67d4342c92452d8e982a1238fe`.
+All eight network contracts/VKs, isolated Instagram and Recovery circuits,
+generated bindings, packages/apps and E2E TypeScript built successfully.
+
+Inside that clean image, all six runtime-resolution lanes and **35/35**
+operational tests passed with no skips. All **134** changed source files copied
+into the image matched the committed source, the frozen Recovery bundle was
+unchanged, and all eight contract class IDs matched the previous deployed V6
+image. This closes the earlier clean-final-source build limitation.
+
+Only the API and frontend containers were refreshed. Their endpoints returned
+HTTP200; Anvil/node container IDs, chain genesis, deployment-manifest hash and
+all three shared runtime-configuration hashes stayed unchanged. No contracts
+were redeployed and no chain or data volume was reset.
+
+Superseded validation images/cache and the completed old bootstrap job container
+were removed; named volumes and unrelated projects were retained. Docker then
+had **17.93 GiB free**, and the existing 12 GiB rebuild-space check passed.
+The earlier overlay recipe and image IDs above are historical validation evidence.
+No runtime source or product feature was added in this continuation; this is a
+documentation-only follow-up. Manual/browser/public-proof acceptance gates above
+remain open.
+
+
+## Proof-stack availability and login preservation (2026-11-01)
+
+The user requested preservation of the existing login implementation during
+migration. The assistant's subsequent connector changes were outside that
+scope and have been removed. `connector.ts` and `connector.spec.ts` are restored
+exactly to commit `3eb3d32`, before that work. Popup behavior, wallet selection,
+passkey/session routing and the existing connector API remain as they were.
+Earlier 390/27 test counts and Chrome smoke results covered the reverted
+experiment; they are not acceptance evidence for new login behavior.
+
+The read-only `npm run readiness:zkpassport-v6` check remains. zkPassport's
+candidate 0.22.0 targets Noir rc.3 / BB6, but its official manifests returned
+HTTP404 and the published registry rejected its circuit root on mainnet and
+Sepolia. The complete proof upgrade, including exact stable Noir 1.0.0, remains
+blocked on official availability and subsequent official-proof acceptance.
+The active compiler/prover tuples are unchanged.
+
+Instagram remains on its working beta.5 / BB0.84 lane in the same application.
+The earlier ephemeral-container validation compiled its unchanged circuit,
+passed 7 unit/audit tests and generated/verified 1 real private-email proof.
+No private email fixture or identity data was added to Git.
+
+The Docker image and running stack were not rebuilt or refreshed for either
+the experimental login edits or their removal. No chain, generated deployment
+configuration, credential store or passkey was reset. Hardware/mobile/OPFS and
+public-proof acceptance gates from the earlier V6 validation remain open.
+
+Restoration verification passed: 18 existing client tests, 135 management tests
+(including wallet login/session broker), exact WASM routing, 13 readiness tests,
+and the isolated installed SDK consumer's 5 reference tests, TypeScript and Vite
+build. SDK tarballs were rebuilt from the restored source, and the installed
+connector matches that local build byte for byte. No new login behavior remains.
+
+
+## V6 acceptance continuation (2026-11-01)
+
+The full existing critical Docker suite now passes on V6, including 114 issuer
+and 9 sponsor Noir tests, Recovery wrapper/protocol/portal tests, wallet/client,
+API/UI and SDK checks, and real Instagram proof generation/verification.
+The test runner defaults to the supported `TXE_WORKERS=1` mode and the Docker
+wrapper forwards it; explicit worker overrides remain supported. The original
+CPU-sized worker pool produced resolver failures on this machine. Compiler
+isolation and worker-propagation regressions pass 16/16.
+
+The 25 main lifecycle cases have split acceptance on disposable stock V6
+networks: 24 passed in the full run, followed by a passing targeted rerun of the
+corrected final WebAuthn case (1 passed, 24 filtered). The final fixture helper
+is called only by that last case. This supersedes the earlier unverified main
+lifecycle gate, not the separate official-mobile or hardware-passkey gates.
+Test fixtures now use the contract's 3,600-second gateway delay, V6 coordinated
+clock warping, decoded simulation results and real fixture-owner FeeJuice
+funding. WebAuthn uses the app's existing deploy-then-persist and auth-note
+discovery behavior. No application login code or product feature changed.
+
+These lifecycle transactions use local simulated protocol proving and synthetic
+administrative credentials. They do not establish fresh official-mobile
+Passport/recovery, hardware passkeys/OPFS, production `SALTED=1`, or public
+real-proving acceptance. The unavailable zkPassport candidate and exact stable
+Noir cutover remain blocked as described above; active proof tuples are unchanged.
+
+The existing Anvil/node container IDs and start times and L1 genesis stayed
+unchanged. API health and both frontends returned HTTP200. No active chain,
+credential store, passkey or deployment configuration was reset; no remote
+deployment occurred. The app image was not rebuilt or refreshed for these
+test-only changes. The next normal clean build includes the updated test tools.
+
+
+The remaining six native contract projects passed 60/60: meter hook 7, instant
+hook 5, rights registry 9, L2 purchase 12, WebAuthn 23 and WebAuthn account 4.
+Together with issuer 114 and sponsor 9, all 183 network-contract Noir tests now
+have fresh V6 results. Recovery's 3 protocol Noir tests and 10 portal Solidity
+tests passed separately in the critical suite. E2E TypeScript and the final
+read-only review passed. Both connector files still match `3eb3d32` exactly.

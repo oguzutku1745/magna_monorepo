@@ -5,7 +5,6 @@ import {
   PASSPORT_A2_INNER_NAME,
   PASSPORT_A2_INNER_PROOF_FIELD_COUNT,
   PASSPORT_A2_INNER_PUBLIC_INPUT_COUNT,
-  PASSPORT_A2_INNER_VERSION,
   PASSPORT_A2_INNER_VKEY_FIELD_COUNT,
   PASSPORT_A2_INNER_VKEY_HASH,
   type RegistryClientLike,
@@ -45,8 +44,10 @@ function requirePinnedProof(proof: ZkPassportCompressedProof): void {
   if (proof.name !== PASSPORT_A2_INNER_NAME) {
     throw new Error(`Passport A2 requires ${PASSPORT_A2_INNER_NAME}; received ${proof.name}.`);
   }
-  if (proof.version !== PASSPORT_A2_INNER_VERSION) {
-    throw new Error(`Passport A2 requires zkPassport circuits ${PASSPORT_A2_INNER_VERSION}.`);
+  // Version labels may change without changing the circuit. Trust the pinned
+  // cryptographic key, and validate the official artifact for the received label.
+  if (!/^\d+\.\d+\.\d+$/.test(proof.version)) {
+    throw new Error("zkPassport circuit version must be a release version.");
   }
   if (normalizeHash(proof.vkeyHash, "zkPassport vkeyHash") !== PASSPORT_A2_INNER_VKEY_HASH) {
     throw new Error("zkPassport outer proof verification key is not the pinned Passport A2 key.");
@@ -95,7 +96,7 @@ export async function resolveZkPassportRecursiveArtifacts(
   }
 
   const manifest = await registryClient.getCircuitManifest(undefined, {
-    version: PASSPORT_A2_INNER_VERSION,
+    version: proof.version,
     validate: true,
   });
   const packaged = await registryClient.getPackagedCircuit(PASSPORT_A2_INNER_NAME, manifest, {

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { Fr } from "@aztec/aztec.js/fields";
+import { Fr } from "@aztec-labs/aztec.js/fields";
 import { MagnaWebAuthnAccountContract } from "./account-contract.js";
 import { FIXTURE } from "./generated-webauthn-fixtures.js";
 

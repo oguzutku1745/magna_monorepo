@@ -14,6 +14,15 @@ A working end-to-end example lives in `apps/reference-dapp` — in particular
 > a frontend-held signing key: the SDK verifies a request-bound nullifier in the successful Aztec
 > transaction.
 
+Instagram may be independent or linked to Passport by its owner. Linking preserves its claims and
+expiry and invalidates that instance's original standalone copy. Passport root revocation/recovery
+invalidates linked instances; independent instances remain independent. Recovery restores Passport
+only, and fresh Instagram issuance does not revoke other copies of the same handle. These lifecycle
+rules are enforced inside the wallet/contracts; the dApp request and receipt formats are unchanged.
+Rollout requires fresh issuer and company-sponsor deployments with their matching generated
+bindings. Configure the wallet, management app and API to use those same deployments; existing
+deployed instances do not gain these entrypoints automatically.
+
 ---
 
 ## 1. Configure the connector

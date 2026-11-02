@@ -1,6 +1,6 @@
 {
   "name": "@magna-protocol/client",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "license": "Apache-2.0",
   "description": "Login with Magna connector with chain-bound Aztec authorization verification",
   "type": "module",
@@ -21,9 +21,9 @@
     "lint": "echo \"no lint configured\""
   },
   "dependencies": {
-    "@aztec/aztec.js": "5.1.0",
-    "@aztec/constants": "5.1.0",
-    "@aztec/foundation": "5.1.0",
+    "@aztec-labs/aztec.js": "6.0.0",
+    "@aztec-labs/constants": "6.0.0",
+    "@aztec-labs/foundation": "6.0.0",
     "@magna-protocol/core": "0.1.1"
   },
   "devDependencies": {

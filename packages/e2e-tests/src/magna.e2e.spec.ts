@@ -3,31 +3,29 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { getInitialTestAccountsData, INITIAL_TEST_SIGNING_KEYS } from "@aztec/accounts/testing";
-import { deriveSecretKeyFromSigningKey } from "@aztec/accounts/utils";
-import { L1FeeJuicePortalManager } from "@aztec/aztec.js/ethereum";
-import { SetPublicAuthwitContractInteraction } from "@aztec/aztec.js/authorization";
-import { createAztecNodeClient } from "@aztec/aztec.js/node";
-import { AztecAddress, EthAddress } from "@aztec/aztec.js/addresses";
-import type { FeePaymentMethod } from "@aztec/aztec.js/fee";
-import { Fq, Fr } from "@aztec/aztec.js/fields";
-import { FeeJuiceContract, ProtocolContractAddress } from "@aztec/aztec.js/protocol";
-import { ExecutionPayload } from "@aztec/aztec.js/tx";
-import { AccountManager } from "@aztec/aztec.js/wallet";
-import { getFeeJuiceBalance } from "@aztec/aztec.js/utils";
-import { createExtendedL1Client } from "@aztec/ethereum/client";
-import { deployL1Contract } from "@aztec/ethereum/deploy-l1-contract";
-import { EthCheatCodes } from "@aztec/ethereum/test";
-import { Ecdsa } from "@aztec/foundation/crypto/ecdsa";
-import { retryUntil } from "@aztec/foundation/retry";
-import { poseidon2HashWithSeparator } from "@aztec/foundation/crypto/sync";
-import { TestDateProvider } from "@aztec/foundation/timer";
-import { createAztecNodeDebugClient } from "@aztec/stdlib/interfaces/client";
-import { getNonNullifiedL1ToL2MessageWitness } from "@aztec/stdlib/messaging";
-import { Gas, GasFees, GasSettings } from "@aztec/stdlib/gas";
-import { EmbeddedWallet } from "@aztec/wallets/embedded";
-import { createLogger } from "@aztec/foundation/log";
-import { TokenContract } from "@aztec/noir-contracts.js/Token";
+import { getInitialTestAccountsData, INITIAL_TEST_SIGNING_KEYS } from "@aztec-labs/accounts/testing";
+import { deriveSecretKeyFromSigningKey } from "@aztec-labs/accounts/utils";
+import { L1FeeJuicePortalManager } from "@aztec-labs/aztec.js/ethereum";
+import { SetPublicAuthwitContractInteraction } from "@aztec-labs/aztec.js/authorization";
+import { createAztecNodeClient } from "@aztec-labs/aztec.js/node";
+import { AztecAddress, EthAddress } from "@aztec-labs/aztec.js/addresses";
+import type { FeePaymentMethod } from "@aztec-labs/aztec.js/fee";
+import { Fq, Fr } from "@aztec-labs/aztec.js/fields";
+import { FeeJuiceContract, ProtocolContractAddress } from "@aztec-labs/aztec.js/protocol";
+import { ExecutionPayload } from "@aztec-labs/aztec.js/tx";
+import { AccountManager } from "@aztec-labs/aztec.js/wallet";
+import { getFeeJuiceBalance } from "@aztec-labs/aztec.js/utils";
+import { createExtendedL1Client } from "@aztec-labs/ethereum/client";
+import { deployL1Contract } from "@aztec-labs/ethereum/deploy-l1-contract";
+import { Ecdsa } from "@aztec-labs/foundation/crypto/ecdsa";
+import { retryUntil } from "@aztec-labs/foundation/retry";
+import { poseidon2HashWithSeparator } from "@aztec-labs/foundation/crypto/sync";
+import { createAztecNodeDebugClient } from "@aztec-labs/stdlib/interfaces/client";
+import { getNonNullifiedL1ToL2MessageWitness } from "@aztec-labs/stdlib/messaging";
+import { Gas, GasFees, GasSettings } from "@aztec-labs/stdlib/gas";
+import { EmbeddedWallet, type WalletDB } from "@aztec-labs/wallets/embedded";
+import { createLogger } from "@aztec-labs/foundation/log";
+import { TokenContract } from "@aztec-labs/noir-contracts.js/Token";
 import {
   MagnaCompanySponsorContract,
   MagnaCompanyRightsRegistryContract,
@@ -39,6 +37,7 @@ import {
 } from "@magna/contracts-bindings";
 import {
   CredentialType,
+  MagnaBrowserClient,
   MagnaWebAuthnAccountContract,
   computeInstagramClaimsHash,
   computeInstagramHandleCommitment,
@@ -90,7 +89,7 @@ const L1_STABLE_PRICE_PER_VERIFY = 150_000n; // 0.15 units at 6 decimals
 const INITIAL_L1_STABLE_SUPPLY = 1_000_000_000_000n;
 const MAGNA_CLAIMS_DS = 0x4d414743;
 const MAGNA_REVOCATION_DS = 0x4d415247;
-const MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS = 300n;
+const MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS = 3_600n;
 const LOCAL_ANVIL_CHAIN_ID = 31_337n;
 const LOCAL_CLOCK_DRIFT_DANGER_SECONDS = 180n;
 const MAX_CONSTRAINTS = 8;
@@ -173,19 +172,9 @@ function buildCompanySponsorFeeOptions(companySponsor: AztecAddress) {
 }
 
 async function warpForwardSeconds(label: string, seconds: bigint, wallet?: EmbeddedWallet): Promise<void> {
-  const l1Client = createExtendedL1Client(L1_RPC_URLS, L1_MNEMONIC);
-  const currentTimestamp = BigInt((await l1Client.getBlock()).timestamp);
-  const targetTimestamp = currentTimestamp + seconds + 1n;
-  const cheatCodes = new EthCheatCodes(
-    L1_RPC_URLS,
-    new TestDateProvider(),
-    createLogger("magna:e2e:time-warp"),
-  );
-  await cheatCodes.warp(targetTimestamp, { silent: true, resetBlockInterval: true });
-  console.info(
-    `[e2e] ${label} warped time ` +
-      `(from_ts=${currentTimestamp.toString()} to_ts=${targetTimestamp.toString()})`,
-  );
+  const duration = Number(seconds + 1n);
+  await createAztecNodeDebugClient(AZTEC_NODE_URL).warpL2TimeAtLeastBy(duration);
+  console.info(`[e2e] ${label} advanced L1/L2 by at least ${duration}s`);
   await syncWalletPxeAfterWarp(label, wallet);
 }
 
@@ -706,9 +695,10 @@ async function createAndDeployWebAuthnAccount(
     material.registration,
     simulatedAsserter(material.privateKey, rpId, origin),
   );
+  const salt = Fr.random();
   const accountManager = await runStep(
     `AccountManager.create(WebAuthn ${alias})`,
-    async () => await AccountManager.create(wallet, Fr.random(), accountContract, { salt: Fr.random() }),
+    async () => await AccountManager.create(wallet, Fr.random(), accountContract, { salt }),
   );
   await runStep(`wallet.registerContract(WebAuthn ${alias})`, async () => {
     await wallet.registerContract(
@@ -725,6 +715,17 @@ async function createAndDeployWebAuthnAccount(
     `account deployment (WebAuthn ${alias})`,
     async () => await deployMethod.send({ from: feePayer }),
   );
+  // Persist only after deployment: V6's constructor simulation must use the
+  // actual WebAuthn artifact, while later gas estimation reads WalletDB's type.
+  // Match the application's existing WebAuthn metadata; the resolver below
+  // continues to supply the actual WebAuthn account for signing.
+  await (wallet as unknown as { walletDB: WalletDB }).walletDB.storeAccount(accountManager.address, {
+    type: "ecdsasecp256r1",
+    secretKey: accountManager.getSecretKey(),
+    salt,
+    signingKey: accountManager.getSecretKey().toBuffer(),
+    alias,
+  });
   return { address: accountManager.address, deployTx, accountManager };
 }
 
@@ -1401,6 +1402,13 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
       );
     });
 
+    for (const gateway of [consumer.address, secondaryConsumer.address]) {
+      const allowed = await runStep("confirm consumer gateway activation", async () =>
+        await issuer.methods.is_consumer_gateway(gateway).simulate({ from: orchestrator }),
+      );
+      expect(allowed).toBe(true);
+    }
+
     const credentialType = 1;
     const nationalityPacked = packAlpha3("CAN");
     const minAgeProven = 21;
@@ -1988,20 +1996,18 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
       registerRootAuthorityTx,
     );
 
-    const registerLinkedTx = await runStep("register_linked_credential(instagram linked sponsor scope)", async () => {
-      return await ready.issuer.methods
-        .register_linked_credential(
-          ready.activeOwner,
-          ready.ghostOwner,
-          rootCommitment,
-          instagramClaimsHash,
-          instagramCredentialType,
-          instagramExpiryTs,
-        )
-        .send({ from: ready.orchestrator });
+    await runStep("register_credential(instagram linked sponsor scope)", async () =>
+      ready.issuer.methods.register_credential(ready.activeOwner, ready.ghostOwner, instagramClaimsHash, instagramCredentialType, instagramExpiryTs)
+        .send({ from: ready.orchestrator }));
+    await ready.wallet.registerSender(ready.activeOwner, "magna-holder");
+    const registerLinkedTx = await runStep("link_credential_to_root(instagram linked sponsor scope)", async () => {
+      const credential = unwrapStepResult(await ready.issuer.methods.get_credential_hinted(ready.activeOwner, instagramClaimsHash).simulate({ from: ready.activeOwner }));
+      const status = unwrapStepResult(await ready.issuer.methods.get_status_hinted(ready.activeOwner, instagramClaimsHash).simulate({ from: ready.activeOwner }));
+      const rootStatus = unwrapStepResult(await ready.issuer.methods.get_root_status_hinted(ready.activeOwner, rootCommitment).simulate({ from: ready.activeOwner }));
+      return ready.issuer.methods.link_credential_to_root(credential, status, rootStatus).send({ from: ready.activeOwner });
     });
     const registerLinkedTxHash = logTxReceipt(
-      "register_linked_credential_instagram_linked_company_sponsor_scope",
+      "link_credential_to_root_instagram_linked_company_sponsor_scope",
       registerLinkedTx,
     );
 
@@ -2057,7 +2063,6 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
         .sponsored_verify_linked_instagram(
           { credential_type: instagramCredentialType, constraints: buildInstagramConstraints(instagramHandleHash) },
           hintedRootStatus,
-          hintedRootAuthority,
           hintedLinkedCredential,
           hintedLinkedStatus,
           { handle_hash: instagramHandleHash, handle_blind: instagramHandleBlind },
@@ -2096,7 +2101,7 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
     );
   }, 240_000);
 
-  it("rejects linked instagram verify when rooted passport authority has expired", async () => {
+  it("keeps linked instagram valid when rooted passport authority has expired", async () => {
     const ready = requireContext(ctx);
     const expiredAuthorityOwnerDeployment = await createAndDeploySchnorrAccount(
       ready.wallet,
@@ -2108,6 +2113,21 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
       "deploy_instagram_authority_expiry_owner",
       expiredAuthorityOwnerDeployment.deployTx,
     );
+    const ownerFundingClaim = await bridgeFeeJuiceToAddress(ready.node, expiredAuthorityOwner);
+    await mineTwoL2BlocksForBridgeIngestion(
+      ready.l2PaymentToken,
+      ready.orchestrator,
+      "Instagram authority expiry owner Fee Juice bridge ingestion",
+    );
+    const ownerFunding = await claimBridgedFeeJuice(
+      ready.node,
+      ready.wallet,
+      ready.orchestrator,
+      expiredAuthorityOwner,
+      ownerFundingClaim,
+    );
+    expect(ownerFunding.balanceAfterClaim).toBeGreaterThan(0n);
+
     const instagramCredentialType = 3;
     const instagramHandleHash = computeInstagramHandleHash("expiredauthority581");
     const instagramHandleBlind = 222_333_444n;
@@ -2154,20 +2174,18 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
       registerRootAuthorityTx,
     );
 
-    const registerLinkedTx = await runStep("register_linked_credential(instagram authority expiry scope)", async () => {
-      return await ready.issuer.methods
-        .register_linked_credential(
-          expiredAuthorityOwner,
-          ready.ghostOwner,
-          rootCommitment,
-          instagramClaimsHash,
-          instagramCredentialType,
-          instagramExpiryTs,
-        )
-        .send({ from: ready.orchestrator });
+    await runStep("register_credential(instagram authority expiry scope)", async () =>
+      ready.issuer.methods.register_credential(expiredAuthorityOwner, ready.ghostOwner, instagramClaimsHash, instagramCredentialType, instagramExpiryTs)
+        .send({ from: ready.orchestrator }));
+    await ready.wallet.registerSender(expiredAuthorityOwner, "magna-holder");
+    const registerLinkedTx = await runStep("link_credential_to_root(instagram authority expiry scope)", async () => {
+      const credential = unwrapStepResult(await ready.issuer.methods.get_credential_hinted(expiredAuthorityOwner, instagramClaimsHash).simulate({ from: expiredAuthorityOwner }));
+      const status = unwrapStepResult(await ready.issuer.methods.get_status_hinted(expiredAuthorityOwner, instagramClaimsHash).simulate({ from: expiredAuthorityOwner }));
+      const rootStatus = unwrapStepResult(await ready.issuer.methods.get_root_status_hinted(expiredAuthorityOwner, rootCommitment).simulate({ from: expiredAuthorityOwner }));
+      return ready.issuer.methods.link_credential_to_root(credential, status, rootStatus).send({ from: expiredAuthorityOwner });
     });
     const registerLinkedTxHash = logTxReceipt(
-      "register_linked_credential_instagram_authority_expiry_scope",
+      "link_credential_to_root_instagram_authority_expiry_scope",
       registerLinkedTx,
     );
 
@@ -2200,30 +2218,29 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
           .simulate({ from: expiredAuthorityOwner }),
     )) as HintedLinkedStatus;
 
-    await expect(
-      runStep("verify_linked_instagram [should fail after authority expiry]", async () => {
+    const verifyAfterAuthorityExpiry = await runStep("verify_linked_instagram [authority expiry is independent]", async () => {
         return await ready.issuer.methods
           .verify_linked_instagram(
             { credential_type: instagramCredentialType, constraints: buildInstagramConstraints(instagramHandleHash) },
             hintedRootStatus,
-            hintedRootAuthority,
             hintedLinkedCredential,
             hintedLinkedStatus,
             { handle_hash: instagramHandleHash, handle_blind: instagramHandleBlind },
             0,
           )
           .send({ from: expiredAuthorityOwner });
-      }),
-    ).rejects.toBeDefined();
+      });
+    expect(logTxReceipt("verify_linked_instagram_after_authority_expiry", verifyAfterAuthorityExpiry)).toBeTruthy();
 
     ready.txHashesByPhase.instagram_authority_expiry = [
       expiredAuthorityOwnerDeployTxHash,
+      ownerFunding.claimTxHash,
       registerRootTxHash,
       registerRootAuthorityTxHash,
       registerLinkedTxHash,
     ];
     logTrace(
-      "passed.rejects linked instagram verify when rooted passport authority has expired.tx_ids",
+      "passed.keeps linked instagram valid when rooted passport authority has expired.tx_ids",
       ready.txHashesByPhase.instagram_authority_expiry,
     );
   }, 240_000);
@@ -2285,20 +2302,18 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
       registerRootAuthorityTx,
     );
 
-    const registerLinkedTx = await runStep("register_linked_credential(instagram authority refresh scope)", async () => {
-      return await ready.issuer.methods
-        .register_linked_credential(
-          rootOwner,
-          recoveryOwner,
-          rootCommitment,
-          instagramClaimsHash,
-          instagramCredentialType,
-          instagramExpiryTs,
-        )
-        .send({ from: ready.orchestrator });
+    await runStep("register_credential(instagram authority refresh scope)", async () =>
+      ready.issuer.methods.register_credential(rootOwner, recoveryOwner, instagramClaimsHash, instagramCredentialType, instagramExpiryTs)
+        .send({ from: ready.orchestrator }));
+    await ready.wallet.registerSender(rootOwner, "magna-holder");
+    const registerLinkedTx = await runStep("link_credential_to_root(instagram authority refresh scope)", async () => {
+      const credential = unwrapStepResult(await ready.issuer.methods.get_credential_hinted(rootOwner, instagramClaimsHash).simulate({ from: rootOwner }));
+      const status = unwrapStepResult(await ready.issuer.methods.get_status_hinted(rootOwner, instagramClaimsHash).simulate({ from: rootOwner }));
+      const rootStatus = unwrapStepResult(await ready.issuer.methods.get_root_status_hinted(rootOwner, rootCommitment).simulate({ from: rootOwner }));
+      return ready.issuer.methods.link_credential_to_root(credential, status, rootStatus).send({ from: rootOwner });
     });
     const registerLinkedTxHash = logTxReceipt(
-      "register_linked_credential_instagram_authority_refresh_scope",
+      "link_credential_to_root_instagram_authority_refresh_scope",
       registerLinkedTx,
     );
 
@@ -2336,7 +2351,6 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
         .verify_linked_instagram(
           { credential_type: instagramCredentialType, constraints: buildInstagramConstraints(instagramHandleHash) },
           hintedRootStatus,
-          hintedRootAuthority,
           hintedLinkedCredential,
           hintedLinkedStatus,
           { handle_hash: instagramHandleHash, handle_blind: instagramHandleBlind },
@@ -2375,7 +2389,6 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
         .verify_linked_instagram(
           { credential_type: instagramCredentialType, constraints: buildInstagramConstraints(instagramHandleHash) },
           hintedRootStatus,
-          refreshedRootAuthority,
           hintedLinkedCredential,
           hintedLinkedStatus,
           { handle_hash: instagramHandleHash, handle_blind: instagramHandleBlind },
@@ -3776,6 +3789,20 @@ suite("Magna issuer + verify meter hook live-network e2e", () => {
       webAuthnFundingClaim,
     );
     expect(webAuthnFunding.balanceAfterClaim).toBeGreaterThan(0n);
+
+    const webAuthnClient = new MagnaBrowserClient(ready.wallet, {
+      aztecNodeUrl: AZTEC_NODE_URL,
+      issuerAddress: issuerWebAuthn.address.toString(),
+      companySponsorAddresses: [],
+      requireRealSends: true,
+      enableDevOrchestrator: false,
+      enableLocalTestBootstrap: false,
+      localTestAccountIndex: 0,
+    }, webAuthnOrchestrator.toString());
+    const authNoteCount = await runStep("discover WebAuthn signing-key note before authorization", async () =>
+      webAuthnClient.ensureAccountAuthNoteDiscovered(webAuthnOrchestrator.toString()),
+    );
+    expect(authNoteCount).toBeGreaterThan(0);
 
     const registerWebAuthnTx = await runStep(
       "register_credential (WebAuthn orchestrator issuer)",

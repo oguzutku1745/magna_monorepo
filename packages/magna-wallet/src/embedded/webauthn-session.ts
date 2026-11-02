@@ -1,7 +1,7 @@
-import { AccountManager } from "@aztec/aztec.js/wallet";
-import type { Account } from "@aztec/aztec.js/account";
-import type { Wallet } from "@aztec/aztec.js/wallet";
-import { Fr } from "@aztec/aztec.js/fields";
+import { AccountManager } from "@aztec-labs/aztec.js/wallet";
+import type { Account } from "@aztec-labs/aztec.js/account";
+import type { Wallet } from "@aztec-labs/aztec.js/wallet";
+import { Fr } from "@aztec-labs/aztec.js/fields";
 import { clearEmbeddedPxeCacheForNode, isAztecWorldStateAnchorError } from "../browser/pxe-cache.js";
 import { bytesToHex, hexToBytes } from "@magna-protocol/core";
 import { MagnaWebAuthnAccountContract } from "../webauthn/account-contract.js";
@@ -94,7 +94,7 @@ export type WebAuthnRecoveryTarget = {
   materialOrigin: "new" | "recovered";
 };
 
-const STORAGE_KEY = "magna-webauthn-accounts-v1";
+const STORAGE_KEY = "magna-webauthn-accounts-aztec6-v1";
 const WEB_AUTHN_ACCOUNT_RESOLVERS_KEY = Symbol.for("magna.webauthn.accountResolvers");
 
 type WebAuthnAccountResolverMap = Map<string, () => Promise<Account>>;

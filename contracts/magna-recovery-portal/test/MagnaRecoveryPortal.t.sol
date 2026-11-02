@@ -2,7 +2,7 @@
 pragma solidity 0.8.30;
 
 import {
-    IAztecInboxV51,
+    IAztecInboxV6,
     IRecoveryWrapperVerifier,
     IZkPassportRootRegistry,
     L2Actor,
@@ -37,7 +37,7 @@ contract MockRootRegistry is IZkPassportRootRegistry {
     }
 }
 
-contract MockInbox is IAztecInboxV51 {
+contract MockInbox is IAztecInboxV6 {
     bool public shouldRevert;
     uint256 public calls;
     L2Actor public lastRecipient;
@@ -57,8 +57,10 @@ contract MockInbox is IAztecInboxV51 {
         lastRecipient = recipient;
         lastContent = content;
         lastSecretHash = secretHash;
-        leaf = keccak256(abi.encode(msg.sender, recipient.actor, recipient.version, content, secretHash, calls));
         globalLeafIndex = calls - 1;
+        leaf = bytes32(uint256(sha256(abi.encode(
+            msg.sender, block.chainid, recipient.actor, recipient.version, content, secretHash, globalLeafIndex
+        ))) >> 8);
     }
 }
 
@@ -102,7 +104,10 @@ contract MagnaRecoveryPortalTest {
         _expectProof(inputs);
         (bytes32 leaf, uint256 index) = portal.authorizeRecovery(WRAPPER_VERSION, PROOF, inputs);
 
-        require(leaf != bytes32(0), "leaf missing");
+        bytes32 expectedLeaf = bytes32(uint256(sha256(abi.encode(
+            address(portal), block.chainid, ISSUER, uint256(1), inputs[1], inputs[2], uint256(0)
+        ))) >> 8);
+        require(leaf == expectedLeaf, "V6 Inbox leaf must bind sender/chain/recipient/version/content/secret/index");
         require(index == 0, "wrong leaf index");
         require(portal.accepted(inputs[1]), "authorization not recorded");
         require(inbox.calls() == 1, "Inbox not called once");

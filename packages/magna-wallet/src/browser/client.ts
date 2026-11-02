@@ -1,11 +1,12 @@
-import { ContractInitializationStatus, type Wallet } from "@aztec/aztec.js/wallet";
-import { AztecAddress } from "@aztec/aztec.js/addresses";
-import { Fq, Fr } from "@aztec/aztec.js/fields";
-import { SetPublicAuthwitContractInteraction } from "@aztec/aztec.js/authorization";
-import { NoteStatus, type NoteDao } from "@aztec/stdlib/note";
-import { getSchnorrAccountContractAddress } from "@aztec/accounts/schnorr";
-import { computeSecretHash } from "@aztec/stdlib/hash";
-import { poseidon2HashWithSeparator } from "@aztec/foundation/crypto/poseidon";
+import { ContractInitializationStatus, type Wallet } from "@aztec-labs/aztec.js/wallet";
+import { AztecAddress } from "@aztec-labs/aztec.js/addresses";
+import { getContractClassFromArtifact } from "@aztec-labs/aztec.js/contracts";
+import { Fq, Fr } from "@aztec-labs/aztec.js/fields";
+import { SetPublicAuthwitContractInteraction } from "@aztec-labs/aztec.js/authorization";
+import { NoteStatus, type NoteDao } from "@aztec-labs/stdlib/note";
+import { getSchnorrAccountContractAddress } from "@aztec-labs/accounts/schnorr";
+import { computeSecretHash } from "@aztec-labs/stdlib/hash";
+import { poseidon2HashWithSeparator } from "@aztec-labs/foundation/crypto/poseidon";
 import {
   MagnaCompanyRightsRegistryContract,
   MagnaCompanySponsorContract,
@@ -13,7 +14,7 @@ import {
   MagnaRightsPurchaseL2Contract,
   MagnaWebAuthnAccountContract,
 } from "@magna/contracts-bindings";
-import { TokenContract } from "@aztec/noir-contracts.js/Token";
+import { TokenContract } from "@aztec-labs/noir-contracts.js/Token";
 import { buildCompanySponsorFeeConfig } from "../engine/sponsorship.js";
 import {
   deriveGhostKeyMaterial,
@@ -50,7 +51,9 @@ import type { MagnaBrowserEnv as MagnaAppEnv } from "./env.js";
 import { createEmbeddedWallet, ensureImportedLocalTestAccountAddress } from "../embedded/lifecycle.js";
 import { createPublicClient, createWalletClient, http, pad, parseAbiItem, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { readRootedCredentialChainState, type RootedCredentialChainState } from "./credential-chain-state.js";
+import { deriveLinkedInstagramStatusSecret, readInstagramCredentialChainState, readRootStatusChainState, readRootedCredentialChainState, type InstagramCredentialChainState, type RootedCredentialChainState } from "./credential-chain-state.js";
+
+let magnaWebAuthnAccountClassId: Fr | undefined;
 
 const MAGNA_CLAIMS_DS = 0x4d414743n;
 const MAGNA_PASSPORT_NATIONALITY_COMMITMENT_DS = 0x4d414e43n;
@@ -91,6 +94,17 @@ export type RootedPassportHints = PassportHints & {
   hintedRootAuthorityNote: unknown;
   hintedRootRecoveryNote?: unknown;
   hintedLinkedRecoveryNote?: unknown;
+};
+
+export type LinkedInstagramHints = PassportHints & {
+  rootCommitment: string;
+  hintedRootStatusNote: unknown;
+};
+
+export type RevokeCredentialRequest = {
+  mode: "passport" | "rooted";
+  claimsHash: bigint | string;
+  rootCommitment?: bigint | string;
 };
 
 export type DiscoveredMagnaCredentialRef = {
@@ -260,8 +274,8 @@ function parseBigIntField(value: string, label: string): bigint {
   return BigInt(trimmed);
 }
 
-function toField(value: bigint): Fr {
-  return new Fr(value);
+function toField(value: bigint | string): Fr {
+  return new Fr(BigInt(value));
 }
 
 function sleep(ms: number): Promise<void> {
@@ -812,6 +826,8 @@ export class MagnaBrowserClient {
   }
 
   async syncOrchestratorSender(): Promise<void> {
+    // Holder conversion emits notes with the holder's sender tag, independent of issuance.
+    await this.wallet.registerSender(toAddress(this.userAddress), "magna-holder");
     let senderAddress = this.env.orchestratorAddress ? toAddress(this.env.orchestratorAddress) : undefined;
     if (
       !senderAddress &&
@@ -899,6 +915,22 @@ export class MagnaBrowserClient {
   async ensureAccountAuthNoteDiscovered(accountAddress: string): Promise<number> {
     const notes = await this.readAccountAuthNotes(accountAddress);
     return notes.length;
+  }
+
+  private async prepareHolderAccountAuthNote(): Promise<void> {
+    const metadata = await this.wallet.getContractMetadata(toAddress(this.userAddress));
+    // Pinned Wallet metadata supplies the actual contract class, including public upgrades.
+    // Generic wallets must not be asked to read MagnaWebAuthnAccount's private storage layout.
+    const classId = metadata.updatedContractClassId ?? metadata.instance?.originalContractClassId;
+    if (!classId) throw new Error("Cannot identify the active account contract class before authorizing a holder transaction.");
+    magnaWebAuthnAccountClassId ??= (await getContractClassFromArtifact(MagnaWebAuthnAccountContract.artifact)).id;
+    if (!classId.equals(magnaWebAuthnAccountClassId)) return;
+    if ((await this.ensureAccountAuthNoteDiscovered(this.userAddress)) === 0) {
+      throw new Error(
+        "PASSKEY_ACCOUNT_AUTH_NOTE_MISSING: PXE synchronized the active passkey account contract but did not " +
+          "discover its signing-key note.",
+      );
+    }
   }
 
   /**
@@ -1050,11 +1082,7 @@ export class MagnaBrowserClient {
       this.issuer.methods.get_linked_status_hinted(owner, root, claims),
       owner,
     );
-    const hintedRootStatusNote = await simulateHintedNote(
-      "get_root_status_hinted",
-      this.issuer.methods.get_root_status_hinted(owner, root),
-      owner,
-    );
+    const hintedRootStatusNote = await this.selectRootStatusHint(rootCommitment, ownerAddress, false);
     const hintedRootAuthorityNote = await simulateHintedNote(
       "get_root_authority_hinted",
       this.issuer.methods.get_root_authority_hinted(owner, root, claims),
@@ -1071,9 +1099,124 @@ export class MagnaBrowserClient {
     };
   }
 
+  private async rootStatusCandidates(ownerAddress: string, rootCommitment: bigint): Promise<unknown[]> {
+    await this.ensureContractsRegistered();
+    await this.ensureUserAccountIsDeployed();
+    await this.syncOrchestratorSender();
+    await this.syncWalletPxeIfAvailable();
+    const notes = await this.getActiveNotesForStorageSlot(ownerAddress, MagnaIssuerContract.storage.root_status_notes.slot);
+    const owner = toAddress(ownerAddress);
+    const candidates: unknown[] = [];
+    for (const note of notes) {
+      const fields = noteItems(note);
+      if (fields.length < 2 || toBigIntValue(fields[0]) !== rootCommitment) continue;
+      candidates.push(await simulateHintedNote("get_root_status_hinted_by_secret",
+        this.issuer.methods.get_root_status_hinted_by_secret(owner, toField(rootCommitment), toField(toBigIntValue(fields[1]))), owner));
+    }
+    return candidates;
+  }
+
+  async readRootStatusChainState(hintedRootStatusNote: unknown, rootCommitment: bigint | string): Promise<RootedCredentialChainState> {
+    return readRootStatusChainState({ node: getAztecNode(this.env.aztecNodeUrl), issuerAddress: this.env.issuerAddress!, rootCommitment, hintedRootStatusNote });
+  }
+
+  /** Selects a current root even when old versions remain readable after same-owner recovery. */
+  async fetchLiveRootStatusHint(rootCommitment: bigint | string, ownerAddress = this.userAddress): Promise<unknown> {
+    return this.selectRootStatusHint(rootCommitment, ownerAddress, true);
+  }
+
+  private async selectRootStatusHint(rootCommitment: bigint | string, ownerAddress: string, requireLive: boolean): Promise<unknown> {
+    const candidates = await this.rootStatusCandidates(ownerAddress, BigInt(rootCommitment));
+    for (const candidate of candidates) {
+      if ((await this.readRootStatusChainState(candidate, rootCommitment)).status === "active") return candidate;
+    }
+    // Keep authenticated inactive notes available for status display; linking requires a live root.
+    if (!requireLive && candidates.length) return candidates[0];
+    if (!candidates.length) throw new Error("root status note not found for the selected root.");
+    throw new Error("No live Passport root status note found for the selected root.");
+  }
+
+  async fetchLinkedInstagramHints(rootCommitment: bigint | string, claimsHash: bigint | string): Promise<LinkedInstagramHints> {
+    await this.ensureContractsRegistered();
+    await this.ensureUserAccountIsDeployed();
+    await this.syncOrchestratorSender();
+    const owner = toAddress(this.userAddress), root = toField(rootCommitment), claims = toField(claimsHash);
+    for (let attempt = 0; attempt < HINT_SYNC_ATTEMPTS; attempt += 1) {
+      try {
+        await this.syncWalletPxeIfAvailable();
+        const hintedCredentialNote = await simulateHintedNote("get_linked_credential_hinted", this.issuer.methods.get_linked_credential_hinted(owner, root, claims), owner);
+        const hintedStatusNote = await simulateHintedNote("get_linked_status_hinted", this.issuer.methods.get_linked_status_hinted(owner, root, claims), owner);
+        const status = (hintedStatusNote as { note: { revocation_secret: unknown } }).note;
+        const candidates = await this.rootStatusCandidates(this.userAddress, BigInt(rootCommitment));
+        const hintedRootStatusNote = candidates.find(candidate => {
+          const rootNote = (candidate as { note: { revocation_secret: unknown } }).note;
+          return deriveLinkedInstagramStatusSecret(toBigIntValue(rootNote.revocation_secret), BigInt(claimsHash)) === toBigIntValue(status.revocation_secret);
+        });
+        if (!hintedRootStatusNote) throw new Error("Linked Instagram root-version-mismatch: matching root status note not found.");
+        return { claimsHash: String(claimsHash), rootCommitment: String(rootCommitment), hintedCredentialNote, hintedStatusNote, hintedRootStatusNote };
+      } catch (error) {
+        if (!this.isHintedNoteLookupPendingError(error) || attempt === HINT_SYNC_ATTEMPTS - 1) throw error;
+        await sleep(HINT_SYNC_DELAY_MS);
+      }
+    }
+    throw new Error("Linked Instagram hint lookup exhausted.");
+  }
+
+  async readInstagramChainState(hints: PassportHints | LinkedInstagramHints): Promise<InstagramCredentialChainState> {
+    return readInstagramCredentialChainState({ node: getAztecNode(this.env.aztecNodeUrl), issuerAddress: this.env.issuerAddress!, hints });
+  }
+
+  async linkCredentialToRoot(claimsHash: bigint | string, rootCommitment: bigint | string): Promise<TxOutcome> {
+    this.assertRealTransactionMode("linkCredentialToRoot");
+    await this.ensureContractsRegistered();
+    await this.ensureUserAccountIsDeployed();
+    await this.wallet.registerSender(toAddress(this.userAddress), "magna-holder");
+    await this.syncOrchestratorSender();
+    const existing = (await this.discoverCredentialRefs()).find(ref => ref.kind === "instagram" && ref.mode === "rooted" &&
+      BigInt(ref.claimsHash) === BigInt(claimsHash) && BigInt(ref.rootCommitment!) === BigInt(rootCommitment));
+    if (existing) {
+      const hints = await this.fetchLinkedInstagramHints(rootCommitment, claimsHash);
+      if ((await this.readInstagramChainState(hints)).status !== "active") throw new Error("The linked Instagram credential is inactive or expired.");
+      return { txHash: existing.issuanceTxHash, receipt: { alreadyLinked: true } };
+    }
+    const source = await this.fetchPassportHintsByClaimsHash(this.userAddress, claimsHash);
+    const rootStatus = await this.fetchLiveRootStatusHint(rootCommitment);
+    await this.prepareHolderAccountAuthNote();
+    const receipt = await this.issuer.methods.link_credential_to_root(source.hintedCredentialNote as never, source.hintedStatusNote as never, rootStatus as never)
+      .send({ from: toAddress(this.userAddress) });
+    await this.syncWalletPxeIfAvailable();
+    return { txHash: readTxHash(receipt), receipt };
+  }
+
+  async revokeCredential(input: RevokeCredentialRequest): Promise<TxOutcome> {
+    this.assertRealTransactionMode("revokeCredential");
+    await this.ensureContractsRegistered();
+    await this.ensureUserAccountIsDeployed();
+    await this.syncOrchestratorSender();
+    await this.syncWalletPxeIfAvailable();
+    const owner = toAddress(this.userAddress), claims = toField(input.claimsHash);
+    if (input.mode === "rooted" && input.rootCommitment === undefined) throw new Error("Linked credential revocation requires its root commitment.");
+    const status = input.mode === "rooted"
+      ? await simulateHintedNote("get_linked_status_hinted", this.issuer.methods.get_linked_status_hinted(owner, toField(input.rootCommitment!), claims), owner)
+      : await simulateHintedNote("get_status_hinted", this.issuer.methods.get_status_hinted(owner, claims), owner);
+    const call = input.mode === "rooted" ? this.issuer.methods.revoke_linked_credential_as_owner(status as never) : this.issuer.methods.revoke_credential(status as never);
+    await this.prepareHolderAccountAuthNote();
+    const receipt = await call.send({ from: owner });
+    return { txHash: readTxHash(receipt), receipt };
+  }
+
+  async revokeRoot(rootCommitment: bigint | string): Promise<TxOutcome> {
+    this.assertRealTransactionMode("revokeRoot");
+    const rootStatus = await this.fetchLiveRootStatusHint(rootCommitment);
+    await this.prepareHolderAccountAuthNote();
+    const receipt = await this.issuer.methods.revoke_root_as_owner(rootStatus as never).send({ from: toAddress(this.userAddress) });
+    return { txHash: readTxHash(receipt), receipt };
+  }
+
   async fetchPassportHintsByClaimsHash(ownerAddress: string, claimsHash: bigint | string): Promise<PassportHints> {
     await this.ensureContractsRegistered();
     await this.ensureUserAccountIsDeployed();
+    await this.syncOrchestratorSender();
     const normalizedClaimsHash = typeof claimsHash === "bigint" ? claimsHash : BigInt(claimsHash);
     for (let attempt = 0; attempt < HINT_SYNC_ATTEMPTS; attempt += 1) {
       try {
@@ -1113,6 +1256,7 @@ export class MagnaBrowserClient {
   ): Promise<RootedPassportHints> {
     await this.ensureContractsRegistered();
     await this.ensureUserAccountIsDeployed();
+    await this.syncOrchestratorSender();
     const normalizedClaimsHash = typeof claimsHash === "bigint" ? claimsHash : BigInt(claimsHash);
     const normalizedRootCommitment = typeof rootCommitment === "bigint" ? rootCommitment : BigInt(rootCommitment);
     for (let attempt = 0; attempt < HINT_SYNC_ATTEMPTS; attempt += 1) {

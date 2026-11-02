@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   getEmbeddedPxeDatabaseName,
   isAztecWorldStateAnchorError,
@@ -101,6 +102,19 @@ test("PRF outputs convert to deterministic Aztec account material", () => {
   assert.equal(first.salt.toString(), second.salt.toString());
 });
 
+test("V6 passkey lookup ignores V5 accounts and preserves their public metadata", () => {
+  const storage = memoryStorage();
+  const old = storedWebAuthnAccountFromRegistration(registrationFixture(), "0xv5");
+  const legacy = JSON.stringify([old]);
+  storage.setItem("magna-webauthn-accounts-v1", legacy);
+
+  assert.deepEqual(loadStoredWebAuthnAccounts(storage), []);
+  const current = { ...old, address: "0xv6" };
+  saveStoredWebAuthnAccount(storage, current);
+  assert.deepEqual(loadStoredWebAuthnAccounts(storage), [current]);
+  assert.equal(storage.getItem("magna-webauthn-accounts-v1"), legacy);
+});
+
 test("saving WebAuthn accounts retains distinct named passkeys for the same wallet origin", () => {
   const storage = memoryStorage();
   const stale = storedWebAuthnAccountFromRegistration(registrationFixture(), "0xstale");
@@ -199,11 +213,20 @@ test("Aztec world-state anchor errors are recognized without matching unrelated 
   assert.equal(isAztecWorldStateAnchorError(new Error("Invalid tx: Block header not found")), false);
 });
 
-test("embedded wallet store names match the Aztec 5.1 SQLite-OPFS identity layout", () => {
+test("embedded wallet store names match the Aztec 6 SQLite-OPFS identity layout", () => {
   const rollupAddress = "0x322813fd9a801c5507c9de605d63cea4f2ce6c44";
 
-  assert.equal(getEmbeddedPxeDatabaseName(31337, rollupAddress), "pxe_data_31337-0x322813fd9a801c5507c9de605d63cea4f2ce6c44-v13");
-  assert.equal(getEmbeddedWalletDatabaseName(31337, rollupAddress), "wallet_data_31337-0x322813fd9a801c5507c9de605d63cea4f2ce6c44-v1");
+  assert.equal(getEmbeddedPxeDatabaseName(31337, rollupAddress), "pxe_data_31337-0x322813fd9a801c5507c9de605d63cea4f2ce6c44-v16");
+  assert.equal(getEmbeddedWalletDatabaseName(31337, rollupAddress), "magna_v6_wallet_data_31337-0x322813fd9a801c5507c9de605d63cea4f2ce6c44-v1");
+});
+
+test("cache cleanup schema assumptions match the installed V6 dependency", async () => {
+  // Follow public entrypoints to inspect the pinned dependency, without making
+  // private package paths part of the browser production bundle.
+  const metadata = await import(new URL("../storage/metadata.js", import.meta.resolve("@aztec-labs/pxe/config")).href);
+  assert.equal(metadata.PXE_DATA_SCHEMA_VERSION, 16);
+  const walletDb = readFileSync(new URL("../wallet_db.js", import.meta.resolve("@aztec-labs/wallets/embedded")), "utf8");
+  assert.match(walletDb, /WALLET_DATA_SCHEMA_VERSION = 1;/);
 });
 
 function registrationFixture(): WebAuthnRegistration {

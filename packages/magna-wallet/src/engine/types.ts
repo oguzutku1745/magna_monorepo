@@ -126,7 +126,6 @@ export type VerifyInstagramInput = {
 
 export type VerifyLinkedInstagramInput = VerifyInstagramInput & {
   hintedRootStatusNote: unknown;
-  hintedRootAuthorityNote: unknown;
 };
 
 export type RecoverInput = {

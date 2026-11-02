@@ -6,10 +6,13 @@ import {
 import { deriveGhostKeyMaterial } from "./ghost.js";
 import { deriveRootCommitment } from "./root.js";
 import { CredentialType, normalizePolicy } from "@magna-protocol/core";
-import { AztecAddress } from "@aztec/aztec.js/addresses";
-import { Fr } from "@aztec/aztec.js/fields";
+import type { LinkedInstagramHints } from "../browser/client.js";
+import type { InstagramCredentialChainState } from "../browser/credential-chain-state.js";
+import type { Wallet } from "@aztec-labs/aztec.js/wallet";
+import { AztecAddress } from "@aztec-labs/aztec.js/addresses";
+import { Fr } from "@aztec-labs/aztec.js/fields";
 import { prepareGhostAccountOnWallet, type GhostAccountLifecycleOptions, type GhostAccountLifecycleResult } from "../embedded/lifecycle.js";
-import type { EmbeddedWallet } from "@aztec/wallets/embedded";
+import type { EmbeddedWallet } from "@aztec-labs/wallets/embedded";
 import { buildCompanySponsorFeeConfig } from "./sponsorship.js";
 import type { FeeConfig } from "./fees.js";
 import type { ContractLike } from "@magna/contracts-bindings";
@@ -43,6 +46,7 @@ type ContractCall = {
 
 type AztecContract = {
   address?: unknown;
+  wallet?: Pick<Wallet, "registerSender">;
   methods: Record<string, (...args: any[]) => ContractCall>;
 };
 type BoundContract = ContractLike;
@@ -220,6 +224,11 @@ export type MagnaVerificationEngineConfig = {
   hintLookupAttempts?: number;
   hintLookupRetryDelayMs?: number;
   hasher?: Hasher;
+  /** Resolve a live Passport root from PXE notes when using the generic engine directly. */
+  resolveRootStatusHint?: (ownerAddress: string, rootCommitment: bigint | string) => Promise<unknown>;
+  registerHolderSender?: (ownerAddress: string) => Promise<void>;
+  /** Required to confirm a previously settled Instagram conversion without another transaction. */
+  readInstagramChainState?: (hints: LinkedInstagramHints) => Promise<Pick<InstagramCredentialChainState, "status">>;
 };
 
 /**
@@ -238,6 +247,9 @@ export class MagnaVerificationEngine {
   private readonly hintLookupAttempts: number;
   private readonly hintLookupRetryDelayMs: number;
   private readonly hasher: Hasher;
+  private readonly resolveRootStatusHint?: MagnaVerificationEngineConfig["resolveRootStatusHint"];
+  private readonly registerHolderSender?: MagnaVerificationEngineConfig["registerHolderSender"];
+  private readonly readInstagramChainState?: MagnaVerificationEngineConfig["readInstagramChainState"];
 
   constructor(config: MagnaVerificationEngineConfig) {
     this.orchestratorAddress = config.orchestratorAddress;
@@ -258,6 +270,9 @@ export class MagnaVerificationEngine {
         this.companySponsorContractsByAddress.set(String(sponsor.address), sponsor);
       }
     }
+    this.resolveRootStatusHint = config.resolveRootStatusHint;
+    this.registerHolderSender = config.registerHolderSender;
+    this.readInstagramChainState = config.readInstagramChainState;
     this.hasher = config.hasher ?? poseidon2FieldHasher;
   }
 
@@ -362,7 +377,8 @@ export class MagnaVerificationEngine {
       ] = await Promise.all([
         requireSimulate("get_linked_credential_hinted", linkedCredentialCall)({ from: owner }).then(value => unwrapSimulationResult(value)),
         requireSimulate("get_linked_status_hinted", linkedStatusCall)({ from: owner }).then(value => unwrapSimulationResult(value)),
-        requireSimulate("get_root_status_hinted", rootStatusCall)({ from: owner }).then(value => unwrapSimulationResult(value)),
+        this.resolveRootStatusHint ? this.resolveRootStatusHint(ownerAddress, rootCommitment) :
+          requireSimulate("get_root_status_hinted", rootStatusCall)({ from: owner }).then(value => unwrapSimulationResult(value)),
         requireSimulate("get_root_authority_hinted", rootAuthorityCall)({ from: owner }).then(value => unwrapSimulationResult(value)),
       ]);
       return {
@@ -377,12 +393,18 @@ export class MagnaVerificationEngine {
   }
 
   async runVerification(
-    input: VerifyPassportInput | VerifyInstagramInput,
+    input: VerifyPassportInput | VerifyInstagramInput | VerifyLinkedInstagramInput,
     from: string,
     sponsorContext: VerificationSponsorContext = {},
   ) {
     const credentialType = normalizePolicy(input.policy).credentialType;
     if (credentialType === CredentialType.Instagram) {
+      if ("hintedRootStatusNote" in input || "rootCommitment" in input || ("mode" in input && input.mode === "rooted")) {
+        if (!("hintedRootStatusNote" in input) || !input.hintedRootStatusNote) throw new Error("Linked Instagram verification requires root status metadata.");
+        return sponsorContext.sponsored || sponsorContext.sponsorContract
+          ? this.loginWithLinkedInstagramCompanySponsor(input as VerifyLinkedInstagramInput, from, sponsorContext.sponsorContract)
+          : this.loginWithLinkedInstagram(input as VerifyLinkedInstagramInput, from);
+      }
       return sponsorContext.sponsored || sponsorContext.sponsorContract
         ? this.loginWithInstagramCompanySponsor(input as VerifyInstagramInput, from, sponsorContext.sponsorContract)
         : this.loginWithInstagram(input as VerifyInstagramInput, from);
@@ -591,17 +613,53 @@ export class MagnaVerificationEngine {
   }
 
   async registerLinkedInstagram(input: RegisterLinkedInstagramInput) {
+    if (this.registerHolderSender) await this.registerHolderSender(input.activeOwner);
+    else await this.issuerContract.wallet?.registerSender(toAztecAddress(input.activeOwner), "magna-holder");
+    await this.syncBeforeHintLookup?.();
     const claimsHash = computeInstagramClaimsHash(input.claims);
-    return this.issuerContract.methods
-      .register_linked_credential(
-        input.activeOwner,
-        input.ghostOwner,
-        input.rootCommitment,
-        claimsHash,
-        input.claims.credentialType,
-        input.claims.expiryTs,
-      )
-      .send({ from: this.orchestratorAddress });
+    const owner = toAztecAddress(input.activeOwner);
+    const claims = toField(claimsHash);
+    const root = toField(input.rootCommitment);
+    const rootStatusHint = async () => this.resolveRootStatusHint
+      ? this.resolveRootStatusHint(input.activeOwner, input.rootCommitment)
+      : unwrapSimulationResult(await requireSimulate("get_root_status_hinted",
+          this.issuerContract.methods.get_root_status_hinted(owner, root))({ from: owner }));
+    // Only the credential getter's explicit absence permits issuance. Missing paired status,
+    // network, authorization and malformed-hint errors must fail rather than mint again.
+    const existingCredential = async (method: string, args: unknown[], absentMessage: string) => {
+      try {
+        const hint = unwrapSimulationResult(await requireSimulate(method,
+          this.issuerContract.methods[method](...args))({ from: owner }));
+        return { hint };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.includes(absentMessage)) throw error;
+        return undefined;
+      }
+    };
+    const linked = await existingCredential("get_linked_credential_hinted", [owner, root, claims], "linked credential note not found");
+    if (linked) {
+      const hintedStatusNote = unwrapSimulationResult(await requireSimulate("get_linked_status_hinted",
+        this.issuerContract.methods.get_linked_status_hinted(owner, root, claims))({ from: owner }));
+      const hintedRootStatusNote = await rootStatusHint();
+      if (!this.readInstagramChainState) throw new Error("readInstagramChainState is required to validate an already-linked Instagram credential.");
+      const state = await this.readInstagramChainState({ claimsHash: String(claimsHash), rootCommitment: String(input.rootCommitment),
+        hintedCredentialNote: linked.hint, hintedStatusNote, hintedRootStatusNote });
+      if (state.status !== "active") throw new Error("The linked Instagram credential is inactive or expired.");
+      return { alreadyLinked: true };
+    }
+    const standalone = await existingCredential("get_credential_hinted", [owner, claims], "credential note not found");
+    let source: CredentialHints;
+    if (standalone) {
+      const hintedStatusNote = unwrapSimulationResult(await requireSimulate("get_status_hinted",
+        this.issuerContract.methods.get_status_hinted(owner, claims))({ from: owner }));
+      source = { claimsHash: String(claimsHash), hintedCredentialNote: standalone.hint, hintedStatusNote };
+    } else {
+      await this.registerInstagram(input);
+      source = await this.findCredentialHints(input.activeOwner, claimsHash);
+    }
+    const rootStatus = await rootStatusHint();
+    return this.issuerContract.methods.link_credential_to_root(source.hintedCredentialNote, source.hintedStatusNote, rootStatus).send({ from: input.activeOwner });
   }
 
   async loginWithMagna(input: VerifyPassportInput, from: string) {
@@ -681,7 +739,6 @@ export class MagnaVerificationEngine {
       .verify_linked_instagram(
         policy,
         input.hintedRootStatusNote,
-        input.hintedRootAuthorityNote,
         input.hintedCredentialNote,
         input.hintedStatusNote,
         toContractInstagramCommittedClaimsWitness(input.claimsWitness),
@@ -818,7 +875,6 @@ export class MagnaVerificationEngine {
     const args = [
         policy,
         input.hintedRootStatusNote,
-        input.hintedRootAuthorityNote,
         input.hintedCredentialNote,
         input.hintedStatusNote,
         toContractInstagramCommittedClaimsWitness(input.claimsWitness),

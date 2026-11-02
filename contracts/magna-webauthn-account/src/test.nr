@@ -32,6 +32,7 @@ unconstrained fn test_constructor_stores_public_key_note() {
         deployment.secret,
         deployment.salt,
         AztecAddress::zero(),
+        deployment.immutables_hash,
     );
     let account_address = instance.to_address();
     let _ = deployment.env.call_private::<_, _, ()>(

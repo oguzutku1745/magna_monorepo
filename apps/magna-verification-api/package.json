@@ -11,10 +11,10 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@aztec/accounts": "5.1.0",
-    "@aztec/aztec.js": "5.1.0",
-    "@aztec/stdlib": "5.1.0",
-    "@aztec/wallets": "5.1.0",
+    "@aztec-labs/accounts": "6.0.0",
+    "@aztec-labs/aztec.js": "6.0.0",
+    "@aztec-labs/stdlib": "6.0.0",
+    "@aztec-labs/wallets": "6.0.0",
     "@magna/contracts-bindings": "0.1.0",
     "@magna/instagram-proof": "0.1.0",
     "@magna/passport-wrapper-proof": "0.1.0",

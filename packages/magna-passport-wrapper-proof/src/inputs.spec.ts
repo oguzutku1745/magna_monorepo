@@ -100,7 +100,7 @@ async function fixture(profile: PassportA2ProofProfile = "production"): Promise<
   privateProofFields[0] = fieldHex(0xabcdefn);
   const proof = [...publicInputs.map(fieldHex), ...privateProofFields].join("");
   const registryClient: RegistryClientLike = {
-    getCircuitManifest: async () => ({ version: "0.20.0" }),
+    getCircuitManifest: async () => ({ version: "0.21.1" }),
     getPackagedCircuit: async () => ({
       vkey: Buffer.alloc(PASSPORT_A2_INNER_VKEY_FIELD_COUNT * 32).toString("base64"),
       vkey_hash: PASSPORT_A2_INNER_VKEY_HASH,
@@ -112,7 +112,7 @@ async function fixture(profile: PassportA2ProofProfile = "production"): Promise<
       zkPassportOuterProof: {
         proof,
         name: "outer_count_7",
-        version: "0.20.0",
+        version: "0.21.1",
         vkeyHash: PASSPORT_A2_INNER_VKEY_HASH,
       },
       nationalityAlpha3: "TUR",
@@ -174,6 +174,7 @@ describe("Passport A2 inputs", () => {
     assert.equal(built.outputs.rootCommitment, built.metadata.rootCommitment.toString());
     assert.equal("is_id_card" in built.inputs, false);
     assert.equal(built.metadata.mrzLayout, "passport");
+    assert.equal(built.metadata.innerProofVersion, "0.21.1");
   });
 
   it("rejects fabricated nationality before proving", async () => {

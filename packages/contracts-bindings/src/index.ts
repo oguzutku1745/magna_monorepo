@@ -1,4 +1,4 @@
-import type { ContractFunctionInteraction } from "@aztec/aztec.js/contracts";
+import type { ContractFunctionInteraction } from "@aztec-labs/aztec.js/contracts";
 export { MagnaIssuerContract, MagnaIssuerContractArtifact } from "./MagnaIssuer.js";
 export {
   MagnaCompanySponsorContract,

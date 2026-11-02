@@ -1,24 +1,25 @@
-import { getInitialTestAccountsData, INITIAL_TEST_SIGNING_KEYS } from "@aztec/accounts/testing";
-import { getSchnorrAccountContractAddress } from "@aztec/accounts/schnorr";
-import { deriveSecretKeyFromSigningKey } from "@aztec/accounts/utils";
-import { AztecAddress } from "@aztec/aztec.js/addresses";
-import type { Account } from "@aztec/aztec.js/account";
-import { createAztecNodeClient, waitForNode } from "@aztec/aztec.js/node";
-import type { ChainInfo } from "@aztec/aztec.js/account";
-import { ContractInitializationStatus, type AccountManager } from "@aztec/aztec.js/wallet";
-import type { Wallet } from "@aztec/aztec.js/wallet";
-import { CAPABILITY_VERSION, type AppCapabilities } from "@aztec/aztec.js/wallet";
-import { Fq, Fr } from "@aztec/aztec.js/fields";
-import { Ecdsa } from "@aztec/foundation/crypto/ecdsa";
-import { hashToEmoji } from "@aztec/wallet-sdk/crypto";
+import { getInitialTestAccountsData, INITIAL_TEST_SIGNING_KEYS } from "@aztec-labs/accounts/testing";
+import { getSchnorrAccountContractAddress } from "@aztec-labs/accounts/schnorr";
+import { deriveSecretKeyFromSigningKey } from "@aztec-labs/accounts/utils";
+import { AztecAddress } from "@aztec-labs/aztec.js/addresses";
+import type { Account } from "@aztec-labs/aztec.js/account";
+import { createAztecNodeClient, waitForNode } from "@aztec-labs/aztec.js/node";
+import type { ChainInfo } from "@aztec-labs/aztec.js/account";
+import { ContractInitializationStatus, type AccountManager } from "@aztec-labs/aztec.js/wallet";
+import type { Wallet } from "@aztec-labs/aztec.js/wallet";
+import { CAPABILITY_VERSION, type AppCapabilities } from "@aztec-labs/aztec.js/wallet";
+import { Fq, Fr } from "@aztec-labs/aztec.js/fields";
+import { Ecdsa } from "@aztec-labs/foundation/crypto/ecdsa";
+import { hashToEmoji } from "@aztec-labs/wallet-sdk/crypto";
 import {
   WalletManager,
   type DiscoverySession,
   type PendingConnection,
   type WalletProvider,
-} from "@aztec/wallet-sdk/manager";
-import { EmbeddedWallet } from "@aztec/wallets/embedded";
+} from "@aztec-labs/wallet-sdk/manager";
+import { EmbeddedWallet } from "@aztec-labs/wallets/embedded";
 import { Buffer } from "buffer";
+import { EMBEDDED_WALLET_SCHEMA_VERSION, EMBEDDED_WALLET_STORE_NAME } from "../browser/pxe-cache.js";
 import {
   SCOPED_GHOST_DERIVATION_VERSION,
   deriveGhostKeyMaterial,
@@ -127,6 +128,11 @@ export type EmbeddedWalletWithInternals = EmbeddedWallet & {
   pxe?: {
     debug?: {
       sync?: () => Promise<void>;
+      getNotes?: (filter: {
+        contractAddress: AztecAddress;
+        owner: AztecAddress;
+        scopes: AztecAddress[];
+      }) => Promise<unknown[]>;
     };
   };
   getAccountFromAddress?: (address: AztecAddress) => Promise<Account>;
@@ -215,6 +221,14 @@ export async function readAccountInitializationStatus(
   return metadata.initializationStatus;
 }
 
+async function discoverAccountConfigurationNotes(wallet: EmbeddedWallet, address: AztecAddress): Promise<void> {
+  // Discover with the real account artifact before WalletDB enables the SDK's
+  // estimation stub. V6's ECDSA stub cannot decode Magna's WebAuthn note and can
+  // otherwise discard its encrypted message on the first gas simulation.
+  const debug = (wallet as EmbeddedWalletWithInternals).pxe?.debug;
+  await debug?.getNotes?.({ contractAddress: address, owner: address, scopes: [address] });
+}
+
 export async function ensureAccountManagerDeployed(
   wallet: EmbeddedWallet,
   accountManager: AccountManager,
@@ -225,6 +239,7 @@ export async function ensureAccountManagerDeployed(
   }
   const initializationStatus = await readAccountInitializationStatus(wallet, accountManager.address);
   if (initializationStatus === ContractInitializationStatus.INITIALIZED) {
+    await discoverAccountConfigurationNotes(wallet, accountManager.address);
     return { isReady: true };
   }
   let feePayerAddress: AztecAddress | undefined;
@@ -253,6 +268,7 @@ export async function ensureAccountManagerDeployed(
     }
   }
 
+  await discoverAccountConfigurationNotes(wallet, accountManager.address);
   return {
     isReady: true,
     feePayerAddress: feePayerAddress.toString(),
@@ -497,12 +513,10 @@ export async function createEmbeddedWallet(nodeUrl: string, ephemeral: boolean):
   const node = createAztecNodeClient(nodeUrl);
   await waitForNode(node);
   if (ephemeral && typeof window !== "undefined") {
-    // Aztec 5.1's BrowserEmbeddedWallet only applies `ephemeral` to the wallet
-    // database. Its lazy PXE factory still opens the default persistent
-    // `pxe_data_<network>-v13` OPFS pool unless a store is supplied explicitly.
-    // A transient Ghost wallet must therefore provide its own in-memory PXE
-    // store or it will contend with the already-open passkey wallet PXE.
-    const { openTmpStore } = await import("@aztec/kv-store/sqlite-opfs");
+    // V6 BrowserEmbeddedWallet deletes dataDirectory for ephemeral sessions,
+    // but pxe/client/lazy still defaults to openBrowserStore when no store is
+    // supplied. Keep transient PXEs isolated from persistent passkey sessions.
+    const { openTmpStore } = await import("@aztec-labs/kv-store/sqlite-opfs");
     const pxeStore = await openTmpStore(true);
     try {
       return await EmbeddedWallet.create(node, {
@@ -511,6 +525,20 @@ export async function createEmbeddedWallet(nodeUrl: string, ephemeral: boolean):
       });
     } catch (error) {
       await pxeStore.close().catch(() => undefined);
+      throw error;
+    }
+  }
+  if (!ephemeral && typeof window !== "undefined") {
+    const { openBrowserStore } = await import("@aztec-labs/pxe/client/lazy");
+    const { l1ChainId, l1ContractAddresses } = await node.getNodeInfo();
+    const store = await openBrowserStore(EMBEDDED_WALLET_STORE_NAME, EMBEDDED_WALLET_SCHEMA_VERSION, {
+      l1ChainId,
+      rollupAddress: l1ContractAddresses.rollupAddress,
+    });
+    try {
+      return await EmbeddedWallet.create(node, { ephemeral: false, walletDb: { store } });
+    } catch (error) {
+      await store.close().catch(() => undefined);
       throw error;
     }
   }

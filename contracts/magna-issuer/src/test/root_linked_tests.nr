@@ -33,7 +33,7 @@ global ROOT_COMMITMENT_2: Field = 222;
 global EXPIRY_TS: u64 = 1_893_456_000;
 global RECOVERY_PORTAL: Field = 0xdead;
 
-unconstrained fn seed_root_recovery_message(
+pub unconstrained fn seed_root_recovery_message(
     env: TestEnvironment,
     issuer: AztecAddress,
     root_commitment: Field,
@@ -1006,5 +1006,94 @@ unconstrained fn test_recover_root_rotates_root_status_for_new_active_owner() {
     assert(
         new_root_nullifier != old_root_nullifier,
         "expected root kill-switch nullifier rotation",
+    );
+}
+
+#[test(should_fail_with = "Cannot prove nullifier non-inclusion")]
+unconstrained fn test_root_owner_revoke_prevents_authority_refresh() {
+    let (mut env, issuer, orchestrator, active_owner, ghost_owner, _) = setup();
+    let initial_claims_hash = claims_hash_for_min_age(21);
+    let refreshed_claims_hash = claims_hash_for_min_age(22);
+
+    env.call_private(
+        orchestrator,
+        MagnaIssuer::at(issuer).register_rooted_passport(
+            active_owner,
+            ghost_owner,
+            ROOT_COMMITMENT_1,
+            initial_claims_hash,
+            EXPIRY_TS,
+        ),
+    );
+
+    let hinted_root_status = env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).get_root_status_hinted(active_owner, ROOT_COMMITMENT_1),
+    );
+    let hinted_root_authority = env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).get_root_authority_hinted(active_owner, ROOT_COMMITMENT_1, initial_claims_hash),
+    );
+
+    env.call_private(active_owner, MagnaIssuer::at(issuer).revoke_root_as_owner(hinted_root_status));
+    env.call_private(
+        orchestrator,
+        MagnaIssuer::at(issuer).refresh_root_authority(
+            ghost_owner,
+            hinted_root_status,
+            hinted_root_authority,
+            refreshed_claims_hash,
+            EXPIRY_TS,
+        ),
+    );
+
+}
+
+#[test(should_fail_with = "Cannot prove nullifier non-inclusion")]
+unconstrained fn test_root_owner_revoke_blocks_linked_passport() {
+    let (mut env, issuer, orchestrator, active_owner, ghost_owner, _) = setup();
+    let claims_hash = claims_hash_for_min_age(21);
+
+    env.call_private(
+        orchestrator,
+        MagnaIssuer::at(issuer).register_rooted_passport(
+            active_owner,
+            ghost_owner,
+            ROOT_COMMITMENT_1,
+            claims_hash,
+            EXPIRY_TS,
+        ),
+    );
+
+    let hinted_root_status = env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).get_root_status_hinted(active_owner, ROOT_COMMITMENT_1),
+    );
+    let hinted_root_authority = env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).get_root_authority_hinted(active_owner, ROOT_COMMITMENT_1, claims_hash),
+    );
+    let hinted_credential = env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).get_linked_credential_hinted(active_owner, ROOT_COMMITMENT_1, claims_hash),
+    );
+    let hinted_status = env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).get_linked_status_hinted(active_owner, ROOT_COMMITMENT_1, claims_hash),
+    );
+
+    env.call_private(active_owner, MagnaIssuer::at(issuer).revoke_root_as_owner(hinted_root_status));
+    env.call_private(
+        active_owner,
+        MagnaIssuer::at(issuer).verify_linked(
+            base_policy(),
+            hinted_root_status,
+            hinted_root_authority,
+            hinted_credential,
+            hinted_status,
+            21,
+            pack_alpha3(67, 65, 78),
+            0,
+        ),
     );
 }

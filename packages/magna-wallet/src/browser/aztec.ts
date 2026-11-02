@@ -1,8 +1,8 @@
-import type { ContractArtifact } from "@aztec/aztec.js/abi";
-import { AztecAddress } from "@aztec/aztec.js/addresses";
-import { createAztecNodeClient, type AztecNode } from "@aztec/aztec.js/node";
-import type { Wallet } from "@aztec/aztec.js/wallet";
-import { contractInstanceWithAddressFromPlainObject } from "@aztec/stdlib/contract";
+import type { ContractArtifact } from "@aztec-labs/aztec.js/abi";
+import { AztecAddress } from "@aztec-labs/aztec.js/addresses";
+import { createAztecNodeClient, type AztecNode } from "@aztec-labs/aztec.js/node";
+import type { Wallet } from "@aztec-labs/aztec.js/wallet";
+import { contractInstanceWithAddressFromPlainObject } from "@aztec-labs/stdlib/contract";
 import { MagnaCompanySponsorContract, MagnaIssuerContract } from "@magna/contracts-bindings";
 
 export function getAztecNode(nodeUrl: string): AztecNode {

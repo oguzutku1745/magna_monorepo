@@ -1,4 +1,4 @@
-import { pedersenHash, poseidon2HashWithSeparator } from "@aztec/foundation/crypto/sync";
+import { pedersenHash, poseidon2HashWithSeparator } from "@aztec-labs/foundation/crypto/sync";
 import { CredentialType } from "@magna-protocol/core";
 import type {
   Hasher,

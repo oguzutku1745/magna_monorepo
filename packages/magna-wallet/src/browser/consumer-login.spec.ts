@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { CredentialType, ClaimId, ConstraintOp } from "@magna-protocol/core";
-import { ContractInitializationStatus } from "@aztec/aztec.js/wallet";
+import { ContractInitializationStatus } from "@aztec-labs/aztec.js/wallet";
 import { MagnaCompanySponsorContract, MagnaConsumerContract, MagnaIssuerContract } from "@magna/contracts-bindings";
+import { MagnaBrowserClient } from "./client.js";
 import { runMagnaConsumerLogin } from "./consumer-login.js";
 
 const activeAddress = "0x0222222222222222222222222222222222222222222222222222222222222222";
@@ -55,8 +56,9 @@ function assertSponsorFeeOptions(options: unknown) {
   return sendOptions.fee!.paymentMethod!.getFeePayer();
 }
 
-test("runMagnaConsumerLogin routes rooted credentials through the linked sponsor gateway", async () => {
+test("runMagnaConsumerLogin routes rooted credentials through the linked sponsor gateway", async (t) => {
   const hintedRootStatusNote = { id: "root-status" };
+  t.mock.method(MagnaBrowserClient.prototype as any, "selectRootStatusHint", async () => hintedRootStatusNote);
   const hintedRootAuthorityNote = { id: "root-authority" };
   const hintedCredentialNote = { id: "linked-credential" };
   const hintedStatusNote = { id: "linked-status" };
@@ -156,8 +158,9 @@ test("runMagnaConsumerLogin routes rooted credentials through the linked sponsor
   assert.deepEqual(outcome, { verified: true, receipt: "0xlinked", authorizationContract: sponsorAddress });
 });
 
-test("runMagnaConsumerLogin routes v2-only rooted passports through the linked sponsor gateway", async () => {
+test("runMagnaConsumerLogin routes v2-only rooted passports through the linked sponsor gateway", async (t) => {
   const hintedRootStatusNote = { id: "root-status" };
+  t.mock.method(MagnaBrowserClient.prototype as any, "selectRootStatusHint", async () => hintedRootStatusNote);
   const hintedRootAuthorityNote = { id: "root-authority" };
   const hintedCredentialNote = { id: "linked-credential" };
   const hintedStatusNote = { id: "linked-status" };
@@ -347,3 +350,35 @@ test("runMagnaConsumerLogin routes instagram credentials through sponsored issue
   assert.equal((await assertSponsorFeeOptions(sendOptions)).toString(), sponsorAddress);
   assert.deepEqual(outcome, { verified: true, receipt: "0xinstagram", authorizationContract: sponsorAddress });
 });
+
+for (const missingRoot of [false, true]) {
+  test(`rooted Instagram ${missingRoot ? 'rejects missing root metadata' : 'uses linked session sponsorship without authority'}`, async () => {
+    let linkedArgs: unknown[] | undefined;
+    let options: unknown;
+    (MagnaIssuerContract as any).at = () => ({ address: { toString: () => issuerAddress }, methods: {} });
+    (MagnaCompanySponsorContract as any).at = () => ({ address: { toString: () => sponsorAddress }, methods: {
+      sponsored_verify_linked_session_instagram: (...args: unknown[]) => { linkedArgs = args; return { send: async (opts: unknown) => { options = opts; return { txHash: '0xlinkedig' }; } }; },
+    } });
+    const { MagnaBrowserClient } = await import('./client.js');
+    const proto = MagnaBrowserClient.prototype as any;
+    const original = proto.fetchLinkedInstagramHints;
+    proto.fetchLinkedInstagramHints = async () => ({ hintedRootStatusNote: 'root', hintedCredentialNote: 'credential', hintedStatusNote: 'status' });
+    try {
+      const input = { env: sponsorEnv(), wallet: {
+        pxe: { debug: { getNotes: async () => [{ id: 'auth' }] } }, registerSender: async () => {}, registerContract: async () => {},
+        getContractMetadata: async () => ({ instance: {}, initializationStatus: ContractInitializationStatus.INITIALIZED }),
+      } as never, activeAddress, consumerGatewayAddress, sessionAuthorization,
+        policy: { credentialType: CredentialType.Instagram, constraints: [{ claimId: ClaimId.InstagramHandleHash, op: ConstraintOp.Eq, value: 123n }] },
+        credential: { ownerAddress: activeAddress, kind: 'instagram' as const, mode: 'rooted' as const, rootCommitment: missingRoot ? undefined : '99', claimsHash: '456', handleHash: '123', handleBlind: '789' },
+      };
+      if (missingRoot) await assert.rejects(() => runMagnaConsumerLogin(input), /missing its root commitment/);
+      else {
+        const outcome = await runMagnaConsumerLogin(input);
+        assert.deepEqual(linkedArgs?.slice(1, 6), ['root', 'credential', 'status', { handle_hash: 123n, handle_blind: 789n }, 0]);
+        assert.equal(linkedArgs?.length, 11);
+        assert.equal((await assertSponsorFeeOptions(options)).toString(), sponsorAddress);
+        assert.deepEqual(outcome, { verified: true, receipt: '0xlinkedig', authorizationContract: sponsorAddress });
+      }
+    } finally { proto.fetchLinkedInstagramHints = original; }
+  });
+}

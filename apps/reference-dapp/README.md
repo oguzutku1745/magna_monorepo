@@ -4,11 +4,15 @@ This app demonstrates the thin `@magna-protocol/client` Login with Magna integra
 wallet-engine and contract-binding dependencies; the SDK performs the required read-only Aztec
 transaction-effect check against the configured node.
 
-The app uses the published SDK in both local workspace commands and Docker.
-Its dependency specifications pin the npm registry tarballs for client 0.2.0
-and core 0.1.0; the lockfile records their integrity hashes. This prevents npm
-from substituting the monorepo's SDK workspaces. Startup, tests and builds check
-the resolved client and its transitive core and reject workspace resolution.
+Repository commands use the local V6 SDK workspace (`@magna-protocol/client` 0.3.0).
+Startup, tests and builds check that the SDK and its transitive core resolve to
+this repository's packages. The V5 client 0.2.1 registry tarball is immutable
+and cannot be used against the V6 network.
+
+To verify the actual package boundary, run `npm run sdk:prepare` followed by
+`npm run test:sdk:consumer` from the repository root. The harness installs local
+tarballs outside the monorepo and rejects workspace resolution. These commands
+do not publish packages; V6 registry availability is not assumed.
 
 It is a relying-party login app, not an issuance app. It asks for the Instagram
 handle that must be proved and sends that requirement through `@magna-protocol/client`.

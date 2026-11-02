@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import localDeployment from "../../../../deployments/local.json";
+import localDeployment from "../../../../deployments/local-v6.json";
 import { getManagementEnv } from "./env";
 
 const deployment = localDeployment as {

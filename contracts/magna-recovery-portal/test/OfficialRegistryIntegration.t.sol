@@ -6,7 +6,7 @@ import {CircuitRegistry} from "@zkpassport-registry/registries/CircuitRegistry.s
 import {RootRegistry} from "@zkpassport-registry/RootRegistry.sol";
 import {IRegistryInstance} from "@zkpassport-registry/IRegistryInstance.sol";
 import {
-    IAztecInboxV51,
+    IAztecInboxV6,
     IRecoveryWrapperVerifier,
     L2Actor,
     MagnaRecoveryPortal
@@ -29,15 +29,18 @@ contract RegistryPathBoundVerifier is IRecoveryWrapperVerifier {
     }
 }
 
-contract RegistryPathInbox is IAztecInboxV51 {
+contract RegistryPathInbox is IAztecInboxV6 {
     uint256 public calls;
 
-    function sendL2Message(L2Actor memory, bytes32 content, bytes32 secretHash)
+    function sendL2Message(L2Actor memory recipient, bytes32 content, bytes32 secretHash)
         external
         returns (bytes32 leaf, uint256 globalLeafIndex)
     {
         calls += 1;
-        return (keccak256(abi.encode(msg.sender, content, secretHash)), calls - 1);
+        globalLeafIndex = calls - 1;
+        leaf = bytes32(uint256(sha256(abi.encode(
+            msg.sender, block.chainid, recipient.actor, recipient.version, content, secretHash, globalLeafIndex
+        ))) >> 8);
     }
 }
 

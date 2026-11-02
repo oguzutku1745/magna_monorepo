@@ -7,6 +7,7 @@ import { nodePolyfills } from "vite-plugin-node-polyfills";
 const appRoot = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
+  envDir: process.env.MAGNA_ENV_DIR ? resolve(process.env.MAGNA_ENV_DIR) : appRoot,
   root: appRoot,
   publicDir: false,
   cacheDir: resolve(appRoot, "node_modules/.vite"),

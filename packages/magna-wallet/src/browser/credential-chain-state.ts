@@ -1,11 +1,13 @@
-import type { AztecNode } from "@aztec/aztec.js/node";
-import { DomainSeparator } from "@aztec/constants";
-import { poseidon2HashWithSeparator } from "@aztec/foundation/crypto/sync";
-import type { RootedPassportHints } from "./client.js";
+import type { AztecNode } from "@aztec-labs/aztec.js/node";
+import { DomainSeparator } from "@aztec-labs/constants";
+import { poseidon2HashWithSeparator } from "@aztec-labs/foundation/crypto/sync";
+import type { RootedPassportHints, LinkedInstagramHints, PassportHints } from "./client.js";
 import { toAddress } from "./aztec.js";
 
 // Must remain byte-for-byte aligned with contracts/magna-issuer/src/internal/constants.nr.
 const MAGNA_REVOCATION_DS = 0x4d415247;
+const MAGNA_ROOT_OWNER_REVOCATION_DS = 0x4d415257;
+const MAGNA_LINKED_STATUS_SECRET_DS = 0x4d414c53;
 const MAGNA_ROOT_REVOCATION_DS = 0x4d41524f;
 const MAGNA_ROOT_AUTHORITY_REVOCATION_DS = 0x4d415241;
 
@@ -14,6 +16,9 @@ export type RootedCredentialChainState = {
   reason:
     | "chain-valid"
     | "linked-credential-revoked"
+    | "credential-revoked"
+    | "root-owner-revoked"
+    | "root-version-mismatch"
     | "root-lineage-revoked-or-recovered"
     | "root-authority-superseded"
     | "credential-expired"
@@ -106,7 +111,7 @@ export async function readRootedCredentialChainState(input: {
     MAGNA_ROOT_AUTHORITY_REVOCATION_DS,
   );
   const issuer = toAddress(input.issuerAddress);
-  // This is the exact implementation of @aztec/stdlib/hash.siloNullifier,
+  // This is the exact implementation of @aztec-labs/stdlib/hash.siloNullifier,
   // kept on the synchronous browser-safe Poseidon backend.
   const linkedNullifier = poseidon2HashWithSeparator(
     [issuer.toField(), linkedInner],
@@ -124,11 +129,14 @@ export async function readRootedCredentialChainState(input: {
   // Pin every query and the timestamp to one block so the displayed state is a
   // coherent source-of-truth snapshot rather than a mixture of moving `latest`s.
   const checkedAtBlock = await input.node.getBlockNumber();
-  const [block, linkedWitness, rootWitness, authorityWitness] = await Promise.all([
+  const ownerRootNullifier = silo(input.issuerAddress, poseidon2HashWithSeparator(
+    [fieldValue(rootStatus, "revocation_secret", "rootStatus"), expectedRoot], MAGNA_ROOT_OWNER_REVOCATION_DS));
+  const [block, linkedWitness, rootWitness, authorityWitness, ownerRootWitness] = await Promise.all([
     input.node.getBlockData(checkedAtBlock),
     input.node.getNullifierMembershipWitness(checkedAtBlock, linkedNullifier),
     input.node.getNullifierMembershipWitness(checkedAtBlock, rootNullifier),
     input.node.getNullifierMembershipWitness(checkedAtBlock, authorityNullifier),
+    input.node.getNullifierMembershipWitness(checkedAtBlock, ownerRootNullifier),
   ]);
   if (!block) {
     throw new Error(`Aztec block ${checkedAtBlock} was unavailable during credential status validation.`);
@@ -142,6 +150,9 @@ export async function readRootedCredentialChainState(input: {
       checkedAtBlock: Number(checkedAtBlock),
       checkedAtTimestamp: checkedAtTimestamp.toString(),
     };
+  }
+  if (ownerRootWitness) {
+    return { status: "inactive", reason: "root-owner-revoked", checkedAtBlock: Number(checkedAtBlock), checkedAtTimestamp: checkedAtTimestamp.toString() };
   }
   if (authorityWitness) {
     return {
@@ -185,4 +196,81 @@ export async function readRootedCredentialChainState(input: {
     checkedAtBlock: Number(checkedAtBlock),
     checkedAtTimestamp: checkedAtTimestamp.toString(),
   };
+}
+
+export type InstagramCredentialChainState = RootedCredentialChainState;
+type ChainNode = Pick<AztecNode, "getBlockNumber" | "getBlockData" | "getNullifierMembershipWitness">;
+
+function silo(issuer: string, inner: ReturnType<typeof poseidon2HashWithSeparator>) {
+  return poseidon2HashWithSeparator([toAddress(issuer).toField(), inner], DomainSeparator.SILOED_NULLIFIER);
+}
+
+export function deriveLinkedInstagramStatusSecret(rootSecret: bigint, claimsHash: bigint): bigint {
+  return poseidon2HashWithSeparator([rootSecret, 3n, claimsHash], MAGNA_LINKED_STATUS_SECRET_DS).toBigInt();
+}
+
+/** Reads only root kill switches. Passport authority and credential expiry do not affect the root. */
+export async function readRootStatusChainState(input: {
+  node: ChainNode; issuerAddress: string; rootCommitment: string | bigint; hintedRootStatusNote: unknown;
+}): Promise<RootedCredentialChainState> {
+  const root = BigInt(input.rootCommitment);
+  const note = noteRecord(input.hintedRootStatusNote, "rootStatus");
+  assertSame(fieldValue(note, "root_commitment", "rootStatus"), root, "Root status");
+  const secret = fieldValue(note, "revocation_secret", "rootStatus");
+  const blockNumber = await input.node.getBlockNumber();
+  const [block, recovery, owner] = await Promise.all([
+    input.node.getBlockData(blockNumber),
+    input.node.getNullifierMembershipWitness(blockNumber, silo(input.issuerAddress, poseidon2HashWithSeparator([secret, root], MAGNA_ROOT_REVOCATION_DS))),
+    input.node.getNullifierMembershipWitness(blockNumber, silo(input.issuerAddress, poseidon2HashWithSeparator([secret, root], MAGNA_ROOT_OWNER_REVOCATION_DS))),
+  ]);
+  if (!block) throw new Error(`Aztec block ${blockNumber} was unavailable during root status validation.`);
+  return {
+    status: recovery || owner ? "inactive" : "active",
+    reason: recovery ? "root-lineage-revoked-or-recovered" : owner ? "root-owner-revoked" : "chain-valid",
+    checkedAtBlock: Number(blockNumber), checkedAtTimestamp: block.header.globalVariables.timestamp.toString(),
+  };
+}
+
+/** Instagram validity uses its own notes and, for linked instances, the exact root version. */
+export async function readInstagramCredentialChainState(input: {
+  node: ChainNode; issuerAddress: string; hints: PassportHints | LinkedInstagramHints;
+}): Promise<InstagramCredentialChainState> {
+  const credential = noteRecord(input.hints.hintedCredentialNote, "credential");
+  const status = noteRecord(input.hints.hintedStatusNote, "status");
+  const claims = BigInt(input.hints.claimsHash);
+  for (const [label, note] of [["Credential", credential], ["Status", status]] as const) {
+    assertSame(fieldValue(note, "claims_hash", label), claims, `${label} claims`);
+    assertSame(fieldValue(note, "credential_type", label), 3n, `${label} type`);
+  }
+  const secret = fieldValue(status, "revocation_secret", "status");
+  const nullifiers = [silo(input.issuerAddress, poseidon2HashWithSeparator([secret, 3n, claims], MAGNA_REVOCATION_DS))];
+  let versionMismatch = false;
+  if ("rootCommitment" in input.hints) {
+    const root = BigInt(input.hints.rootCommitment);
+    const rootStatus = noteRecord(input.hints.hintedRootStatusNote, "rootStatus");
+    for (const [label, note] of [["Credential root", credential], ["Status root", status], ["Root status", rootStatus]] as const) {
+      assertSame(fieldValue(note, "root_commitment", label), root, label);
+    }
+    const rootSecret = fieldValue(rootStatus, "revocation_secret", "rootStatus");
+    versionMismatch = deriveLinkedInstagramStatusSecret(rootSecret, claims) !== secret;
+    nullifiers.push(
+      silo(input.issuerAddress, poseidon2HashWithSeparator([rootSecret, root], MAGNA_ROOT_REVOCATION_DS)),
+      silo(input.issuerAddress, poseidon2HashWithSeparator([rootSecret, root], MAGNA_ROOT_OWNER_REVOCATION_DS)),
+    );
+  } else if ("root_commitment" in credential || "root_commitment" in status) {
+    throw new Error("Linked Instagram hints are missing their root metadata.");
+  }
+  const blockNumber = await input.node.getBlockNumber();
+  const [block, witnesses] = await Promise.all([
+    input.node.getBlockData(blockNumber),
+    Promise.all(nullifiers.map(nullifier => input.node.getNullifierMembershipWitness(blockNumber, nullifier))),
+  ]);
+  if (!block) throw new Error(`Aztec block ${blockNumber} was unavailable during Instagram status validation.`);
+  const timestamp = block.header.globalVariables.timestamp;
+  const snapshot = { checkedAtBlock: Number(blockNumber), checkedAtTimestamp: timestamp.toString() };
+  const reason = witnesses[1] ? "root-lineage-revoked-or-recovered" : witnesses[2] ? "root-owner-revoked" :
+    versionMismatch ? "root-version-mismatch" : witnesses[0] ? ("rootCommitment" in input.hints ? "linked-credential-revoked" : "credential-revoked") : undefined;
+  if (reason) return { ...snapshot, status: "inactive", reason };
+  if (fieldValue(credential, "expiry_ts", "credential") <= timestamp) return { ...snapshot, status: "expired", reason: "credential-expired" };
+  return { ...snapshot, status: "active", reason: "chain-valid" };
 }

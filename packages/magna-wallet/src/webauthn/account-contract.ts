@@ -1,9 +1,9 @@
-import type { AuthWitnessProvider } from "@aztec/aztec.js/account";
-import type { CompleteAddress } from "@aztec/aztec.js/addresses";
-import { loadContractArtifact, type NoirCompiledContract } from "@aztec/aztec.js/abi";
-import { Fr } from "@aztec/aztec.js/fields";
-import { DefaultAccountContract } from "@aztec/accounts/defaults";
-import { AuthWitness } from "@aztec/stdlib/auth-witness";
+import type { AuthWitnessProvider } from "@aztec-labs/aztec.js/account";
+import type { CompleteAddress } from "@aztec-labs/aztec.js/addresses";
+import { loadContractArtifact, type NoirCompiledContract } from "@aztec-labs/aztec.js/abi";
+import { Fr } from "@aztec-labs/aztec.js/fields";
+import { DefaultAccountContract } from "@aztec-labs/accounts/defaults";
+import { AuthWitness } from "@aztec-labs/stdlib/auth-witness";
 import MagnaWebAuthnAccountContractArtifactJson from "../../../../contracts/magna-webauthn-account/target/magna_webauthn_account-MagnaWebAuthnAccount.json" with { type: "json" };
 import { buildWebAuthnWitnessFields, findOriginIndex } from "./witness.js";
 import type { WebAuthnAsserter, WebAuthnRegistration } from "./ceremony.js";

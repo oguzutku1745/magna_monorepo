@@ -1,6 +1,6 @@
-import { poseidon2HashWithSeparator } from "@aztec/foundation/crypto/sync";
-import { Fr } from "@aztec/foundation/curves/bn254";
-import { computeSecretHash } from "@aztec/stdlib/hash";
+import { poseidon2HashWithSeparator } from "@aztec-labs/foundation/crypto/sync";
+import { Fr } from "@aztec-labs/foundation/curves/bn254";
+import { computeSecretHash } from "@aztec-labs/stdlib/hash";
 import {
   formatBoundData,
   getServiceScopeHash,

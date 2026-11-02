@@ -1,6 +1,6 @@
 import { ClaimId, ConstraintOp, CredentialType, type Policy } from "@magna-protocol/core";
-import { AztecAddress } from "@aztec/aztec.js/addresses";
-import type { Wallet } from "@aztec/aztec.js/wallet";
+import { AztecAddress } from "@aztec-labs/aztec.js/addresses";
+import type { Wallet } from "@aztec-labs/aztec.js/wallet";
 import { MagnaCompanySponsorContract, MagnaConsumerContract, MagnaIssuerContract } from "@magna/contracts-bindings";
 import { MagnaVerificationEngine, type SessionAuthorizationContext } from "../engine/verification-engine.js";
 import { packAlpha3 } from "../engine/encoding.js";
@@ -40,6 +40,8 @@ export type MagnaInstagramConsumerLoginCredential = {
   handleHash: string;
   handleBlind: string;
   instagramHandle?: string;
+  mode?: "passport" | "rooted";
+  rootCommitment?: string;
 };
 
 export type MagnaConsumerLoginCredential =
@@ -170,7 +172,9 @@ function assertConsumerCredential(
     if ((credential as MagnaInstagramConsumerLoginCredential).handleHash !== handleHash.toString()) {
       throw new Error("Stored Magna Instagram credential does not match the requested handle.");
     }
-    return credential as MagnaInstagramConsumerLoginCredential;
+    const instagram = credential as MagnaInstagramConsumerLoginCredential;
+    if (instagram.mode === "rooted" && !instagram.rootCommitment) throw new Error("Stored rooted Magna Instagram credential reference is missing its root commitment.");
+    return instagram;
   }
   const passportCredential = credential as Partial<MagnaPassportConsumerLoginCredential> | null | undefined;
   if (
@@ -279,19 +283,17 @@ export async function runMagnaConsumerLogin(input: {
     consumerGatewayAddress: input.consumerGatewayAddress,
   };
   const receipt = input.policy.credentialType === CredentialType.Instagram
-    ? await engine.loginWithInstagramCompanySponsor(
-        {
-          policy: input.policy,
-          ...(await hintClient.fetchPassportHintsByClaimsHash(input.activeAddress, credential.claimsHash)),
-          claimsWitness: {
-            handleHash: BigInt((credential as MagnaInstagramConsumerLoginCredential).handleHash),
-            handleBlind: BigInt((credential as MagnaInstagramConsumerLoginCredential).handleBlind),
-          },
-        },
-        input.activeAddress,
-        sponsor,
-        sessionAuthorization,
-      )
+    ? await (async () => {
+        const instagram = credential as MagnaInstagramConsumerLoginCredential;
+        const claimsWitness = { handleHash: BigInt(instagram.handleHash), handleBlind: BigInt(instagram.handleBlind) };
+        return instagram.mode === "rooted"
+          ? engine.loginWithLinkedInstagramCompanySponsor({ policy: input.policy,
+              ...(await hintClient.fetchLinkedInstagramHints(instagram.rootCommitment!, instagram.claimsHash)), claimsWitness },
+              input.activeAddress, sponsor, sessionAuthorization)
+          : engine.loginWithInstagramCompanySponsor({ policy: input.policy,
+              ...(await hintClient.fetchPassportHintsByClaimsHash(input.activeAddress, instagram.claimsHash)), claimsWitness },
+              input.activeAddress, sponsor, sessionAuthorization);
+      })()
     : await (async () => {
         const passportCredential = credential as MagnaPassportConsumerLoginCredential;
         const committedClaimsWitness = normalizeCommittedWitness(passportCredential.committedClaimsWitness);

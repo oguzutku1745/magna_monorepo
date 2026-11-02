@@ -1,7 +1,7 @@
 # Magna Passport Recovery V3 Specification
 
 Status: Implementation in progress; Gate A passed on 2026-08-23; Gate B-dev passed on 2026-08-26 and its final clean-deployment L2 consumption run passed on 2026-08-28 with an official live zkPassport developer proof, recursive wrapper, generated EVM verifier, private/EVM mutation rejection, replay rejection, canonical Inbox authorization, Ghost-owned issuer execution, complete destination note discovery, and chain-derived active status; Gate B-production remains open
-Protocol target: Aztec `5.1.0`
+Protocol target: Aztec `6.0.0`
 Compatibility: Clean replacement; Magna has never been deployed, so no legacy recovery path is retained
 Primary objective: Recover a Magna root using the passport and a destination wallet without making Magna's backend a recovery authority or availability dependency
 
@@ -15,7 +15,7 @@ This protocol protects long-lived identity state. A passing implementation there
 - A developer proof, mock passport, or mock nullifier MUST NOT satisfy Gate B-production or any production release criterion.
 - No hand-built public-input array, fixture proof, synthetic witness, locally forged mock proof, or verifier bypass may stand in for a proof produced by the unmodified zkPassport SDK and application in either Gate B profile.
 - No mocked Inbox, direct database/tree insertion, TXE message helper, or manually injected witness may satisfy the Aztec end-to-end gate.
-- No locally substituted hash or serializer may stand in for the Aztec `5.1.0` Inbox and `aztec.nr` implementations.
+- No locally substituted hash or serializer may stand in for the Aztec `6.0.0` Inbox and `aztec.nr` implementations.
 - Unit tests may use local mocks only as supplementary tests. Their output MUST be labelled as simulated and cannot be used as Gate B evidence. This restriction does not reclassify the official zkPassport developer flow described above as a local mock.
 - A blocked or failed spike is an acceptable result. Missing evidence MUST NOT be converted into a passing result through fixtures, skipped verification, patched dependencies, or weaker modes.
 - Every passing spike MUST retain exact dependency versions, source commit hashes, non-sensitive generated artifacts, verification keys, verifier bytecode, transaction hashes, redacted logs, and a reproducible command sequence. A real zkPassport proof contains its scoped identifier in public input `10`: its raw artifact MUST remain encrypted and under the document holder's control, MUST NOT be committed or uploaded, and may be represented in retained evidence only by a cryptographic hash and redacted structural metadata.
@@ -78,7 +78,7 @@ flowchart LR
     C --> D["Ethereum MagnaRecoveryPortal"]
     D --> E{"Wrapper, freshness, roots and revocation valid?"}
     E -- "No" --> F["Reject"]
-    E -- "Yes" --> G["Canonical Aztec 5.1 Inbox message"]
+    E -- "Yes" --> G["Canonical Aztec 6.0 Inbox message"]
     G --> H["Ghost consumes authorization privately"]
     H --> I["Existing root rotation plus V3 atomic credential remint"]
     I --> J["Usable rooted passport belongs to the proof-bound destination"]
@@ -99,9 +99,10 @@ The V3 design intentionally does **not** use:
 All Aztec L2 application and transport components in the integration spike and final implementation MUST use the same exact release:
 
 ```text
-Aztec CLI                  5.1.0
-Aztec.nr dependencies      v5.1.0
-@aztec/* L2 app packages   5.1.0
+Aztec CLI                  6.0.0
+Aztec.nr dependencies      v6.0.0
+@aztec-labs/* L2 packages   6.0.0
+network Nargo              1.0.0-rc.3
 ```
 
 The zkPassport recursive-proof lane is a separate frozen toolchain because SDK `0.16.1` and its circuits were released against BB `5.0.0`. The wrapper is proved for EVM verification and is not an Aztec L2 contract:
@@ -123,9 +124,11 @@ inner proof mode           compressed (recursive input to the Magna wrapper)
 wrapper output mode        EVM-verifiable proof generated from the finalized Magna wrapper
 ```
 
-The two lanes MUST remain dependency-isolated. The zkPassport wrapper stack MUST NOT be deduplicated or coerced to Aztec/BB `5.1.0`, and the Aztec L2 stack MUST NOT be downgraded to the wrapper's `5.0.0` proving dependencies. Their shared field encodings and Poseidon2 authorization value MUST be connected only through reviewed TypeScript/Noir/Solidity golden vectors and the Gate A/Gate B end-to-end evidence.
+The two lanes MUST remain dependency-isolated. The zkPassport wrapper stack MUST NOT be deduplicated or coerced to Aztec/BB `6.0.0`, and the Aztec L2 stack MUST NOT be downgraded to the wrapper's `5.0.0` proving dependencies. Their shared field encodings and Poseidon2 authorization value MUST be connected only through reviewed TypeScript/Noir/Solidity golden vectors and the Gate A/Gate B end-to-end evidence.
 
-Migration status (2026-08-24): the undeployed Magna workspace, including every Aztec.nr contract, generated binding, application, wallet, e2e package, CLI script, and `.aztecrc`, now targets Aztec `5.1.0`; `apps/magna-management` uses zkPassport SDK `0.16.1`. The only retained `5.0.0` entries are the dependency-isolated zkPassport proof lane listed above. The official zkPassport circuits repository currently publishes only the `bb-v5.0.0` compatibility tag, so this is an upstream proof-format requirement rather than a Magna legacy deployment path.
+Current migration target (2026-11-01): V6 requires fresh deployments, accounts and credential issuance; Recovery V3 is not a cross-version credential importer. The retained V5 manual/mobile evidence below is historical and must be repeated for V6 acceptance. The standalone proof lane and existing Recovery V3 proof freshness remain unchanged.
+
+Historical migration status (2026-08-24): the undeployed Magna workspace, including every Aztec.nr contract, generated binding, application, wallet, e2e package, CLI script, and `.aztecrc`, now targets Aztec `5.1.0`; `apps/magna-management` uses zkPassport SDK `0.16.1`. The only retained `5.0.0` entries are the dependency-isolated zkPassport proof lane listed above. The official zkPassport circuits repository currently publishes only the `bb-v5.0.0` compatibility tag, so this is an upstream proof-format requirement rather than a Magna legacy deployment path.
 
 ### 4.1 Deployment profiles
 
@@ -149,21 +152,21 @@ The current A2 code implements this profile split. `apps/magna-management` reque
 The committed generic A2 wrapper bundles are pinned independently:
 
 ```text
-production wrapper SHA-256  a7093ad57c0a5cfcb073134d7ed0907067e9b253b11f929fd84b4a321179cea7
-developer wrapper SHA-256   b952eb6435ac847e6dc87e5400b5e81703c2537629b56bab1a550a4561eca4c4
+production wrapper SHA-256  f52714558d3c215f6481034a17fdc7e641f0279831977f5508a97070f7957039
+developer wrapper SHA-256   03ff4bb57297ae75858433a97ddea12998af517a81bda9f7f4a7f34ed005483b
 ```
 
-The local developer target MUST run on one shared external Anvil with chain ID `31337`. zkPassport's pinned official source provides this local profile directly: registry SDK `0.14.0` defines chain `31337`, Root Registry `0x5FbDB2315678afecb367f032d93F642f64180aa3`, and Registry Helper `0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512`; its official test scripts deploy the Root Registry, Certificate/Circuit/Sanctions registries, seed registry history and revocations, and deploy the real RootVerifier, SubVerifier, VerifierHelper, and outer proof verifiers. Aztec `5.1.0` can then deploy its local L1 stack and start its local rollup against that same Anvil RPC. This exact coexistence was exercised successfully from the pinned sources on 2026-08-24: the Aztec node reported L1 chain ID `31337` and a live canonical Inbox while bytecode for the zkPassport Root Registry and RootVerifier remained present on the same EVM.
+The local developer target MUST run on one shared external Anvil with chain ID `31337`. zkPassport's pinned official source provides this local profile directly: registry SDK `0.14.0` defines chain `31337`, Root Registry `0x5FbDB2315678afecb367f032d93F642f64180aa3`, and Registry Helper `0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512`; its official test scripts deploy the Root Registry, Certificate/Circuit/Sanctions registries, seed registry history and revocations, and deploy the real RootVerifier, SubVerifier, VerifierHelper, and outer proof verifiers. Aztec `6.0.0` can deploy its fresh local L1 stack and start its local rollup against that same Anvil RPC. The historical V5 coexistence was exercised successfully from the pinned sources on 2026-08-24: the Aztec node reported L1 chain ID `31337` and a live canonical Inbox while bytecode for the zkPassport Root Registry and RootVerifier remained present on the same EVM.
 
 Before Docker work begins, the operator MUST execute each startup, deployment, seeding, proof-generation, verification, portal, Inbox, and private-consumption step manually; inspect the resulting addresses, bytecode hashes, public inputs, roots, events, message leaf, and nullifiers; and run the required positive and negative tests. The retained manual evidence and exact commands become the Docker contract.
 
-Only after that manual combined test passes MAY the repository add a Docker launcher. The launcher MUST reproduce the frozen manual commands, start one Anvil itself, and point both stacks at it. It MUST NOT use the Aztec shell wrapper in a way that silently creates a second empty Anvil; the pinned `5.1.0` wrapper unconditionally spawns Anvil when its first argument is `start --local-network`. Dockerization MUST NOT change verifier artifacts, registry seeds, deployment order, addresses, trust-context inputs, proof modes, or test expectations. A clean Docker run MUST repeat the same acceptance suite before Docker support is declared complete.
+Only after that manual combined test passes MAY the repository add a Docker launcher. The launcher MUST reproduce the frozen manual commands, start one Anvil itself, and point both stacks at it. It MUST NOT use the Aztec shell wrapper in a way that silently creates a second empty Anvil; the historical `5.1.0` wrapper unconditionally spawned Anvil when its first argument was `start --local-network`; V6 uses the direct-Node CLI shim with explicit external L1 RPC URLs. Dockerization MUST NOT change verifier artifacts, registry seeds, deployment order, addresses, trust-context inputs, proof modes, or test expectations. A clean Docker run MUST repeat the same acceptance suite before Docker support is declared complete.
 
 The local registry is a developer trust anchor, not a claim that chain `31337` is authoritative production state. To prevent a circular test, Gate B-dev MUST derive the accepted certificate and circuit roots independently from the pinned official zkPassport packages/manifests and seed them through the unmodified official registry contracts before examining whether the candidate proof passes. It MUST retain those derivation inputs and hashes as evidence. Seeding roots copied only from the proof under test, changing registry storage with Anvil cheat codes, accepting every root, patching a verifier, using a verifier stub, or manually injecting an authorization fails Gate B-dev. Gate B-dev MUST also prove that an unseeded root and an explicitly revoked seeded root are rejected.
 
 The transaction-driven local Aztec network does not create checkpoints while a
 client merely polls for an Inbox witness. The chain-31337 launcher MUST pin the
-empirically validated Aztec 5.1 timing profile: `ETHEREUM_SLOT_DURATION=4`,
+source-checked Aztec V6 timing profile: `ETHEREUM_SLOT_DURATION=4`,
 `AZTEC_SLOT_DURATION=8`, and `SEQ_BLOCK_DURATION_MS=1000`. Aztec's local
 `AutomineSequencer` assigns each rapid transaction or debug checkpoint to a fresh
 slot; the production-sized 72-second default therefore accumulates future L1
@@ -174,10 +177,9 @@ but only after independently confirming that both the Aztec node and L1 RPC
 report chain `31337`. Before every advance it MUST wait until wall time is
 strictly later than the latest monotonic L1 block timestamp, then use that wall
 timestamp as the next minimum target. It MUST fail rather than add a checkpoint
-when pre-existing drift is at or above 180 seconds. It MUST resolve the canonical
-Inbox address from Aztec node info, read that contract's live `LAG()`, bound the
-number of checkpoint advances from that value, and still require the exact
-portal-emitted leaf and global index from the normal Aztec membership API. This
+when pre-existing drift is at or above 180 seconds. V6 Fast Inbox has no `LAG()` method or mandatory two-checkpoint delay. The wait
+MUST be bounded by three minutes, observe the exact portal message's committed
+inclusion, and require its global index from the normal Aztec membership API. This
 local liveness operation MUST NOT exist in production/testnet execution and MUST
 NOT inject a message or witness directly.
 
@@ -187,9 +189,9 @@ The following values are frozen V3 protocol constants. They match the installed 
 
 ```text
 outer circuit name         outer_count_7
-outer circuit version      0.20.0
+reviewed circuit release   0.21.1
 outer public-input count   12
-outer VK hash              0x19d93a8a69386b80903a8559d884bea729dc1ecc1db48afc6d3bb73d4ed3abbe
+outer VK hash              0x29678c37af3bf4df3517cf7104286665eee0a9b6f189405c159eaa84f820f372
 OPRF public-key hash        1178201404428554206520802247552222388413553631367032661928167491793274360628
 OPRF public-key x           18166959201346800007624274454748264099569154910741994195889360204497718998925
 OPRF public-key y           17198643698593566948834308934687875815952052155871236424838876937611092999400
@@ -205,7 +207,7 @@ certificate registry ID     1
 circuit registry ID         2
 ```
 
-The production artifact in section 16.3 MUST match these values. Gate B-dev MUST match the frozen circuit, version, VK, public-input layout, non-salted query, zero OPRF-key-hash field, and Bind encoding documented for the developer profile. A mismatch fails the relevant gate; code and documentation MUST NOT be adjusted merely to make a different artifact pass. Supporting a different production SDK, outer circuit, VK, public-input layout, nullifier type, or OPRF key requires a new explicitly versioned Magna recovery protocol.
+The production artifact in section 16.3 MUST match these values. Gate B-dev MUST match the frozen circuit, VK, public-input layout, non-salted query, zero OPRF-key-hash field, and Bind encoding documented for the developer profile. A mismatch fails the relevant gate; code and documentation MUST NOT be adjusted merely to make a different artifact pass. The official mobile app release is not a compatibility pin. The resolver fetches and validates the manifest for the received circuit version; another release label is accepted only if its packaged circuit retains the pinned VK and layout. A changed VK or proof layout requires review, recompilation of issuance and recovery wrappers, regeneration of the matching EVM verifier, and a coordinated deployment. Existing immutable portals keep their original verifier; do not point a new wrapper at an old portal. The 0.21.1 compatibility update preserves the V3 identity derivation, public-input layout, nullifier profiles and trust-context format.
 
 ## 5. Recovery identity derivation
 
@@ -247,7 +249,7 @@ ghost_signing_seed = Poseidon2(
 )
 ```
 
-The exact `Field -> GrumpkinScalar` conversion MUST use the Aztec `5.1.0` account API. A zero or non-convertible scalar is fatal; the client MUST NOT silently move to a different Ghost namespace.
+The exact `Field -> GrumpkinScalar` conversion MUST use the Aztec `6.0.0` account API. A zero or non-convertible scalar is fatal; the client MUST NOT silently move to a different Ghost namespace.
 
 ```text
 ghost_signing_key   = GrumpkinScalar(ghost_signing_seed)
@@ -255,7 +257,7 @@ ghost_privacy_secret= deriveSecretKeyFromSigningKey(ghost_signing_key)
 ghost_account_salt  = ghost_signing_seed
 ```
 
-The browser derives and imports the account with the exact Aztec `5.1.0` Schnorr APIs. Before submitting to the portal, it MUST compare the wrapper-derived root and locally derived Ghost address with the selected rooted A2 credential. A mismatch is fatal. Deployment separation remains in `recovery_intent`; it MUST NOT be added to root/Ghost lookup and thereby fork issuance identity.
+The browser derives and imports the account with the exact Aztec `6.0.0` Schnorr APIs. Before submitting to the portal, it MUST compare the wrapper-derived root and locally derived Ghost address with the selected rooted A2 credential. A mismatch is fatal. Deployment separation remains in `recovery_intent`; it MUST NOT be added to root/Ghost lookup and thereby fork issuance identity.
 
 ## 6. Destination-bound recovery intent and authorization
 
@@ -269,7 +271,7 @@ Before asking zkPassport to generate a proof, the recovery client creates only v
 destination          = user's new active-owner Aztec address
 recovery_nonce       = cryptographically random non-zero BN254 Field
 message_secret       = cryptographically random non-zero BN254 Field
-message_secret_hash  = Aztec 5.1 compute_secret_hash([message_secret])
+message_secret_hash  = Aztec 6.0 compute_secret_hash([message_secret])
 ```
 
 The client computes:
@@ -420,7 +422,7 @@ It MUST:
 6. Validate both roots against the official zkPassport Root Registry using `isRootValid(registryId, root, proof_current_date)`, matching the pinned `SubVerifier` call exactly.
 7. Reject roots whose current registry record is revoked or whose configured validation mode rejects them for `proof_current_date`. The registry read occurs at portal execution time even though the validity query's timestamp argument is the authenticated proof timestamp.
 8. Reject an already accepted `recovery_authorization`.
-9. Call the configured Aztec `5.1.0` Inbox with the issuer as recipient, the authorization as content, and the wrapper-authenticated `message_secret_hash` at public-input index `2`.
+9. Call the configured Aztec `6.0.0` Inbox with the issuer as recipient, the authorization as content, and the wrapper-authenticated `message_secret_hash` at public-input index `2`.
 10. Record the authorization as accepted only if the Inbox call succeeds.
 11. Emit the authorization, authenticated secret hash, Inbox leaf, global leaf index, proof version, and source block for discovery.
 
@@ -458,7 +460,7 @@ Aztec MUST NOT re-evaluate registry roots when consuming the message and MUST NO
 
 This does not make old passport proofs reusable. A user who initiates recovery months or years later creates a new proof, and the portal applies the current registry state at that time.
 
-## 11. Exact Aztec `5.1.0` Inbox contract
+## 11. Exact Aztec `6.0.0` Inbox contract
 
 The portal calls the canonical `Inbox.sendL2Message`:
 
@@ -470,7 +472,7 @@ sendL2Message(
 )
 ```
 
-`message_secret_hash` MUST be the wrapper-authenticated public output and MUST be produced using Aztec `5.1.0`'s:
+`message_secret_hash` MUST be the wrapper-authenticated public output and MUST be produced using Aztec `6.0.0`'s:
 
 ```noir
 compute_secret_hash([message_secret])
@@ -490,7 +492,7 @@ secret_hash  = message_secret_hash = compute_secret_hash([message_secret])
 leaf_index   = Inbox global leaf index
 ```
 
-Aztec `5.1.0` serializes those seven values as 32-byte big-endian fields in that order and applies its canonical SHA-256-to-field operation. Application code MUST NOT calculate a different leaf format.
+Aztec `6.0.0` serializes those seven values as 32-byte big-endian fields in that order and applies its canonical SHA-256-to-field operation. Application code MUST NOT calculate a different leaf format. The V6 `MessageSent` event is `(bytes32 indexed hash, bytes32 inboxRollingHash, uint256 bucketSeq, L1ToL2Msg message)`; its message tuple carries the actual cumulative zero-based index. Use the canonical V6 artifact ABI and match the portal leaf/index, recipient, sender, content and secret hash before consumption.
 
 ## 12. Aztec issuer changes
 
@@ -576,9 +578,11 @@ Ghost owns        RootRecoveryNote
 Ghost owns        LinkedRecoveryNote(type = passport)
 ```
 
-The old root authority and linked notes are not individually spent. They remain unusable because linked verification requires an unrevoked owner-matched root status, and the old root status's kill-switch nullifier is emitted by `recover_root_for_caller()`. The new notes use fresh root, authority, and linked revocation secrets.
+The old root authority and linked notes are not individually spent. The old root status's kill-switch nullifier is emitted by `recover_root_for_caller()`. Linked Instagram additionally binds its status secret to that exact root secret, credential type and claims commitment; it cannot substitute fresh root status when recovery returns to an earlier wallet. The new Passport notes use fresh root, authority, and linked revocation secrets. Recovery restores Passport only; Instagram must be independently issued again and may then be linked. Never-linked credentials remain independent.
 
-Inbox consumption emits the protocol message nullifier and prevents reuse. No second application replay map is required unless the exact `5.1.0` spike disproves this behavior.
+Owner-root revocation uses a distinct nullifier domain and MUST NOT spend `RootRecoveryNote`. V3 recovery therefore remains possible after owner revocation without a duplicate-nullifier collision. There is no separate rootless recovery protocol or additional Passport activation step.
+
+Inbox consumption emits the protocol message nullifier and prevents reuse. The existing canonical consumption nullifier remains the replay guard; V6 validation must preserve it.
 
 There is no separate L2 passport-proof or registry-attestation deadline. The `credential_valid_until` check prevents minting an already expired credential; it is not a reinterpretation of the Ethereum authorization snapshot. If an accepted authorization remains unconsumed until its deterministically derived credential expiry, the user generates a new recovery proof, nonce, and Inbox secret.
 
@@ -596,22 +600,22 @@ A user may initiate recovery after a year or many years by generating a fresh pr
 
 ## 14. Client and relayer flow
 
-1. Create or select the destination Aztec account. Before any recovery authorization is consumed, register and retain it as a secondary wallet-owned account in the active PXE so destination-owned notes can be decrypted and queried after recovery. This does not make the destination sign or authorize recovery and does not switch the active wallet session.
+1. Create or open the destination Aztec account without requiring the lost wallet, a saved source credential reference or its local claims witness. Use the destination as the working wallet/PXE; an existing active wallet may also retain the destination as an owned account. In either case destination-owned notes must be readable after recovery. This does not make the destination authorize the root transition: that authority remains the fresh bound proof and Ghost-owned recovery note.
    Newly created passkeys MUST use a user-visible, editable wallet name that distinguishes the recovery destination from older credentials in the platform passkey chooser. A website cannot rename an existing WebAuthn credential after registration.
 2. Generate `recovery_nonce` and `message_secret` locally with a CSPRNG.
-3. Derive `message_secret_hash` and `recovery_intent` with the exact Aztec `5.1.0` and V3 implementations.
+3. Derive `message_secret_hash` and `recovery_intent` with the exact Aztec `6.0.0` and V3 implementations.
 4. Complete a fresh SDK `0.16.1` salted query whose Bind predicate authenticates the pre-proof recovery intent. Use strict FaceMatch for production or regular FaceMatch only in the explicit developer profile.
 5. Confirm locally that the SDK-returned scoped identifier equals authenticated outer public input `10` before deriving V3 state. Production additionally confirms `SALTED = 1` and the pinned OPRF-key hash; development confirms `NON_SALTED_MOCK = 2` and a zero OPRF-key-hash field.
-6. Locally derive the V3 Ghost and claim witness, then generate the dedicated recovery-wrapper proof. Confirm that its public secret hash equals the locally computed value.
+6. Locally derive the V3 Ghost and claim witness from the fresh result, discover its recovery note directly rather than requiring old Ghost metadata, then generate the dedicated recovery-wrapper proof. Confirm that its public secret hash equals the locally computed value.
 7. Submit the same portal call directly, through Magna's relayer, or through any third-party relayer.
 8. Wait for the canonical Inbox message to be included in Aztec and obtain its global leaf index/witness through supported APIs.
 9. Import the transient Ghost account locally and discover its `RootRecoveryNote`.
    In the chain-31337 developer profile only, the client MAY fund the Ghost through the canonical Fee Juice portal using the disposable local Anvil faucet key. The client MUST perform the L1→L2 bridge and claim directly, MUST refuse non-local chains, and MUST NOT depend on the Magna API. Production recovery MUST use the reviewed production fee/sponsorship path and MUST NOT embed a faucet key.
-10. Before calling the irreversible L2 transition, persist a crash-resume finalization record containing only the destination profile, source credential reference, authenticated root/claims/expiry, and the destination's committed-claims witness. It MUST NOT contain the scoped identifier, Ghost keys, raw proof, proof witness, recovery nonce, or Inbox message secret.
+10. Before calling the irreversible L2 transition, persist a crash-resume finalization record containing only the destination profile, optional source credential reference, authenticated root/claims/expiry, and the destination's committed-claims witness. It MUST NOT contain the scoped identifier, Ghost keys, raw proof, proof witness, recovery nonce, or Inbox message secret.
 11. Call `recover_root_v3` from the Ghost and, after settlement, add the transaction hash to the finalization record.
 12. Dispose of the Ghost wallet, proof worker, scoped-identifier material, and message secret.
 13. Discover the complete usable rooted passport note set from the destination and Ghost wallets. Destination-side private hint simulation MUST execute from an account actually registered in the wallet/PXE; treating an arbitrary address as an owned account is invalid.
-14. Mark the recovered credential active and remove the finalization record only after the complete note set is available. If discovery or the browser fails after step 11, resume destination finalization from the stored non-secret record; do not blindly replay the already-consumed authorization. `recovery_pending` is an internal resumable state, not a successful V3 terminal state.
+14. Build the destination claims witness entirely from the fresh disclosures and artifact blinds. Mark the recovered Passport active and remove the finalization record only after the complete note set and chain validity are confirmed. If discovery or the browser fails after step 11, resume destination finalization from the stored non-secret record; do not blindly replay the already-consumed authorization. `recovery_pending` is an internal resumable state, not a successful V3 terminal state.
 
 Magna's backend MAY sponsor gas and report status. It MUST NOT generate the nonce, receive the scoped identifier, rewrite the call, or be the only submission route. A documented raw portal interface and reproducible alternative client MUST exist before production.
 
@@ -678,7 +682,7 @@ Required assertions and retained evidence:
 
 - The SDK package is exactly `0.16.1`; the request sets `devMode=true`, explicitly requests `NullifierType.NON_SALTED`, omits `oprfKeyId`, uses `facematch("regular")`, and requests recursive `compressed` proof mode. FaceMatch remains part of Magna's authenticated disclosure policy, but no OPRF authorization proof or TACEO evaluation request is made.
 - The proof MUST be produced by the official zkPassport application/mock-passport flow in response to that live request. A checked-in fixture, copied sample, hand-built public-input array, synthetic witness, locally generated substitute proof, patched SDK/circuit, skipped constraint, or verifier stub fails this gate.
-- Circuit name/version, proof type, VK hash, public-input count, semantic indices, OPRF-key-hash field, and nullifier type MUST be read from the returned artifact and retained as redacted metadata. The circuit, version, VK, and layout MUST match section 4; the developer OPRF-key-hash field MUST equal `0`.
+- Circuit name/version, proof type, VK hash, public-input count, semantic indices, OPRF-key-hash field, and nullifier type MUST be read from the returned artifact and retained as redacted metadata. The circuit, VK, and layout MUST match section 4; the developer OPRF-key-hash field MUST equal `0`.
 - The developer artifact's authenticated nullifier type MUST equal `NullifierType.NON_SALTED_MOCK`, SDK `0.16.1` enum value `2`. The official `bb-v5.0.0` scoped-nullifier circuit converts a non-salted proof for issuing country `ZKR` into this type and returns `oprf_pk_hash = 0`. The developer wrapper pins exactly that pair; production remains exactly `SALTED = 1` with key ID `1`.
 - Client-side proving MUST initialize Barretenberg with an explicit `2^20` BN254 CRS. Measured from the A2-compatible committed developer artifact with the pinned `@aztec/bb.js` `5.0.0` `acirGetCircuitSizes` API, the developer wrapper has 709,547 gates and a 1,048,576-point dyadic proving domain. The production wrapper's exact count MUST be measured and pinned when that separately isolated circuit is implemented; it MUST NOT be inferred from the developer count. The library's browser default of `2^19` is insufficient. The first client proof MAY download and cache the larger CRS, but it MUST NOT fall back to a Magna-controlled prover service.
 - The unmodified SDK verification pass MUST run with `devMode=true`, which selects the Sepolia registry context in SDK `0.16.1`, and record the roots and successful read-only official validation. The subsequent on-chain developer integration MUST independently validate the same authenticated roots through the pinned official local RootRegistry/RootVerifier stack on shared Anvil. A disagreement fails the gate; code or registry state MUST NOT be changed merely to make the candidate artifact pass.
@@ -710,7 +714,7 @@ Required assertions and retained evidence:
 
 - The query sets `devMode=false`, requests production `SALTED = 1`, explicit OPRF key ID `1`, strict FaceMatch, and recursive `compressed` proof mode.
 - The artifact comes from the production zkPassport application flow and a real supported document. A developer proof, mock passport, mock nullifier, fixture proof, synthetic witness, or simulated FaceMatch fails this gate.
-- The artifact MUST be `outer_count_7` version `0.20.0` and match every frozen circuit, VK, layout, OPRF, Bind, and production registry value in section 4.
+- The artifact MUST be `outer_count_7` with the reviewed `0.21.1` VK and match every frozen layout, OPRF, Bind, and production registry value in section 4. Version-label compatibility is defined in section 4.
 - The production wrapper MUST pin `SALTED = 1` and reject both mock types, both non-salted types, a zero OPRF-key-hash field, and the developer verifier/VK.
 - The wrapper proof and generated production Solidity verifier MUST pass an actual EVM transaction, and every mutation listed in Gate B-dev MUST fail again against the production artifacts.
 
@@ -754,7 +758,7 @@ Before any production release:
 
 The zkPassport team reported to Magna on 2026-08-23 that no change to the current integration is planned. Magna therefore accepts the current behavior as a permanent V3 dependency rather than an unresolved release gate. On 2026-08-25, the team separately confirmed that OPRF does not work with dev mode and that dev-mode support has no ETA. Consequently, local Docker intentionally uses the official `NON_SALTED_MOCK = 2` path; it MUST NOT be blocked on or represented as exercising `SALTED = 1`.
 
-- V3 permanently pins SDK `0.16.1`, utils `0.37.3`, registry client `0.14.0`, production `NullifierType.SALTED = 1`, OPRF key ID `1`, its published coordinates and Poseidon2 hash, developer `NON_SALTED_MOCK = 2` with a zero OPRF-key-hash field, `outer_count_7` version `0.20.0`, its VK hash, the public-input layout, Ethereum mainnet Root Registry/Helper addresses, and registry IDs in section 4.
+- V3 permanently pins SDK `0.16.1`, utils `0.37.3`, registry client `0.14.0`, production `NullifierType.SALTED = 1`, OPRF key ID `1`, its published coordinates and Poseidon2 hash, developer `NON_SALTED_MOCK = 2` with a zero OPRF-key-hash field, `outer_count_7` with the reviewed `0.21.1` VK hash, the public-input layout, Ethereum mainnet Root Registry/Helper addresses, and registry IDs in section 4.
 - The same supported physical document, service domain, scope, subscope, and key ID are the V3 continuity boundary. Magna does not claim person-wide continuity across passport renewal, replacement, chip replacement, document-number change, or issuing-country migration.
 - The production portal MUST pin the official Root Registry deployment selected for its Ethereum chain and evaluate certificate/circuit root validity and revocation at portal execution time using the frozen registry semantics.
 - New zkPassport SDKs, circuits, keys, registries, or verifier paths MUST NOT be adopted automatically. They require a separately versioned protocol, real-artifact feasibility evidence, migration analysis, and regression testing. Existing V3 constants remain unchanged.
@@ -793,6 +797,7 @@ This proposal was checked against these exact official source revisions before i
 - The same pinned zkPassport source defines an explicit registry SDK profile for local chain `31337` and ships test-only Anvil scripts for deploying and seeding the real registry contracts plus RootVerifier/SubVerifier and outer proof verifiers. On 2026-08-24 those unmodified scripts were executed manually on one Anvil, after which the published Aztec `5.1.0` local-network implementation successfully deployed and started against the same RPC. This proves that the local developer integration does not require an Aztec or Ethereum public-testnet deployment. Docker reproduction remains a later gate and does not promote the local registry into production authority or eliminate the live official zkPassport application requirement for creating a new developer proof.
 - The published SDK `0.16.1` source fixes Bind data in `topicToConfig` before `done()` serializes the request URL. Its verifier later extracts `uniqueIdentifier` with `getNullifierFromOuterProof(...)`, after the outer proof has been received, and only then exposes it through `onResult`. This ordering is the source-level reason for the two-stage `recovery_intent`/`recovery_authorization` construction in sections 6 and 7.
 - The pinned `SubVerifier` passes the authenticated outer `current_date` to both registry `isRootValid(...)` calls and to `DateUtils.isDateValid(...)`. `DateUtils` requires `block.timestamp >= current_date` and `current_date + validityPeriod > block.timestamp`. Registry revocation is read from current contract state while the registry mode evaluates root timing relative to that authenticated proof timestamp. Section 9 reproduces these semantics with a one-hour Magna validity period.
-- Aztec packages release [`v5.1.0`](https://github.com/AztecProtocol/aztec-packages/releases/tag/v5.1.0), commit `3ffc13a503b7bf321c3578399074938c75f2ac7e`, including canonical `Inbox.sendL2Message`, `compute_secret_hash([secret])`, L1-to-L2 message serialization, and private `consume_l1_to_l2_message`.
+- Current network source: [Aztec V6 tagged source](https://github.com/aztec-labs-eng/aztec-node/tree/v6.0.0) and [migration notes](https://docs.aztec.network/developers/docs/resources/migration_notes). Fresh V6 acceptance must be recorded separately from historical evidence.
+- Historical Aztec packages release [`v5.1.0`](https://github.com/AztecProtocol/aztec-packages/releases/tag/v5.1.0), commit `3ffc13a503b7bf321c3578399074938c75f2ac7e`, including canonical `Inbox.sendL2Message`, `compute_secret_hash([secret])`, L1-to-L2 message serialization, and private `consume_l1_to_l2_message`.
 
 Source review establishes API and protocol expectations. It does not replace either real end-to-end gate in section 16.

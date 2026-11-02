@@ -3,9 +3,10 @@ import type { InputMap } from "@noir-lang/types";
 
 export const PASSPORT_A2_SCHEMA = "passport-a2-v1" as const;
 export const PASSPORT_A2_INNER_NAME = "outer_count_7" as const;
-export const PASSPORT_A2_INNER_VERSION = "0.20.0" as const;
+// Reviewed release; acceptance is bound to its verification key, not this label.
+export const PASSPORT_A2_INNER_VERSION = "0.21.1" as const;
 export const PASSPORT_A2_INNER_VKEY_HASH =
-  "0x19d93a8a69386b80903a8559d884bea729dc1ecc1db48afc6d3bb73d4ed3abbe" as const;
+  "0x29678c37af3bf4df3517cf7104286665eee0a9b6f189405c159eaa84f820f372" as const;
 export const PASSPORT_A2_OPRF_KEY_ID = "1" as const;
 export const PASSPORT_A2_OPRF_PUBLIC_KEY_HASH =
   "1178201404428554206520802247552222388413553631367032661928167491793274360628" as const;
@@ -13,9 +14,9 @@ export const PASSPORT_A2_DEVELOPMENT_OPRF_PUBLIC_KEY_HASH = "0" as const;
 export const PASSPORT_A2_PRODUCTION_NULLIFIER_TYPE = 1 as const;
 export const PASSPORT_A2_DEVELOPMENT_NULLIFIER_TYPE = 2 as const;
 export const PASSPORT_A2_WRAPPER_ARTIFACT_SHA256 =
-  "a7093ad57c0a5cfcb073134d7ed0907067e9b253b11f929fd84b4a321179cea7" as const;
+  "f52714558d3c215f6481034a17fdc7e641f0279831977f5508a97070f7957039" as const;
 export const PASSPORT_A2_DEVELOPMENT_WRAPPER_ARTIFACT_SHA256 =
-  "b952eb6435ac847e6dc87e5400b5e81703c2537629b56bab1a550a4561eca4c4" as const;
+  "03ff4bb57297ae75858433a97ddea12998af517a81bda9f7f4a7f34ed005483b" as const;
 export const PASSPORT_A2_INNER_PUBLIC_INPUT_COUNT = 12;
 export const PASSPORT_A2_INNER_PROOF_FIELD_COUNT = 458;
 export const PASSPORT_A2_INNER_VKEY_FIELD_COUNT = 115;
@@ -105,7 +106,7 @@ export type PassportWrapperPublicOutputs = {
 
 export type PassportWrapperInputMetadata = {
   innerProofName: typeof PASSPORT_A2_INNER_NAME;
-  innerProofVersion: typeof PASSPORT_A2_INNER_VERSION;
+  innerProofVersion: string;
   innerVkeyHash: typeof PASSPORT_A2_INNER_VKEY_HASH;
   mrzLayout: ZkPassportMrzLayout;
   nationalityAlpha3Packed: bigint;

@@ -3,6 +3,7 @@ import type { ProofData } from "@aztec/bb.js";
 import { PASSPORT_A2_WRAPPER_SRS_SIZE } from "./types.js";
 
 type BackendOptions = {
+  backend?: import("@aztec/bb.js").BackendType;
   threads?: number;
   srsSize?: number;
   memory?: {
@@ -33,13 +34,17 @@ const require = createRequire(import.meta.url);
 
 export async function createUltraHonkBackend(acirBytecode: string): Promise<UltraHonkBackendInstance> {
   // Match the Instagram proof package's CJS load path so bb.js resolves its WASM asset.
-  const { Barretenberg, UltraHonkBackend } = require("@aztec/bb.js") as {
+  const { BackendType, Barretenberg, UltraHonkBackend } = require("@aztec/bb.js") as {
+    BackendType: typeof import("@aztec/bb.js").BackendType;
     Barretenberg: {
       "new": (options?: BackendOptions) => Promise<{ destroy(): Promise<void> }>;
     };
     UltraHonkBackend: UltraHonkBackendConstructor;
   };
   const api = await Barretenberg.new({
+    // The Aztec V6 image sets BB_BINARY_PATH to its network BB6 binary.
+    // Keep standalone Passport proofs on this package's BB5 WASM runtime.
+    backend: BackendType.Wasm,
     threads: 1,
     srsSize: PASSPORT_A2_WRAPPER_SRS_SIZE,
   });

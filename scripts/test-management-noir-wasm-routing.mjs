@@ -8,7 +8,7 @@ import { resolveNoirWasmDevAsset } from "../apps/magna-management/vite.config.mj
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const instagramNoircAbi = resolve(repoRoot, "node_modules/@noir-lang/noirc_abi/web/noirc_abi_wasm_bg.wasm");
-const aztecNoircAbi = resolve(repoRoot, "node_modules/@aztec/noir-noirc_abi/web/noirc_abi_wasm_bg.wasm");
+const aztecNoircAbi = resolve(repoRoot, "node_modules/@aztec-foundation/noir-noirc_abi/web/noirc_abi_wasm_bg.wasm");
 const nestedPassportNoircAbi = resolve(
   repoRoot,
   "packages/magna-passport-wrapper-proof/node_modules/@noir-lang/noirc_abi/web/noirc_abi_wasm_bg.wasm",
@@ -24,7 +24,7 @@ assert.equal(
 );
 assert.notEqual(sha256(instagramNoircAbi), sha256(aztecNoircAbi));
 assert.equal(
-  resolveNoirWasmDevAsset("/node_modules/@aztec/noir-noirc_abi/web/noirc_abi_wasm_bg.wasm"),
+  resolveNoirWasmDevAsset("/node_modules/@aztec-foundation/noir-noirc_abi/web/noirc_abi_wasm_bg.wasm"),
   aztecNoircAbi,
 );
 assert.equal(resolveNoirWasmDevAsset(`/@fs/${nestedPassportNoircAbi.slice(1)}`), nestedPassportNoircAbi);

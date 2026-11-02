@@ -58,6 +58,8 @@ if (!String(artifact.noir_version ?? "").startsWith("1.0.0-beta.22")) {
   throw new Error(`Refusing to sync recovery artifact built by ${artifact.noir_version ?? "an unknown Noir version"}.`);
 }
 
+// The SHA-256 below pins the complete compiler build, source metadata, ABI
+// and executable bytecode for the reviewed zkPassport 0.21.1 key.
 const bundle = {
   noir_version: artifact.noir_version,
   hash: artifact.hash,
@@ -68,7 +70,7 @@ const bundle = {
 };
 const bundleBytes = Buffer.from(JSON.stringify(bundle));
 const bundleHash = createHash("sha256").update(bundleBytes).digest("hex");
-const expectedBundleHash = "7f068e040fd1d0bce2602d6c86567b590f9d58120c143e6061a9c58134c2e06b";
+const expectedBundleHash = "c899b606d056fa2734356f6013bb776f354cbd33e23508bd4c302f1b1c216413";
 if (bundleHash !== expectedBundleHash) {
   throw new Error(`Refusing to sync unpinned Recovery V3 developer bundle hash ${bundleHash}.`);
 }

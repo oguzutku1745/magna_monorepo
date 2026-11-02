@@ -1,3 +1,5 @@
+import { assertV6Manifest } from "./v6-operations.mjs";
+
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -25,11 +27,13 @@ export function resolveClockConfig(env = process.env, run = spawnSync) {
   let endpoints;
   let source;
   if (env.MAGNA_DEPLOYMENT_MANIFEST) {
-    endpoints = JSON.parse(readFileSync(resolve(env.MAGNA_DEPLOYMENT_MANIFEST), "utf8")).endpoints;
+    const manifest = JSON.parse(readFileSync(resolve(env.MAGNA_DEPLOYMENT_MANIFEST), "utf8"));
+    assertV6Manifest(manifest);
+    endpoints = manifest.endpoints;
     source = "explicit deployment manifest";
   } else {
     // Read only public endpoint fields, never print the runtime's private keys.
-    const result = run("docker", ["compose", "exec", "-T", "management", "node", "--input-type=module", "-e",
+    const result = run("docker", ["compose", "--project-name", "magna-local-v6", "--file", resolve(repoRoot, "compose.yaml"), "exec", "-T", "management", "node", "--input-type=module", "-e",
       'import {readFileSync} from "node:fs"; const text=readFileSync("/runtime/magna-management.env","utf8"); console.log(text.split(/\\r?\\n/).filter(l=>/^(VITE_MAGNA_L1_RPC_URL|VITE_L1_RPC_URL|VITE_AZTEC_NODE_URL)=/.test(l)).join("\\n"));',
     ], { cwd: repoRoot, encoding: "utf8", timeout: 10_000 });
     if (result.status === 0) {
@@ -42,9 +46,10 @@ export function resolveClockConfig(env = process.env, run = spawnSync) {
         throw new Error("Cannot inspect Docker management runtime. Supply both L1_RPC_URL and AZTEC_NODE_URL explicitly, or MAGNA_DEPLOYMENT_MANIFEST for a host deployment.");
       }
       if (result.error && result.error.code !== "ENOENT") throw result.error;
-      const path = resolve(repoRoot, "apps/magna-management/.env");
+      const path = resolve(repoRoot, ".runtime/aztec6/management/.env");
       endpoints = existsSync(path) ? frontendEndpoints(readFileSync(path, "utf8")) : {};
-      const manifest = JSON.parse(readFileSync(resolve(repoRoot, "deployments/local.json"), "utf8"));
+      const manifest = JSON.parse(readFileSync(resolve(repoRoot, "deployments/local-v6.json"), "utf8"));
+      assertV6Manifest(manifest);
       endpoints = {
         l1RpcUrl: endpoints.l1RpcUrl || manifest.endpoints?.l1RpcUrl,
         aztecNodeUrl: endpoints.aztecNodeUrl || manifest.endpoints?.aztecNodeUrl,

@@ -1,3 +1,5 @@
+mod test;
+
 use aztec::macros::aztec;
 
 #[aztec]
@@ -8,19 +10,18 @@ pub contract MagnaVerifyMeterHookInstant {
             storage::storage,
         },
         protocol::address::AztecAddress,
-        state_vars::{DelayedPublicMutable, PublicImmutable, PublicMutable},
+        state_vars::{PublicImmutable, PublicMutable},
     };
 
     // Instant policy updates for E2E-only sponsorship positive-path checks.
-    global POLICY_DELAY_SECONDS: u64 = 0;
-
+    // V6 delayed state has a one-hour minimum, so this helper uses public state.
     #[storage]
     struct Storage<Context> {
         admin: PublicImmutable<AztecAddress, Context>,
         // Address allowed to call `meter_verify_or_revert`. Set by admin post-deploy.
         // This should be set to the MagnaIssuer contract address in production.
         issuer: PublicMutable<AztecAddress, Context>,
-        allowlist_mask: DelayedPublicMutable<u64, POLICY_DELAY_SECONDS, Context>,
+        allowlist_mask: PublicMutable<u64, Context>,
         metered_verify_count: PublicMutable<u64, Context>,
     }
 
@@ -29,7 +30,7 @@ pub contract MagnaVerifyMeterHookInstant {
     fn constructor(admin: AztecAddress, initial_allowlist_mask: u64) {
         self.storage.admin.initialize(admin);
         self.storage.issuer.write(AztecAddress::zero());
-        self.storage.allowlist_mask.schedule_value_change(initial_allowlist_mask);
+        self.storage.allowlist_mask.write(initial_allowlist_mask);
         self.storage.metered_verify_count.write(0);
     }
 
@@ -42,19 +43,19 @@ pub contract MagnaVerifyMeterHookInstant {
     #[external("public")]
     fn schedule_allowlist_mask(new_mask: u64) {
         assert(self.msg_sender() == self.storage.admin.read(), "admin only");
-        self.storage.allowlist_mask.schedule_value_change(new_mask);
+        self.storage.allowlist_mask.write(new_mask);
     }
 
     #[external("public")]
     #[view]
     fn get_allowlist_mask() -> u64 {
-        self.storage.allowlist_mask.get_current_value()
+        self.storage.allowlist_mask.read()
     }
 
     #[external("public")]
     #[view]
     fn is_credential_type_allowed(credential_type: u8) -> bool {
-        let mask = self.storage.allowlist_mask.get_current_value();
+        let mask = self.storage.allowlist_mask.read();
         let bit = 1 as u64 << (credential_type as u64);
         (mask & bit) == bit
     }

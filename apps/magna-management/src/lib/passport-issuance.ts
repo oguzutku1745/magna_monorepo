@@ -1,5 +1,5 @@
-import { getSchnorrAccountContractAddress } from "@aztec/accounts/schnorr";
-import { Fq, Fr } from "@aztec/aztec.js/fields";
+import { getSchnorrAccountContractAddress } from "@aztec-labs/accounts/schnorr";
+import { Fq, Fr } from "@aztec-labs/aztec.js/fields";
 import { CredentialType } from "@magna-protocol/core";
 import type {
   PassportA2Action,
@@ -348,7 +348,18 @@ export async function buildPassportA2ProofMaterial(
     },
   };
   dependencies.onA2Progress?.({ type: "generating_wrapper_proof" });
-  const wrapper = await dependencies.provePassportWrapper(witness);
+  let wrapper: PassportWrapperProofArtifact;
+  try {
+    wrapper = await dependencies.provePassportWrapper(witness);
+  } catch (error) {
+    // Circuit identity is public. Keep the proof, disclosures and witness local.
+    const proof = witness.zkPassportOuterProof;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Passport wrapper failed for ${proof.name}, circuits ${proof.version}, ` +
+      `verification key ${proof.vkeyHash}: ${detail}`,
+    );
+  }
   const payload: PassportA2ProofPayload = {
     schema: "passport-a2-v1",
     credentialValidUntil: wrapper.outputs.credentialValidUntil,

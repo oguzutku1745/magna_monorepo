@@ -1,0 +1,22 @@
+# Validation refresh of the successful clean cf8c18f image. Before building,
+# verify/tag immutable image ID:
+# sha256:8cd42486087a496995fa50d40ba69a053dacce9f6d86ce429e96c914b3b96b03
+# This refresh preserves its freshly compiled Noir/VK/proof artifacts; it is
+# not a clean full-source build. Dockerfile.local remains the clean-build recipe.
+FROM magna-local-app:cf8c18f-8cd42486087a
+WORKDIR /workspace
+COPY package.json package-lock.json ./
+RUN npm ci --maxsockets=5
+COPY scripts/check-proof-runtime-versions.mjs ./scripts/check-proof-runtime-versions.mjs
+COPY packages/e2e-tests/src/rights-bridge.e2e.spec.ts ./packages/e2e-tests/src/rights-bridge.e2e.spec.ts
+COPY apps/magna-management/src/lib/local-fee-juice-v6.spec.ts ./apps/magna-management/src/lib/local-fee-juice-v6.spec.ts
+ENV NODE_OPTIONS="--max-old-space-size=3072"
+RUN cp ./deployments/docker-build-placeholder.json ./deployments/local-v6.json && \
+    npm run build && npm run check:proof-runtimes && \
+    node --test scripts/v6-operations.spec.mjs scripts/inbox-message.spec.mjs scripts/wait-for-inbox.spec.mjs && \
+    rm ./deployments/local-v6.json
+ENV NODE_OPTIONS="--max-old-space-size=6144"
+COPY scripts/wait-for-inbox.mjs scripts/wait-for-inbox.spec.mjs ./scripts/
+RUN node --test scripts/wait-for-inbox.spec.mjs
+COPY scripts/localnet-clock-config.mjs scripts/check-localnet-drift.spec.mjs ./scripts/
+RUN node --test scripts/check-localnet-drift.spec.mjs

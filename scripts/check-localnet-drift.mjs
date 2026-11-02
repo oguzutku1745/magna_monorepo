@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Reports how far the local Aztec network's latest L1 block differs from
-// wall-clock and verifies Magna's pinned local timing profile. Aztec 5.1's
+// wall-clock and verifies Magna's pinned local timing profile. Aztec V6's
 // AutomineSequencer assigns rapidly-built checkpoints to fresh slots; explicit
 // debug checkpoints do the same. Production-sized 72s slots therefore turn a
 // short local test run into hours of monotonic L1 time.
@@ -16,6 +16,9 @@ const EXPECTED_AZTEC_SLOT_S = Number(process.env.EXPECTED_AZTEC_SLOT_DURATION ??
 // The node enforces MAX_ALLOWED_ETH_CLIENT_DRIFT_SECONDS (default 300). Warn well
 // before that so there is time to restart before a session goes bad.
 const DANGER_S = Number(process.env.DRIFT_DANGER_SECONDS ?? 180);
+// Magna's revocation reads cap login validity at anchor + 300s. Reserve three
+// minutes for signing/proving rather than accepting an almost-expired anchor.
+const MAX_ANCHOR_AGE_S = 120;
 
 async function readBlockTimestamp(tag) {
   const res = await fetch(L1, {
@@ -74,6 +77,20 @@ try {
       `❌ local rollup uses ${slotSeconds}s Aztec slots; Magna requires the validated ${EXPECTED_AZTEC_SLOT_S}s profile.`,
     );
     console.error(`   Restart it with npm run network:local, then rerun both local bootstraps.`);
+    process.exit(1);
+  }
+  const l2 = await rpc(AZTEC_NODE, "node_getBlockData", ["latest"]);
+  const l2Timestamp = l2?.header?.globalVariables?.timestamp;
+  if (!/^\d+$/.test(String(l2Timestamp))) throw new Error("Aztec node did not return a valid L2 anchor timestamp");
+  const anchorAge = wall - Number(l2Timestamp);
+  console.log(`L2 anchor timestamp: ${l2Timestamp}; age: ${anchorAge}s`);
+  if (anchorAge > MAX_ANCHOR_AGE_S) {
+    console.error(`❌ L2 anchor is stale (${anchorAge}s old); pending L1 time alone does not make new transactions usable.`);
+    console.error("   Synchronize the managed local clock before creating transactions. No clock was changed.");
+    process.exit(1);
+  }
+  if (anchorAge < -DANGER_S) {
+    console.error("❌ L2 anchor is ahead of the host clock. No clock was changed.");
     process.exit(1);
   }
   if (drift <= -DANGER_S && Math.abs(pendingDrift) < DANGER_S) {

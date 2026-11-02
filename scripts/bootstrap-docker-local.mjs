@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { assertV6Manifest } from "./v6-operations.mjs";
+
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -8,7 +10,7 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const runtimeDir = resolve(process.env.MAGNA_DOCKER_RUNTIME_DIR ?? "/runtime");
-const manifestPath = resolve(process.env.MAGNA_DEPLOYMENT_MANIFEST ?? "/workspace/deployments/local.json");
+const manifestPath = resolve(process.env.MAGNA_DEPLOYMENT_MANIFEST ?? "/workspace/deployments/local-v6.json");
 const internalAztecNodeUrl = process.env.MAGNA_AZTEC_NODE_URL ?? "http://aztec-localnet:8080";
 const internalL1RpcUrl = process.env.MAGNA_L1_RPC_URL ?? "http://aztec-localnet:8545";
 const publicAztecNodeUrl = process.env.MAGNA_PUBLIC_AZTEC_NODE_URL ?? "http://localhost:8080";
@@ -154,6 +156,8 @@ async function activateRealTimeClock() {
   }
   console.info(`[docker-bootstrap] real-time clock ready: ${JSON.stringify(status)}`);
 }
+
+if (existsSync(manifestPath)) assertV6Manifest(JSON.parse(readFileSync(manifestPath, "utf8")));
 
 if (await existingBootstrapIsValid()) {
   await activateRealTimeClock();

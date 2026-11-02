@@ -1,4 +1,4 @@
-import localDeployment from "../../../../deployments/local.json";
+import localDeployment from "../../../../deployments/local-v6.json";
 
 export type SponsorCatalogEntry = {
   address: string;
@@ -128,10 +128,10 @@ function localRecoveryV3(): ManagementEnv["recoveryV3"] {
     value.portalAddress,
   ];
   if (value.profile !== "development" || addresses.some(address => !/^0x[0-9a-fA-F]{40}$/.test(address ?? ""))) {
-    throw new Error("deployments/local.json contains an incomplete Recovery V3 developer deployment.");
+    throw new Error("deployments/local-v6.json contains an incomplete Recovery V3 developer deployment.");
   }
   if (!value.ethereumChainId || !value.aztecChainId || !value.aztecProtocolVersion || !value.trustContext) {
-    throw new Error("deployments/local.json is missing Recovery V3 network commitments.");
+    throw new Error("deployments/local-v6.json is missing Recovery V3 network commitments.");
   }
   return {
     ethereumChainId: BigInt(value.ethereumChainId),

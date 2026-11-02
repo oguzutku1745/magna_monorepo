@@ -1,4 +1,4 @@
-import { createAztecNodeClient } from "@aztec/aztec.js/node";
+import { createAztecNodeClient } from "@aztec-labs/aztec.js/node";
 
 const WORLD_STATE_ANCHOR_ERROR_MARKERS = [
   "Block hash",
@@ -15,19 +15,22 @@ export function isAztecWorldStateAnchorError(error: unknown): boolean {
   );
 }
 
-const AZTEC_5_1_PXE_SCHEMA_VERSION = 13;
-const AZTEC_5_1_WALLET_SCHEMA_VERSION = 1;
+// Pinned to @aztec-labs/pxe 6.0.0; covered against installed metadata in tests.
+const AZTEC_6_PXE_SCHEMA_VERSION = 16;
+export const EMBEDDED_WALLET_SCHEMA_VERSION = 1;
+// Local chains can repeat the V5 chain/rollup identity; keep its account scopes separate.
+export const EMBEDDED_WALLET_STORE_NAME = "magna_v6_wallet_data";
 
 function embeddedStoreName(name: string, l1ChainId: string | number | bigint, rollupAddress: string, version: number) {
   return `${name}_${l1ChainId.toString()}-${rollupAddress}-v${version}`;
 }
 
 export function getEmbeddedPxeDatabaseName(l1ChainId: string | number | bigint, rollupAddress: string): string {
-  return embeddedStoreName("pxe_data", l1ChainId, rollupAddress, AZTEC_5_1_PXE_SCHEMA_VERSION);
+  return embeddedStoreName("pxe_data", l1ChainId, rollupAddress, AZTEC_6_PXE_SCHEMA_VERSION);
 }
 
 export function getEmbeddedWalletDatabaseName(l1ChainId: string | number | bigint, rollupAddress: string): string {
-  return embeddedStoreName("wallet_data", l1ChainId, rollupAddress, AZTEC_5_1_WALLET_SCHEMA_VERSION);
+  return embeddedStoreName(EMBEDDED_WALLET_STORE_NAME, l1ChainId, rollupAddress, EMBEDDED_WALLET_SCHEMA_VERSION);
 }
 
 function deleteIndexedDbDatabase(databaseName: string): Promise<void> {
@@ -53,17 +56,13 @@ export async function clearEmbeddedPxeCacheForNode(nodeUrl: string): Promise<voi
   ];
 
   if (typeof navigator !== "undefined" && "storage" in navigator) {
-    const { deleteStore, listStores } = await import("@aztec/kv-store/sqlite-opfs");
+    const { deleteStore, listStores } = await import("@aztec-labs/kv-store/sqlite-opfs");
     const existing = new Set(await listStores());
     for (const storeName of storeNames) {
       if (existing.has(storeName)) await deleteStore(storeName);
     }
   }
 
-  // Remove the pre-5.1 IndexedDB layout as well when upgrading an existing
-  // developer browser profile. It is a no-op on clean profiles.
-  await Promise.all([
-    ...storeNames.map(deleteIndexedDbDatabase),
-    deleteIndexedDbDatabase(`pxe_data_${rollupAddress}/pxe_data`),
-  ]);
+  // Only this V6 identity is ours to clear. Older browser data stays untouched.
+  await Promise.all(storeNames.map(deleteIndexedDbDatabase));
 }

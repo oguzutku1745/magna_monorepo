@@ -17,6 +17,7 @@ const checks = [
   ["wallet verification transaction construction", ["run", "test:wallet"]],
   ["relying-party chain-effect validation", ["run", "test:client"]],
   ["A2 recursive wrapper", ["run", "-w", "@magna/passport-wrapper-proof", "test"]],
+  ["A2 browser/API proof boundary", ["run", "-w", "@magna/passport-wrapper-proof", "test:proof-boundary"]],
   ["Recovery V3 protocol", ["run", "test:recovery-v3"]],
   ["Recovery V3 recursive wrapper", ["run", "-w", "@magna/recovery-wrapper-proof", "test"]],
   ["Recovery V3 EVM portal", ["run", "test:recovery-portal"]],
@@ -32,7 +33,7 @@ const instagramNargo = process.env.NARGO_BIN?.trim() ||
 // management tests import the manifest shape at module load, so supply the
 // checked-in non-secret build placeholder only when no real manifest exists.
 // This is configuration scaffolding, never proof/chain evidence.
-const deploymentPath = resolve("deployments/local.json");
+const deploymentPath = resolve("deployments/local-v6.json");
 const deploymentPlaceholderPath = resolve("deployments/docker-build-placeholder.json");
 let createdDeploymentPlaceholder = false;
 if (!existsSync(deploymentPath)) {

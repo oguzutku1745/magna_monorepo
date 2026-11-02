@@ -23,3 +23,10 @@ pub(crate) global MAGNA_SPONSOR_POLICY_DELAY_SECONDS: u64 = 3600;
 // browser proving / submission latency or login txs can expire before reaching the sequencer.
 pub(crate) global MAGNA_SPONSOR_GATEWAY_DELAY_SECONDS: u64 = MAGNA_SPONSOR_POLICY_DELAY_SECONDS;
 pub(crate) global MAGNA_CONSUMER_GATEWAY_DELAY_SECONDS: u64 = MAGNA_SPONSOR_GATEWAY_DELAY_SECONDS;
+
+// Holder revocation is distinct from recovery, so a revoked root remains recoverable.
+pub(crate) global MAGNA_ROOT_OWNER_REVOCATION_DS: u32 = 0x4D415257; // "MARW"
+pub(crate) global MAGNA_LINKED_STATUS_SECRET_DS: u32 = 0x4D414C53; // "MALS"
+pub(crate) global MAGNA_INSTAGRAM_STANDALONE_ISSUANCE_DS: u32 = 0x4D414953; // "MAIS"
+pub(crate) global MAGNA_INSTAGRAM_LINKED_ISSUANCE_DS: u32 = 0x4D41494C; // "MAIL"
+pub(crate) global MAGNA_REVOCATION_ANCHOR_SECONDS: u64 = 300;

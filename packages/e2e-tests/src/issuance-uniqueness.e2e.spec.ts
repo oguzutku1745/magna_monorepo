@@ -1,9 +1,9 @@
-import { getInitialTestAccountsData, INITIAL_TEST_SIGNING_KEYS } from "@aztec/accounts/testing";
-import { AztecAddress } from "@aztec/aztec.js/addresses";
-import { createAztecNodeClient } from "@aztec/aztec.js/node";
-import { createExtendedL1Client } from "@aztec/ethereum/client";
-import { createAztecNodeDebugClient } from "@aztec/stdlib/interfaces/client";
-import { EmbeddedWallet } from "@aztec/wallets/embedded";
+import { getInitialTestAccountsData, INITIAL_TEST_SIGNING_KEYS } from "@aztec-labs/accounts/testing";
+import { AztecAddress } from "@aztec-labs/aztec.js/addresses";
+import { createAztecNodeClient } from "@aztec-labs/aztec.js/node";
+import { createExtendedL1Client } from "@aztec-labs/ethereum/client";
+import { createAztecNodeDebugClient } from "@aztec-labs/stdlib/interfaces/client";
+import { EmbeddedWallet } from "@aztec-labs/wallets/embedded";
 import { MagnaIssuerContract } from "@magna/contracts-bindings";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 

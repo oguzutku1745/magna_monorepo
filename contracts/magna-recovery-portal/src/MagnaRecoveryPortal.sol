@@ -16,8 +16,8 @@ interface IZkPassportRootRegistry {
     function isRootValid(bytes32 registryId, bytes32 root, uint256 timestamp) external view returns (bool);
 }
 
-/// @dev Canonical Aztec 5.1 Inbox ABI.
-interface IAztecInboxV51 {
+/// @dev Canonical Aztec 6.0.0 Inbox ABI (sendL2Message return values are unchanged).
+interface IAztecInboxV6 {
     function sendL2Message(L2Actor memory recipient, bytes32 content, bytes32 secretHash)
         external
         returns (bytes32 leaf, uint256 globalLeafIndex);
@@ -44,7 +44,7 @@ contract MagnaRecoveryPortal {
     uint256 public immutable wrapperProofVersion;
     IRecoveryWrapperVerifier public immutable wrapperVerifier;
     IZkPassportRootRegistry public immutable rootRegistry;
-    IAztecInboxV51 public immutable inbox;
+    IAztecInboxV6 public immutable inbox;
     L2Actor public recipient;
     bytes32 public immutable expectedTrustContextHash;
 
@@ -82,7 +82,7 @@ contract MagnaRecoveryPortal {
         wrapperProofVersion = expectedWrapperProofVersion;
         wrapperVerifier = IRecoveryWrapperVerifier(wrapperVerifierAddress);
         rootRegistry = IZkPassportRootRegistry(rootRegistryAddress);
-        inbox = IAztecInboxV51(inboxAddress);
+        inbox = IAztecInboxV6(inboxAddress);
         recipient = L2Actor({actor: issuerL2Address, version: aztecProtocolVersion});
         expectedTrustContextHash = trustContextHash;
     }

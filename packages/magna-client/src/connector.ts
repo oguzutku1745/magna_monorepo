@@ -18,12 +18,12 @@ import {
   type SessionVerificationReceipt,
   type SessionAssertion,
 } from "@magna-protocol/core";
-import { AztecAddress } from "@aztec/aztec.js/addresses";
-import { Fr } from "@aztec/aztec.js/fields";
-import { createAztecNodeClient } from "@aztec/aztec.js/node";
-import { TxHash } from "@aztec/aztec.js/tx";
-import { DomainSeparator } from "@aztec/constants";
-import { pedersenHash, poseidon2HashWithSeparator } from "@aztec/foundation/crypto/sync";
+import { AztecAddress } from "@aztec-labs/aztec.js/addresses";
+import { Fr } from "@aztec-labs/aztec.js/fields";
+import { createAztecNodeClient } from "@aztec-labs/aztec.js/node";
+import { TxHash } from "@aztec-labs/aztec.js/tx";
+import { DomainSeparator } from "@aztec-labs/constants";
+import { pedersenHash, poseidon2HashWithSeparator } from "@aztec-labs/foundation/crypto/sync";
 
 const MAGNA_INSTAGRAM_HANDLE_DS = 0x4d414948n; // "MAIH"
 

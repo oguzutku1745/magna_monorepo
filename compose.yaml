@@ -1,10 +1,10 @@
-name: magna-local
+name: magna-local-v6
 
 x-magna-app: &magna-app
   build:
     context: .
     dockerfile: Dockerfile.local
-  image: magna-local-app:aztec-5.1.0
+  image: magna-local-app:aztec-6.0.0
   init: true
   volumes:
     - magna-deployments:/workspace/deployments
@@ -12,7 +12,7 @@ x-magna-app: &magna-app
 
 services:
   anvil:
-    image: aztecprotocol/aztec:5.1.0@sha256:dd26a01042caf0f34760c4221bd1c855862181842e0cbe3c8c6b4e3f6a5b4128
+    image: azteclabs/aztec:6.0.0@sha256:59b10cc8e89bb9226db1f771a5abbe5d5f8d71483c00c7472187e6ddc7adab8d
     init: true
     entrypoint: ["node", "/opt/magna-local-clock/start-anvil.mjs"]
     volumes:
@@ -29,7 +29,7 @@ services:
       start_period: 2s
 
   aztec-localnet:
-    image: aztecprotocol/aztec:5.1.0@sha256:dd26a01042caf0f34760c4221bd1c855862181842e0cbe3c8c6b4e3f6a5b4128
+    image: azteclabs/aztec:6.0.0@sha256:59b10cc8e89bb9226db1f771a5abbe5d5f8d71483c00c7472187e6ddc7adab8d
     init: true
     entrypoint: ["node", "--no-warnings", "--import", "/opt/magna-local-clock/register.mjs", "/usr/src/yarn-project/aztec/dest/bin/index.js"]
     volumes:
@@ -54,12 +54,26 @@ services:
       anvil:
         condition: service_healthy
 
+  clock-keeper:
+    image: azteclabs/aztec:6.0.0@sha256:59b10cc8e89bb9226db1f771a5abbe5d5f8d71483c00c7472187e6ddc7adab8d
+    init: true
+    entrypoint: ["node", "/opt/magna-local-clock/keepalive.mjs"]
+    restart: unless-stopped
+    volumes:
+      - ./docker/local-clock:/opt/magna-local-clock:ro
+    environment:
+      MAGNA_LOCAL_CLOCK_CONTROL_URL: http://aztec-localnet:8090
+      LD_PRELOAD: ""
+    depends_on:
+      aztec-localnet:
+        condition: service_healthy
+
   bootstrap:
     <<: *magna-app
     command: ["node", "./scripts/bootstrap-docker-local.mjs"]
     environment:
       MAGNA_LOCAL_CLOCK_CONTROL_URL: http://aztec-localnet:8090
-      MAGNA_DEPLOYMENT_MANIFEST: /workspace/deployments/local.json
+      MAGNA_DEPLOYMENT_MANIFEST: /workspace/deployments/local-v6.json
       MAGNA_DOCKER_RUNTIME_DIR: /runtime
       MAGNA_AZTEC_NODE_URL: http://aztec-localnet:8080
       MAGNA_L1_RPC_URL: http://anvil:8545

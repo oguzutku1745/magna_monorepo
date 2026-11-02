@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { assertV6Manifest, v6NodeProverEnabled } from "./v6-operations.mjs";
+
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -12,10 +14,10 @@ import {
   publicActions,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { getInitialTestAccountsData, INITIAL_TEST_SIGNING_KEYS } from "@aztec/accounts/testing";
-import { AztecAddress } from "@aztec/aztec.js/addresses";
-import { createAztecNodeClient, waitForNode } from "@aztec/aztec.js/node";
-import { EmbeddedWallet } from "@aztec/wallets/embedded";
+import { getInitialTestAccountsData, INITIAL_TEST_SIGNING_KEYS } from "@aztec-labs/accounts/testing";
+import { AztecAddress } from "@aztec-labs/aztec.js/addresses";
+import { createAztecNodeClient, waitForNode } from "@aztec-labs/aztec.js/node";
+import { EmbeddedWallet } from "@aztec-labs/wallets/embedded";
 import { RegistryClient } from "@zkpassport/registry";
 import { MagnaIssuerContract } from "../packages/contracts-bindings/src/MagnaIssuer.ts";
 import {
@@ -27,7 +29,7 @@ import {
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const portalRoot = resolve(repoRoot, "contracts/magna-recovery-portal");
-const manifestPath = resolve(repoRoot, process.env.MAGNA_DEPLOYMENT_MANIFEST ?? "deployments/local.json");
+const manifestPath = resolve(repoRoot, process.env.MAGNA_DEPLOYMENT_MANIFEST ?? "deployments/local-v6.json");
 const rpcUrl = process.env.MAGNA_L1_RPC_URL ?? "http://127.0.0.1:8545";
 const aztecNodeUrl = process.env.MAGNA_AZTEC_NODE_URL ?? "http://127.0.0.1:8080";
 const deployerKey =
@@ -45,6 +47,7 @@ if (Number(process.versions.node.split(".")[0]) < 24) {
 }
 if (!existsSync(manifestPath)) throw new Error(`Deployment manifest not found: ${manifestPath}`);
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+assertV6Manifest(manifest);
 const issuer = manifest?.l2?.issuerAddress;
 const inbox = manifest?.resolvedAztec?.inboxAddress;
 const protocolVersion = BigInt(manifest?.resolvedAztec?.rollupVersion ?? 0);
@@ -52,6 +55,15 @@ const manifestChainId = BigInt(manifest?.resolvedAztec?.l1ChainId ?? 0);
 if (!/^0x[0-9a-fA-F]{64}$/.test(issuer ?? "")) throw new Error("Manifest is missing the L2 issuer address.");
 if (!/^0x[0-9a-fA-F]{40}$/.test(inbox ?? "")) throw new Error("Manifest is missing the canonical Aztec Inbox.");
 if (protocolVersion === 0n || manifestChainId === 0n) throw new Error("Manifest is missing Aztec/L1 network identity.");
+const aztecNode = createAztecNodeClient(aztecNodeUrl);
+await waitForNode(aztecNode, undefined, { timeout: 120 });
+const nodeInfo = await aztecNode.getNodeInfo();
+const proverEnabled = v6NodeProverEnabled(nodeInfo, { localOnly: true });
+if (BigInt(nodeInfo.l1ChainId) !== manifestChainId || BigInt(nodeInfo.rollupVersion) !== protocolVersion ||
+    nodeInfo.l1ContractAddresses.inboxAddress.toString().toLowerCase() !== inbox.toLowerCase()) {
+  throw new Error("Recovery manifest does not match the live V6 local network identity.");
+}
+
 
 function stableJson(value) {
   if (typeof value === "bigint") return JSON.stringify(value.toString());
@@ -289,11 +301,9 @@ if (recoveryPortal.toLowerCase() !== predictedPortal.toLowerCase()) {
 // The L1 portal must be pinned by the issuer before any recovery message can
 // be consumed. Deployment is intentionally one-time: PublicImmutable rejects
 // later replacement, so a relayer/backend cannot redirect the trusted sender.
-const aztecNode = createAztecNodeClient(aztecNodeUrl);
-await waitForNode(aztecNode, undefined, { timeout: 120 });
 const aztecWallet = await EmbeddedWallet.create(aztecNode, {
   ephemeral: true,
-  pxeConfig: { proverEnabled: false },
+  pxeConfig: { proverEnabled },
 });
 let issuerPortalInitializationTxHash;
 try {
