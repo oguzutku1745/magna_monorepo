@@ -33,6 +33,7 @@
     "compile:circuit:development": "node ../../scripts/compile-standalone-circuit.mjs circuit-dev && node ../../scripts/sync-passport-a2-artifact.mjs --profile=development",
     "compile:circuit": "npm run compile:circuit:production && npm run compile:circuit:development",
     "test": "npm run build && node ../../scripts/node-test-runner.mjs 'dist/**/*.spec.js'",
+    "test:proof-boundary": "npm run build && node --test dist/verify-roundtrip.proof-test.js",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

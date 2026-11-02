@@ -17,6 +17,7 @@ const checks = [
   ["wallet verification transaction construction", ["run", "test:wallet"]],
   ["relying-party chain-effect validation", ["run", "test:client"]],
   ["A2 recursive wrapper", ["run", "-w", "@magna/passport-wrapper-proof", "test"]],
+  ["A2 browser/API proof boundary", ["run", "-w", "@magna/passport-wrapper-proof", "test:proof-boundary"]],
   ["Recovery V3 protocol", ["run", "test:recovery-v3"]],
   ["Recovery V3 recursive wrapper", ["run", "-w", "@magna/recovery-wrapper-proof", "test"]],
   ["Recovery V3 EVM portal", ["run", "test:recovery-portal"]],
