@@ -54,6 +54,20 @@ services:
       anvil:
         condition: service_healthy
 
+  clock-keeper:
+    image: azteclabs/aztec:6.0.0@sha256:59b10cc8e89bb9226db1f771a5abbe5d5f8d71483c00c7472187e6ddc7adab8d
+    init: true
+    entrypoint: ["node", "/opt/magna-local-clock/keepalive.mjs"]
+    restart: unless-stopped
+    volumes:
+      - ./docker/local-clock:/opt/magna-local-clock:ro
+    environment:
+      MAGNA_LOCAL_CLOCK_CONTROL_URL: http://aztec-localnet:8090
+      LD_PRELOAD: ""
+    depends_on:
+      aztec-localnet:
+        condition: service_healthy
+
   bootstrap:
     <<: *magna-app
     command: ["node", "./scripts/bootstrap-docker-local.mjs"]

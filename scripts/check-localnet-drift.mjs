@@ -16,9 +16,9 @@ const EXPECTED_AZTEC_SLOT_S = Number(process.env.EXPECTED_AZTEC_SLOT_DURATION ??
 // The node enforces MAX_ALLOWED_ETH_CLIENT_DRIFT_SECONDS (default 300). Warn well
 // before that so there is time to restart before a session goes bad.
 const DANGER_S = Number(process.env.DRIFT_DANGER_SECONDS ?? 180);
-// V6 bounds transaction expiry by the anchor's timestamp (at most 24h).
-// A readiness check requires a recent L2 anchor even if pending L1 time is current.
-const MAX_ANCHOR_AGE_S = 3600;
+// Magna's revocation reads cap login validity at anchor + 300s. Reserve three
+// minutes for signing/proving rather than accepting an almost-expired anchor.
+const MAX_ANCHOR_AGE_S = 120;
 
 async function readBlockTimestamp(tag) {
   const res = await fetch(L1, {
