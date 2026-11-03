@@ -1,3 +1,5 @@
+import { Logo } from "./brand/Logo";
+import { SealField } from "./brand/SealField";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   assertLoginRequest,
@@ -269,7 +271,9 @@ export function AuthorizePage() {
 
   return (
     <main className="authorize-shell" aria-live="polite">
+      <SealField shape="none" />
       <section className="authorize-card">
+        <Logo className="authorize-brand" />
         <p className="authorize-eyebrow">Magna Wallet</p>
         <h1>Login with Magna</h1>
         {phase === "waiting" ? <p>Waiting for the requesting app...</p> : null}
