@@ -70,13 +70,6 @@ code { font-family: var(--mono); font-size: 0.92em; }
   align-items: center;
   gap: 10px;
 }
-.eyebrow::before, .authorize-eyebrow::before {
-  content: "";
-  width: 8px;
-  height: 8px;
-  background: var(--ink);
-  flex: none;
-}
 
 /* ---------------------------------------------------------------- controls */
 
@@ -191,9 +184,7 @@ small { color: var(--graphite); font-size: 13px; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: color-mix(in srgb, var(--paper) 92%, transparent);
-  backdrop-filter: saturate(1.2) blur(10px);
-  border-bottom: 1px solid var(--rule);
+  background: var(--paper);
 }
 .brand-mark {
   height: auto;
@@ -437,8 +428,6 @@ small { color: var(--graphite); font-size: 13px; }
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--graphite);
-  padding-top: 18px;
-  border-top: 1px solid var(--rule);
 }
 
 .marquee {
@@ -521,6 +510,7 @@ small { color: var(--graphite); font-size: 13px; }
   grid-template-rows: auto 1fr;
   overflow: hidden;
 }
+.tl-title { font-size: clamp(22px, 2vw, 28px); letter-spacing: -0.03em; line-height: 1; }
 .tl-head {
   display: flex;
   justify-content: space-between;
@@ -861,7 +851,6 @@ main.empty-state { margin: clamp(40px, 6vw, 88px) var(--gutter); }
 .coming-soon-panel button { align-self: flex-start; }
 
 .recovery-complete-state { border-color: var(--signal-deep); gap: 14px; }
-.recovery-complete-state .eyebrow::before { background: var(--signal); outline: 1px solid var(--signal-deep); }
 .recovery-complete-state button { align-self: flex-start; }
 
 /* ---------------------------------------------------------------- company */
@@ -922,7 +911,7 @@ main.empty-state { margin: clamp(40px, 6vw, 88px) var(--gutter); }
 @media (max-width: 959px) {
   .split { grid-template-columns: 1fr; align-items: start; }
   .timeline { min-height: 0; overflow: visible; }
-  .tl-head { flex-direction: column; align-items: flex-start; }
+.tl-head { flex-direction: column; align-items: flex-start; }
   .tl-track { flex-direction: column; width: 100%; }
   .tl-panel { width: 100%; grid-template-columns: 1fr; border-right: 0; border-bottom: 1px solid var(--rule); }
   .tl-figure { max-height: none; }
@@ -943,7 +932,7 @@ main.empty-state { margin: clamp(40px, 6vw, 88px) var(--gutter); }
 }
 
 @media (max-width: 900px) {
-  .landing-hero .seal-field { left: 0; opacity: 0.35; }
+  .landing-hero .seal-field { left: 0; bottom: auto; height: 36%; }
   .hero-body { max-width: none; }
 }
 

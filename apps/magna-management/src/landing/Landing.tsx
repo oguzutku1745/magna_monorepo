@@ -232,7 +232,6 @@ export function Landing(props: { go: (path: string) => void }) {
           <div><span>03 Reveal</span><Barcode seed={13} bars={2} /></div>
         </div>
         <div className="hero-body">
-          <p className="eyebrow hero-in">Private identity layer on Aztec</p>
           <h1 className="landing-title hero-title">
             <Words text={HEADLINE} className="w" />
           </h1>
@@ -295,7 +294,7 @@ export function Landing(props: { go: (path: string) => void }) {
 
       <section className="timeline" aria-label="The life of a Magna credential">
         <div className="tl-head">
-          <p className="eyebrow">The life of a credential</p>
+          <h2 className="tl-title">The life of a credential</h2>
           <ol className="tl-step-index">
             {STEPS.map(step => (
               <li key={step.n}><i /><span>{step.n} {step.label}</span></li>
@@ -361,7 +360,6 @@ export function Landing(props: { go: (path: string) => void }) {
 
       <section className="devs">
         <div className="devs-copy">
-          <p className="eyebrow">For builders</p>
           <h2 data-lines><Words text="Ask for a rule, not a person." className="w" /></h2>
           <p data-reveal>
             <code>@magna-protocol/client</code> opens the wallet, binds your policy hash into the request and checks the

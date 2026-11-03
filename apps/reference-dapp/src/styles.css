@@ -69,7 +69,6 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
   align-items: center;
   gap: 10px;
 }
-.eyebrow::before { content: ""; width: 8px; height: 8px; background: var(--ink); }
 
 .social-shell { min-height: 100vh; display: flex; flex-direction: column; }
 .social-nav {
@@ -81,9 +80,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outli
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid var(--rule);
-  background: color-mix(in srgb, var(--paper) 92%, transparent);
-  backdrop-filter: blur(10px);
+  background: var(--paper);
 }
 .wordmark {
   height: auto;

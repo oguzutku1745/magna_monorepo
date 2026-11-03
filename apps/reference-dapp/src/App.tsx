@@ -85,7 +85,6 @@ function Landing(props: { onLaunch: () => void }) {
       <SealField shape="none" className="social-field" />
       <section className="product-stage">
         <div className="stage-copy">
-          <p className="eyebrow">Verified local circles</p>
           <h1>Magna Social</h1>
           <p className="lede">Follow people by proof, not by documents.</p>
           <div className="stage-actions">
