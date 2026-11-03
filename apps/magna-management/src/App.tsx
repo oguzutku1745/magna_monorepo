@@ -2509,7 +2509,11 @@ export function App() {
         <button className="brand-mark" type="button" onClick={() => goTo("/")}>
           <Logo />
         </button>
-        <div className="topbar-state" />
+        <div className="topbar-state">
+          {route.path === "/" ? (
+            <button className="topbar-cta" type="button" onClick={() => goTo("/user/login")}>Open app</button>
+          ) : null}
+        </div>
       </header>
       {notice ? <div className={`notice ${notice.tone}`}>{notice.text}</div> : null}
       <div className="app-page">{page}</div>

@@ -117,18 +117,8 @@ function useLandingMotion(root: React.RefObject<HTMLElement | null>, field: Reac
         .from(".hero-in", { y: 24, autoAlpha: 0, duration: 0.9, stagger: 0.08 }, "-=0.7")
         .from(".hero-meta .barcode i", { scaleY: 0, transformOrigin: "bottom", duration: 0.5, stagger: 0.004 }, "-=0.9");
 
-      // The proof front resolves the seal as the hero scrolls away, starting part-way resolved.
-      field.current?.setProgress(0.55);
-      ScrollTrigger.create({
-        trigger: ".landing-hero",
-        start: "top top",
-        end: "bottom top",
-        onUpdate: self => field.current?.setProgress(0.55 + self.progress * 0.45),
-      });
-      gsap.to(".landing-hero .seal-field", {
-        yPercent: 18, ease: "none",
-        scrollTrigger: { trigger: ".landing-hero", start: "top top", end: "bottom top", scrub: true },
-      });
+      // The proof front sweeps across the seal once the headline has landed.
+      gsap.delayedCall(0.4, () => field.current?.setProgress(1));
 
       // Marquee rows drift against each other with scroll.
       gsap.utils.toArray<HTMLElement>(".marquee-row").forEach((row, i) => {
@@ -224,7 +214,7 @@ export function Landing(props: { go: (path: string) => void }) {
   return (
     <main className="landing" ref={root}>
       <section className="landing-hero">
-        <SealField className="hero-field" fieldRef={field} shape="mark" progress={0} markBox={{ x: 0.52, y: 0.5, size: 0.7 }} />
+        <SealField className="hero-field" fieldRef={field} shape="mark" progress={0} markBox={{ x: 0.5, y: 0.5, size: 0.7 }} />
         <div className="hero-meta" aria-hidden="true">
           <div><span>MG/00</span><Barcode seed={3} bars={42} /></div>
           <div><span className="lit">01 Prove</span><Barcode seed={9} bars={10} /></div>
