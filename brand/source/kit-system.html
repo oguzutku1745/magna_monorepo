@@ -1,0 +1,70 @@
+<!doctype html>
+<!-- Brand kit sheet 04: system. The seal field is the live engine from ascii-field.js, frozen at progress 1. -->
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .grid { display: grid; grid-template-columns: 1.4fr 1fr; grid-template-rows: 1fr 1fr; gap: 16px; margin-top: 28px; flex: 1; }
+  .field { grid-row: span 2; position: relative; background: var(--paper); border: 1px solid var(--rule); overflow: hidden; }
+  .field .c { z-index: 2; }
+  .panel { background: var(--white); border: 1px solid var(--rule); padding: 52px 24px 24px; display: flex; flex-direction: column; gap: 14px; }
+  .btns { display: flex; gap: 10px; flex-wrap: wrap; }
+  .btn { font: 500 15px var(--sans); height: 44px; padding: 0 18px; display: inline-flex; align-items: center; gap: 10px; border-radius: 4px; border: 1px solid var(--ink); }
+  .btn.primary { background: var(--ink); color: var(--paper); }
+  .btn.signal { background: var(--signal); border-color: var(--signal-deep); }
+  .btn.ghost { background: transparent; }
+  .btn .sq { width: 8px; height: 8px; background: var(--signal); }
+  .status { display: flex; gap: 10px; }
+  .chip { font: 12px var(--mono); text-transform: uppercase; letter-spacing: .04em; padding: 6px 8px; border: 1px solid var(--rule); display: inline-flex; gap: 8px; align-items: center; }
+  .chip i { width: 8px; height: 8px; display: block; }
+  .kv { display: grid; grid-template-columns: 140px 1fr; font: 13px var(--mono); border-top: 1px solid var(--rule); }
+  .kv span { padding: 10px 0; border-bottom: 1px solid var(--rule); color: var(--graphite); }
+  .kv b { padding: 10px 0; border-bottom: 1px solid var(--rule); font-weight: 400; }
+  .motion { display: grid; gap: 10px; font: 13px var(--mono); color: var(--graphite); }
+  .motion div { display: flex; justify-content: space-between; border-bottom: 1px solid var(--rule); padding-bottom: 10px; }
+  .motion b { color: var(--ink); font-weight: 400; }
+</style></head>
+<body>
+  <div class="canvas sheet">
+    <div class="sheet-head">
+      <span class="label">Brand kit / 04 System</span>
+      <img src="../logo/wordmark.svg" style="height:26px" alt="">
+    </div>
+    <div class="grid">
+      <div class="field corners" id="field">
+        <span class="c tl">Seal field</span><span class="c tr">ASCII / canvas</span>
+        <span class="c bl">Document data in</span><span class="c br">One seal out</span>
+      </div>
+      <div class="panel corners">
+        <span class="c tl">Controls</span><span class="c tr">Radius 4</span>
+        <div class="btns">
+          <span class="btn signal">Create passkey wallet</span>
+          <span class="btn primary">Open wallet</span>
+          <span class="btn ghost">Recover</span>
+        </div>
+        <div class="status">
+          <span class="chip"><i style="background:var(--signal)"></i>Active</span>
+          <span class="chip"><i style="background:var(--ash)"></i>Checking</span>
+          <span class="chip"><i style="background:var(--fault)"></i>Revoked</span>
+        </div>
+        <div class="kv"><span>Root commitment</span><b>0x1c08..9a3f</b><span>Checked at</span><b>Aztec L2 block 18,204</b></div>
+      </div>
+      <div class="panel corners">
+        <span class="c tl">Motion</span><span class="c tr">GSAP + Lenis</span>
+        <div class="motion">
+          <div><span>Ease</span><b>expo.out / cubic-bezier(.16,1,.3,1)</b></div>
+          <div><span>Scroll</span><b>Lenis lerp 0.09, ScrollTrigger scrub</b></div>
+          <div><span>Reveal</span><b>mask lines, 0.9 s, 0.06 s stagger</b></div>
+          <div><span>Proof</span><b>the field resolves, never fades in</b></div>
+          <div><span>Reduced motion</span><b>static frames, native scroll</b></div>
+        </div>
+        <div class="barcode" data-seed="11" data-bars="72" style="height:40px;margin-top:auto"></div>
+      </div>
+    </div>
+  </div>
+  <script type="module">
+    import { ready } from "./ready.js";
+    import { createSealField } from "./ascii-field.js";
+    createSealField(document.getElementById("field"), { shape: "mark", progress: 1, markBox: { x: 0.5, y: 0.52, size: 0.62 } });
+    await new Promise((r) => setTimeout(r, 400));
+    ready();
+  </script>
+</body></html>

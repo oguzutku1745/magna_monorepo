@@ -1,0 +1,48 @@
+<!doctype html>
+<!-- Brand kit sheet 01: logo. 1600x900 CSS, rendered at 2x. -->
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .grid { display: grid; grid-template-columns: 1.35fr 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 16px; margin-top: 36px; flex: 1; }
+  .cell { display: flex; align-items: center; justify-content: center; }
+  .big { grid-row: span 2; }
+  .ink { background: var(--ink); border: 0; }
+  .ink .c { color: var(--ash) !important; }
+  .signal { background: var(--signal); border: 0; }
+  .anatomy { position: absolute; left: 0; right: 0; bottom: 64px; text-align: center; font-family: var(--mono); font-size: 13px; color: var(--graphite); }
+</style></head>
+<body>
+  <div class="canvas sheet">
+    <div class="sheet-head">
+      <span class="label">Brand kit / 01 Logo</span>
+      <img src="../logo/wordmark.svg" style="height:26px" alt="">
+    </div>
+    <div class="h-sheet">A charter in five cells. One is lit.</div>
+    <div class="grid">
+      <div class="cell big grid-paper corners">
+        <span class="c tl">Mark</span><span class="c tr">5 x 5</span>
+        <span class="c bl">Seal cell</span><span class="c br">Signal</span>
+        <img src="../logo/mark.svg" style="width:300px" alt="">
+        <div class="anatomy">The M of the wordmark. Its seal hangs at the foot, as on a charter.</div>
+      </div>
+      <div class="cell grid-paper corners">
+        <span class="c tl">Wordmark</span><span class="c br">Primary</span>
+        <img src="../logo/wordmark.svg" style="width:340px" alt="">
+      </div>
+      <div class="cell ink corners">
+        <span class="c tl">Wordmark</span><span class="c br">Paper on ink</span>
+        <img src="../logo/wordmark-mono.svg" style="width:340px;filter:invert(1)" alt="">
+      </div>
+      <div class="cell signal corners">
+        <span class="c tl">Mono</span><span class="c br">Ink on signal</span>
+        <img src="../logo/wordmark-mono.svg" style="width:340px" alt="">
+      </div>
+      <div class="cell grid-paper corners" style="gap:28px">
+        <span class="c tl">Tile</span><span class="c br">Icon</span>
+        <img src="../logo/tile.svg" style="width:140px" alt="">
+        <img src="../logo/tile.svg" style="width:56px" alt="">
+        <img src="../logo/tile.svg" style="width:21px" alt="">
+      </div>
+    </div>
+  </div>
+  <script type="module">import { ready } from "./ready.js"; ready();</script>
+</body></html>

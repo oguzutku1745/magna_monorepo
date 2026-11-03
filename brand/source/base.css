@@ -1,0 +1,51 @@
+/* Magna brand tokens. The apps' styles.css carries the same values; change both together. */
+@font-face { font-family: "Geist"; src: url("../fonts/Geist-Variable.woff2") format("woff2"); font-weight: 100 900; font-display: block; }
+@font-face { font-family: "Geist Mono"; src: url("../fonts/GeistMono-Variable.woff2") format("woff2"); font-weight: 100 900; font-display: block; }
+@font-face { font-family: "Geist Pixel"; src: url("../fonts/GeistPixel-Square.woff2") format("woff2"); font-display: block; }
+
+:root {
+  --paper: #f4f3ee;
+  --white: #ffffff;
+  --wash: #eceae3;
+  --rule: #d9d7cf;
+  --ink: #0c0c0b;
+  --graphite: #4f4e49;
+  --ash: #8f8d86;
+  --signal: #c8f031;
+  --signal-deep: #a9d10f;
+  --fault: #b8301e;
+  --caution: #8f5a08;
+
+  --sans: "Geist", system-ui, sans-serif;
+  --mono: "Geist Mono", ui-monospace, monospace;
+  --pixel: "Geist Pixel", "Geist Mono", monospace;
+}
+
+* { box-sizing: border-box; margin: 0; }
+html, body { background: var(--paper); color: var(--ink); font-family: var(--sans); -webkit-font-smoothing: antialiased; }
+
+.canvas { width: 1600px; height: 900px; position: relative; overflow: hidden; }
+.sheet { padding: 56px 64px; display: flex; flex-direction: column; }
+.sheet-head { display: flex; justify-content: space-between; align-items: center; }
+.label { font-family: var(--mono); font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--graphite); }
+.h-sheet { font-size: 76px; font-weight: 500; letter-spacing: -0.045em; line-height: 0.98; margin-top: 44px; max-width: 1200px; }
+
+/* Graph paper: the ground every Magna diagram sits on. */
+.grid-paper {
+  background-color: var(--white);
+  background-image:
+    linear-gradient(var(--wash) 1px, transparent 1px),
+    linear-gradient(90deg, var(--wash) 1px, transparent 1px);
+  background-size: 16px 16px;
+  border: 1px solid var(--rule);
+}
+
+/* Corner labels frame panels (decideai-style), never decorative lines. */
+.corners { position: relative; }
+.corners > .c { position: absolute; font-family: var(--mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--graphite); }
+.corners > .tl { top: 14px; left: 16px; } .corners > .tr { top: 14px; right: 16px; }
+.corners > .bl { bottom: 14px; left: 16px; } .corners > .br { bottom: 14px; right: 16px; }
+
+/* Barcode: proof bits. Generated per element by ready.js from data-bits. */
+.barcode { display: flex; height: 64px; gap: 0; }
+.barcode i { display: block; height: 100%; background: var(--ink); }
