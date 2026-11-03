@@ -59,7 +59,9 @@ export function createSealField(host, options = {}) {
 
   function resize() {
     const r = host.getBoundingClientRect();
-    const next = metrics(Math.max(1, Math.round(r.width)), Math.max(1, Math.round(r.height)), window.devicePixelRatio, opts.cell);
+    // Ambient fields render at 1x: they are texture behind content and often cover the whole viewport.
+    const next = metrics(Math.max(1, Math.round(r.width)), Math.max(1, Math.round(r.height)), window.devicePixelRatio, opts.cell,
+      opts.shape === "mark" ? 1.5 : 1);
     if (m && next.W === m.W && next.H === m.H && next.dpr === m.dpr) return;
     m = next;
     if (worker) send({ type: "layout", metrics: m }); else local.layout(m);

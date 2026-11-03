@@ -78,10 +78,13 @@ function useLandingMotion(root: React.RefObject<HTMLElement | null>) {
       });
       // Entry steps light up one cell at a time as the section scrolls through.
       const steps = gsap.utils.toArray<HTMLElement>(".entry-step");
+      let litCount = -1;
       ScrollTrigger.create({
-        trigger: ".entry", start: "top 65%", end: "bottom 60%", scrub: true,
+        trigger: ".entry", start: "top 65%", end: "bottom 60%",
         onUpdate: self => {
           const lit = Math.round(self.progress * steps.length);
+          if (lit === litCount) return;
+          litCount = lit;
           steps.forEach((step, i) => step.classList.toggle("lit", i < lit));
         },
       });

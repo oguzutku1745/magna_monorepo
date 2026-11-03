@@ -28,8 +28,8 @@ const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 const smooth = (t) => t * t * (3 - 2 * t);
 
 /** Cell metrics for a host size. */
-export function metrics(W, H, dprRaw, cell) {
-  const dpr = Math.min(1.5, dprRaw || 1);
+export function metrics(W, H, dprRaw, cell, maxDpr = 1.5) {
+  const dpr = Math.min(maxDpr, dprRaw || 1);
   const cw = cell || (W < 600 ? 8 : W < 1100 ? 9 : 10);
   const ch = Math.round(cw * 1.5);
   return { W, H, dpr, cw, ch, fs: Math.round(ch * 0.72), cols: Math.ceil(W / cw), rows: Math.ceil(H / ch) };
@@ -189,9 +189,11 @@ export function createRenderer(canvas, initial) {
     tick(now) {
       if (!last) { last = now; return false; }
       const dt = Math.min(0.1, (now - last) / 1000);
-      // 12 steps a second at rest, 30 while the pointer or the proof front moves.
+      // The seal steps 12 times a second at rest and 30 while the pointer or the proof front moves.
+      // Ambient fields (no seal) are background texture and step slower.
       const active = pointer.energy > 0.01 || Math.abs(target - progress) > 0.002 || (opts.auto && progress < 0.998);
-      if (dt < (active ? 1 / 30 : 1 / 12)) return false;
+      const ambient = opts.shape !== "mark";
+      if (dt < (active ? (ambient ? 1 / 20 : 1 / 30) : (ambient ? 1 / 8 : 1 / 12))) return false;
       last = now;
       time += dt;
       if (opts.auto) target = 1;

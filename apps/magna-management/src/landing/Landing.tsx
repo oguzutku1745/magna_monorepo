@@ -169,6 +169,7 @@ function useLandingMotion(root: React.RefObject<HTMLElement | null>, field: Reac
         if (!track || !section) return;
         const distance = () => track.scrollWidth - window.innerWidth;
         const steps = gsap.utils.toArray<HTMLElement>(".tl-step-index li");
+        let lastActive = -1;
         const travel = gsap.to(track, {
           x: () => -distance(), ease: "none",
           scrollTrigger: {
@@ -176,8 +177,9 @@ function useLandingMotion(root: React.RefObject<HTMLElement | null>, field: Reac
             pin: true, scrub: 0.8, invalidateOnRefresh: true,
             onUpdate: self => {
               const active = Math.min(steps.length - 1, Math.floor(self.progress * steps.length * 0.999));
+              if (active === lastActive) return;
+              lastActive = active;
               steps.forEach((li, i) => li.classList.toggle("lit", i <= active));
-              section.style.setProperty("--tl-progress", String(self.progress));
             },
           },
         });
