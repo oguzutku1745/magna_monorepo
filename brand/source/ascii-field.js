@@ -49,6 +49,8 @@ export function createSealField(host, options = {}) {
   let progress = opts.auto ? 0 : opts.progress;
   let target = opts.progress;
   const pointer = { x: -1e4, y: -1e4, energy: 0 };
+  // While the page scrolls the field holds its last frame, so scrolling never competes with canvas raster.
+  let scrollingUntil = 0;
   // Per-row drift speed and phase for the data lines.
   let lanes = [];
   // Per-cell static data, computed on resize: mark kind (0 none, 1 ink, 2 seal), halo strength, sweep position, jitter.
@@ -203,6 +205,7 @@ export function createSealField(host, options = {}) {
   function loop(now) {
     raf = requestAnimationFrame(loop);
     if (!last) { last = now; return; }
+    if (now < scrollingUntil) return;
     const dt = Math.min(0.3, (now - last) / 1000);
     // The field steps like a terminal: 4 frames a second at rest, 24 while the pointer or the proof front moves.
     const active = pointer.energy > 0.01 || Math.abs(target - progress) > 0.002 || (opts.auto && progress < 0.998);
@@ -210,7 +213,7 @@ export function createSealField(host, options = {}) {
     last = now;
     time += dt;
     if (opts.auto) target = 1;
-    progress += (target - progress) * Math.min(1, dt * 2.2);
+    progress += (target - progress) * Math.min(1, dt * 3.2);
     pointer.energy = Math.max(0, pointer.energy - dt * 0.9);
     render();
   }
@@ -230,10 +233,13 @@ export function createSealField(host, options = {}) {
     pointer.energy = Math.min(1, pointer.energy + 0.25);
   };
   const onVisibility = () => { visible = !document.hidden; sync(); };
+  const onScroll = () => { scrollingUntil = performance.now() + 180; };
   const ro = new ResizeObserver(resize);
   const io = new IntersectionObserver(([entry]) => { inView = entry.isIntersecting; sync(); });
   ro.observe(host); io.observe(host);
   window.addEventListener("pointermove", onPointer, { passive: true });
+  window.addEventListener("scroll", onScroll, { passive: true });
+  window.addEventListener("wheel", onScroll, { passive: true });
   document.addEventListener("visibilitychange", onVisibility);
 
   if (reduce) { progress = target = 1; }
@@ -249,6 +255,8 @@ export function createSealField(host, options = {}) {
       cancelAnimationFrame(raf); raf = 0;
       ro.disconnect(); io.disconnect();
       window.removeEventListener("pointermove", onPointer);
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("wheel", onScroll);
       document.removeEventListener("visibilitychange", onVisibility);
       canvas.remove();
     },
