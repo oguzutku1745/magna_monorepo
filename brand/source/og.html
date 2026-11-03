@@ -3,6 +3,7 @@
 <html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
 <style>
   .canvas { width: 1200px; height: 630px; padding: 48px 56px; display: flex; flex-direction: column; justify-content: space-between; }
+  h1 { margin-bottom: 40px; }
   #field { position: absolute; inset: 0; }
   .top, .bottom { position: relative; z-index: 2; display: flex; justify-content: space-between; align-items: flex-start; }
   h1 { position: relative; z-index: 2; font-size: 84px; font-weight: 500; letter-spacing: -0.05em; line-height: 0.95; max-width: 640px; }
@@ -12,7 +13,6 @@
     <div id="field"></div>
     <div class="top"><img src="../logo/wordmark.svg" style="height:30px" alt=""><span class="label">Private credentials on Aztec</span></div>
     <h1>Prove who you are. Reveal nothing else.</h1>
-    <div class="bottom"><span class="label">Passport / Instagram / Passkey recovery</span><span class="label">magna</span></div>
   </div>
   <script type="module">
     import { ready } from "./ready.js";
