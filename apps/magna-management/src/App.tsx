@@ -40,7 +40,9 @@ import {
   withWebAuthnAssertionDelegate,
 } from "@magna/wallet";
 import { AuthorizePage } from "./AuthorizePage";
-import { Threads } from "./components/Threads";
+import { Logo } from "./brand/Logo";
+import { SealField } from "./brand/SealField";
+import { Landing } from "./landing/Landing";
 import {
   getChainInfo,
   getRecoveryTransactionChainState,
@@ -2505,7 +2507,7 @@ export function App() {
     <div className="app-shell">
       <header className="topbar">
         <button className="brand-mark" type="button" onClick={() => goTo("/")}>
-          MAGNA
+          <Logo />
         </button>
         <div className="topbar-state" />
       </header>
@@ -2629,42 +2631,6 @@ function WalletBlockBanner(props: { onReconnect?: () => void }) {
   );
 }
 
-function Landing(props: { go: (path: string) => void }) {
-  const headline = "Prove who you are, reveal nothing else.";
-  return (
-    <main className="landing">
-      <Threads
-        className="threads-bg"
-        color={[0.95, 0.5, 0.32]}
-        amplitude={1.7}
-        distance={0.35}
-        enableMouseInteraction
-      />
-      <section className="landing-hero">
-        <p className="eyebrow reveal-up" style={{ animationDelay: "0.05s" }}>Private identity layer</p>
-        <h1 className="landing-title">
-          {headline.split(" ").map((word, index) => (
-            <span className="word" key={`${word}-${index}`} style={{ animationDelay: `${0.15 + index * 0.07}s` }}>
-              {word}&nbsp;
-            </span>
-          ))}
-        </h1>
-        <p className="hero-copy reveal-up" style={{ animationDelay: "0.78s" }}>
-          Magna turns your passport and social proofs into private credentials held in a passkey wallet. Apps get a
-          simple yes or no, never your documents.
-        </p>
-        <div className="hero-actions reveal-up" style={{ animationDelay: "0.92s" }}>
-          <button className="magnetic" type="button" onClick={() => props.go("/user/login")}>User Login</button>
-          <button className="secondary magnetic" type="button" onClick={() => props.go("/company/login")}>
-            Company Login
-          </button>
-        </div>
-      </section>
-
-    </main>
-  );
-}
-
 function CompanyLogin(props: {
   env: ManagementEnv;
   busy: string | null;
@@ -2716,7 +2682,7 @@ export function UserLogin(props: {
   const busy = Boolean(props.busy);
   return (
     <main className="auth-screen">
-      <Threads className="threads-bg soft" color={[0.48, 0.85, 0.8]} amplitude={1.1} distance={0.25} />
+      <SealField shape="mark" auto markBox={{ x: 0.5, y: 0.5, size: 0.52 }} />
       <section className="auth-card">
         <p className="eyebrow">Magna wallet</p>
         <h1>Sign in to Magna</h1>
