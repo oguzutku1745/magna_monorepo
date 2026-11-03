@@ -319,16 +319,31 @@ html.lenis, html.lenis body { height: auto; }
 /* ------------------------------------------------------------- gate/result */
 
 .gate {
+  position: relative;
+  isolation: isolate;
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr minmax(360px, 480px);
+  grid-template-columns: 1fr minmax(380px, 500px);
   gap: clamp(24px, 6vw, 96px);
   align-items: center;
-  padding: clamp(40px, 7vw, 104px) var(--gutter);
+  padding: clamp(40px, 6vw, 88px) var(--gutter);
+  min-height: calc(100svh - 64px);
 }
-.gate-copy { display: grid; gap: 22px; }
-.gate-copy h1 { font-size: clamp(40px, 5.4vw, 84px); letter-spacing: -0.055em; line-height: 0.95; max-width: 13ch; }
-.gate-copy > p:last-child { font-size: 18px; line-height: 1.55; max-width: 52ch; }
+.gate-field { position: absolute; inset: 0; z-index: -1; opacity: 0.35; }
+.gate-copy { display: grid; gap: 24px; max-width: 720px; }
+.gate-copy h1 { font-size: clamp(44px, 5.6vw, 88px); letter-spacing: -0.055em; line-height: 0.95; max-width: 12ch; }
+.gate-copy > p:not(.eyebrow) { font-size: 18px; line-height: 1.55; max-width: 52ch; }
+.gate-flow { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 10px; }
+.gate-flow li {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px 10px 10px;
+  background: var(--white);
+  border-radius: var(--radius);
+  font-size: 14px;
+}
+.gate-flow span { font: 400 14px/1 var(--pixel); background: var(--ink); color: var(--paper); padding: 6px 7px; }
 
 .requirement-panel {
   display: grid;
@@ -336,48 +351,70 @@ html.lenis, html.lenis body { height: auto; }
   padding: 0;
   background: var(--white);
   border: 1px solid var(--ink);
-  border-radius: var(--radius);
+  border-radius: 6px;
   overflow: hidden;
+  box-shadow: 14px 14px 0 var(--wash);
 }
+.pass-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 20px;
+  background: var(--ink);
+  color: var(--paper);
+  font: 500 11px var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.pass-mark { width: 18px; height: auto; color: var(--paper); }
 .requirement-panel > div {
   display: grid;
   grid-template-columns: 1fr;
   gap: 4px;
-  padding: 16px 20px 16px 48px;
-  border-bottom: 1px solid var(--rule);
+  padding: 18px 64px 18px 20px;
+  border-bottom: 1px solid var(--wash);
   position: relative;
 }
-.requirement-panel > div::before {
+.requirement-panel > div::after {
   content: "";
   position: absolute;
-  left: 20px;
-  top: 22px;
-  width: 12px;
-  height: 12px;
+  right: 22px;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
   border: 1px solid var(--ink);
 }
-.requirement-panel > div span { font: 500 11px var(--mono); letter-spacing: 0.04em; text-transform: uppercase; color: var(--graphite); }
-.requirement-panel > div strong { font-size: 18px; font-weight: 500; letter-spacing: -0.02em; }
+.requirement-panel > div span { font: 400 12px var(--pixel); letter-spacing: 0.04em; text-transform: uppercase; color: var(--graphite); }
+.requirement-panel > div strong { font-size: 20px; font-weight: 500; letter-spacing: -0.025em; }
 .requirement-panel label {
   display: grid;
   gap: 8px;
-  padding: 20px 20px 0;
+  padding: 22px 20px 0;
   font: 500 12px var(--mono);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--graphite);
 }
+.handle-field { display: flex; align-items: stretch; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--paper); transition: border-color 0.2s var(--ease); }
+.handle-field:focus-within { border-color: var(--ink); }
+.handle-at { display: grid; place-items: center; padding: 0 2px 0 14px; font: 500 17px var(--sans); color: var(--graphite); text-transform: none; }
 .requirement-panel input {
-  font: 400 16px var(--sans);
+  flex: 1;
+  min-width: 0;
+  font: 400 17px var(--sans);
   color: var(--ink);
-  background: var(--paper);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-  padding: 12px;
+  background: transparent;
+  border: 0;
+  padding: 14px 12px 14px 4px;
   text-transform: none;
   letter-spacing: 0;
+  outline: none;
 }
-.requirement-panel > button { margin: 16px 20px 20px; height: 54px; }
+.requirement-panel input:focus-visible { box-shadow: none; outline: none; }
+.handle-field:focus-within { box-shadow: 0 0 0 4px var(--signal); }
+.pass-note { padding: 0 20px 20px; font-size: 13px; }
+.requirement-panel > button { margin: 16px 20px 14px; height: 58px; font-size: 17px; }
 .magna-login { background: var(--signal); border-color: var(--signal-deep); color: var(--ink); font-size: 16px; }
 .magna-login:hover:not(:disabled) { background: #d6f75a; }
 .magna-login-mark { width: 18px; height: auto; color: var(--ink); }

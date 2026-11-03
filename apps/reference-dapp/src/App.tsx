@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Logo } from "./brand/Logo";
 import { Landing } from "./landing/Landing";
+import { SealField } from "./brand/SealField";
 import { createReferenceMagnaClient, loginWithMagnaSocial, type MagnaLoginResult } from "./login-with-magna";
 import { useRoute } from "./router";
 
@@ -64,24 +65,38 @@ export function AppGate(props: {
 }) {
   return (
     <main className="gate">
+      <SealField shape="none" className="gate-field" />
       <section className="gate-copy">
         <p className="eyebrow">Entry requirement</p>
         <h1>Prove eligibility without handing over identity.</h1>
         <p>Magna Social asks Magna for three facts only: US citizen, older than 18, and owner of the requested Instagram handle.</p>
+        <ol className="gate-flow" aria-label="How entry works">
+          <li><span>01</span>Enter your handle</li>
+          <li><span>02</span>Approve in your Magna wallet</li>
+          <li><span>03</span>Join your circles</li>
+        </ol>
       </section>
       <section className="requirement-panel">
+        <header className="pass-head" aria-hidden="true">
+          <span>Entry pass</span>
+          <Logo variant="mark" mono className="pass-mark" />
+        </header>
         <div><span>Requirement 01</span><strong>Citizen of US</strong></div>
         <div><span>Requirement 02</span><strong>Age greater than 18</strong></div>
         <div><span>Requirement 03</span><strong>Instagram handle ownership</strong></div>
         <label>
           Instagram handle
-          <input value={props.handle} onChange={event => props.setHandle(event.target.value)} placeholder="magnasocial" />
+          <span className="handle-field">
+            <span className="handle-at" aria-hidden="true">@</span>
+            <input value={props.handle} onChange={event => props.setHandle(event.target.value)} placeholder="magnasocial" />
+          </span>
         </label>
         <button className="magna-login" type="button" disabled={props.login.status === "pending"} onClick={props.onLogin}>
           <Logo variant="mark" mono className="magna-login-mark" />
           {props.login.status === "pending" ? "Opening Magna..." : "Login with Magna"}
         </button>
         {props.login.status === "blocked" ? <p className="blocked">{props.login.message}</p> : null}
+        <p className="pass-note">Magna opens in a popup. Your passport and email stay in your wallet.</p>
       </section>
     </main>
   );
