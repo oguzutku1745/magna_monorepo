@@ -53,7 +53,8 @@ export function drawAtlas(canvas, m) {
 
 export function createRenderer(canvas, initial) {
   const ctx = canvas.getContext("2d");
-  const opts = { shape: "mark", markBox: { x: 0.72, y: 0.5, size: 0.62 }, auto: false, ...initial };
+  const given = Object.fromEntries(Object.entries(initial ?? {}).filter(([, v]) => v !== undefined));
+  const opts = { shape: "mark", markBox: { x: 0.72, y: 0.5, size: 0.62 }, auto: false, ...given };
   const GI = new Map(GLYPHS.map((g, i) => [g, i]));
   let m = null, atlas = null;
   let lanes = [], kind = new Uint8Array(0), halo = new Float32Array(0), front0 = new Float32Array(0), jitter = new Float32Array(0);

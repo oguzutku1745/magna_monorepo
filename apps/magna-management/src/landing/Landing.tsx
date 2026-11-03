@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useRef } from "react";
+import { Cta } from "../brand/Cta";
 import { Logo } from "../brand/Logo";
 import { SealField } from "../brand/SealField";
 import type { SealField as Field } from "../brand/ascii-field.js";
@@ -230,14 +231,9 @@ export function Landing(props: { go: (path: string) => void }) {
             simple yes or no, never your documents.
           </p>
           <div className="hero-actions hero-in">
-            <button className="magnetic" type="button" onClick={() => props.go("/user/login")}>User Login</button>
-            <button className="secondary magnetic" type="button" onClick={() => props.go("/company/login")}>
-              Company Login
-            </button>
+            <Cta label="User Login" onClick={() => props.go("/user/login")} />
+            <Cta label="Company Login" variant="outline" onClick={() => props.go("/company/login")} />
           </div>
-        </div>
-        <div className="hero-foot">
-          <span>Scroll to follow a credential ↓</span>
         </div>
       </section>
 
@@ -377,10 +373,25 @@ if (result.verified) {
         <div className="closing-top">
           <Logo variant="mark" className="closing-mark" />
           <h2 data-lines><Words text="Open your wallet." className="w" /></h2>
-          <div className="hero-actions">
-            <button type="button" onClick={() => props.go("/user/login")}>User Login</button>
-            <button className="secondary" type="button" onClick={() => props.go("/company/login")}>Company Login</button>
-          </div>
+        </div>
+        <div className="paths" data-reveal>
+          {[
+            { k: "For people", n: "01", label: "User Login", path: "/user/login", icon: "passkey" as const,
+              copy: "Open a passkey wallet, issue Passport and Instagram credentials, and recover them with a fresh proof." },
+            { k: "For companies", n: "02", label: "Company Login", path: "/company/login", icon: "login" as const,
+              copy: "Buy verification rights and sponsor the private checks your users run, without seeing their data." },
+          ].map(item => (
+            <button className="path" type="button" key={item.n} onClick={() => props.go(item.path)}>
+              <span className="corner tl">{item.k}</span>
+              <span className="corner tr">{item.n}</span>
+              <Pixel name={item.icon} className="path-pixel" />
+              <span className="path-title">{item.label}</span>
+              <span className="path-copy">{item.copy}</span>
+              <span className="path-go" aria-hidden="true">
+                <svg viewBox="0 0 10 10" shapeRendering="crispEdges"><path d="M0 4h6V2h1v1h1v1h1v2H8v1H7v1H6V6H0z" fill="currentColor" /></svg>
+              </span>
+            </button>
+          ))}
         </div>
         <div className="closing-word" aria-hidden="true"><Logo className="closing-logo" /></div>
         <footer className="landing-foot">

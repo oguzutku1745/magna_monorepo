@@ -429,14 +429,73 @@ small { color: var(--graphite); font-size: 13px; }
 .hero-copy { font-size: clamp(17px, 1.4vw, 20px); line-height: 1.5; max-width: 560px; color: var(--graphite); }
 .hero-actions { display: flex; gap: 12px; flex-wrap: wrap; }
 .hero-actions button { height: 52px; padding: 0 24px; font-size: 16px; }
-.hero-foot {
-  display: flex;
-  justify-content: flex-end;
-  font: 500 12px var(--mono);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--graphite);
+
+/* CTA: label rolls to its twin, arrow cell steps forward. */
+.cta { height: 54px; padding: 0 6px 0 22px; gap: 16px; font-size: 16px; overflow: hidden; }
+.cta-roll { position: relative; display: inline-grid; overflow: hidden; height: 1.15em; line-height: 1.15; }
+.cta-roll > span { display: block; transition: transform 0.55s var(--ease); }
+.cta:hover:not(:disabled) .cta-roll > span { transform: translateY(-100%); }
+.cta-arrow {
+  width: 42px; height: 42px; flex: none;
+  display: grid; place-items: center;
+  background: var(--ink); color: var(--paper);
+  border-radius: 2px;
+  transition: transform 0.45s var(--ease), background-color 0.3s var(--ease);
 }
+.cta-arrow svg { width: 12px; height: 12px; transition: transform 0.45s var(--ease); }
+.cta:hover:not(:disabled) .cta-arrow svg { transform: translateX(3px); }
+.cta-outline .cta-arrow { background: transparent; color: var(--ink); border: 1px solid var(--ink); }
+.cta-outline:hover:not(:disabled) .cta-arrow { background: var(--ink); color: var(--paper); }
+.cta-ink .cta-arrow { background: var(--signal); color: var(--ink); }
+.hero-actions .cta { height: 54px; padding: 0 6px 0 22px; }
+
+/* Closing paths: two large choices. */
+.paths { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 48px; }
+.path {
+  position: relative;
+  height: auto;
+  min-height: 340px;
+  padding: 64px 28px 28px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto 1fr auto;
+  align-items: end;
+  gap: 16px;
+  text-align: left;
+  background: var(--white);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  isolation: isolate;
+  overflow: hidden;
+  transition: border-color 0.3s var(--ease);
+}
+.path::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--signal);
+  transform: scaleY(0);
+  transform-origin: bottom;
+  transition: transform 0.6s var(--ease);
+}
+.path:hover:not(:disabled) { background: var(--white); border-color: var(--signal-deep); }
+.path:hover:not(:disabled)::before { transform: scaleY(1); }
+.path .corner { color: var(--graphite); }
+.path-pixel { grid-column: 1 / -1; align-self: start; width: 56px; }
+.path-title { grid-column: 1; font: 500 clamp(36px, 4vw, 60px)/0.95 var(--sans); letter-spacing: -0.05em; }
+.path-copy { grid-column: 1; font: 400 16px/1.5 var(--sans); color: var(--graphite); max-width: 42ch; }
+.path:hover .path-copy { color: var(--ink); }
+.path-go {
+  grid-column: 2; grid-row: 2 / 4; align-self: end;
+  width: 64px; height: 64px;
+  display: grid; place-items: center;
+  background: var(--ink); color: var(--paper);
+  transition: transform 0.5s var(--ease);
+}
+.path-go svg { width: 18px; height: 18px; }
+.path:hover .path-go { transform: translateX(6px); }
 
 .marquee {
   padding: clamp(40px, 6vw, 80px) 0;
@@ -630,7 +689,7 @@ small { color: var(--graphite); font-size: 13px; }
 .code code { display: block; padding: 0 20px; white-space: pre; font-size: 14px; }
 
 .closing { padding: clamp(96px, 12vw, 180px) var(--gutter) 0; overflow: hidden; }
-.closing-top { display: grid; justify-items: start; gap: 28px; }
+.closing-top { display: flex; align-items: end; gap: 28px; }
 .closing-mark { width: 64px; height: auto; color: var(--ink); }
 .closing-top h2 { font-size: clamp(48px, 8vw, 128px); letter-spacing: -0.055em; line-height: 0.92; }
 .closing-word { margin-top: clamp(64px, 9vw, 140px); margin-bottom: -2.6vw; }
@@ -903,6 +962,7 @@ main.empty-state { margin: clamp(40px, 6vw, 88px) var(--gutter); }
 /* ------------------------------------------------------------- responsive */
 
 @media (max-width: 1100px) {
+  .paths { grid-template-columns: 1fr; }
   .hero-meta { grid-template-columns: 1fr 1fr; }
   .cards { grid-template-columns: 1fr; }
   .brand-card { min-height: 300px; }

@@ -17,7 +17,9 @@
 import { createRenderer, drawAtlas, metrics } from "./ascii-field-core.js";
 
 export function createSealField(host, options = {}) {
-  const opts = { shape: "mark", progress: 1, auto: false, markBox: { x: 0.72, y: 0.5, size: 0.62 }, cell: 0, ...options };
+  // Undefined options (React passes them through) must not erase the defaults.
+  const given = Object.fromEntries(Object.entries(options).filter(([, v]) => v !== undefined));
+  const opts = { shape: "mark", progress: 1, auto: false, markBox: { x: 0.72, y: 0.5, size: 0.62 }, cell: 0, ...given };
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const canvas = document.createElement("canvas");
   canvas.setAttribute("aria-hidden", "true");
