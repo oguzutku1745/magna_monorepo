@@ -26,13 +26,27 @@ const STEPS = [
   { n: "03", title: "The proof settles", copy: "An Aztec transaction carries a request-bound nullifier." },
   { n: "04", title: "You are in", copy: "The app checks the receipt and opens your session." },
 ];
-const CIRCLES = [
-  { name: "New York builders", tags: ["US citizen", "18+"] },
-  { name: "Austin night market", tags: ["18+"] },
-  { name: "Denver mutual aid", tags: ["US citizen"] },
-  { name: "Chicago run club", tags: ["18+", "Instagram"] },
-  { name: "Seattle zine swap", tags: ["Instagram"] },
-  { name: "Miami late chess", tags: ["US citizen", "18+", "Instagram"] },
+const PROOF_COLUMNS = ["US citizen", "18+", "Instagram"] as const;
+const CIRCLES: { name: string; city: string; needs: (typeof PROOF_COLUMNS)[number][] }[] = [
+  { name: "Builders", city: "New York", needs: ["US citizen", "18+"] },
+  { name: "Night market", city: "Austin", needs: ["18+"] },
+  { name: "Mutual aid", city: "Denver", needs: ["US citizen"] },
+  { name: "Run club", city: "Chicago", needs: ["18+", "Instagram"] },
+  { name: "Zine swap", city: "Seattle", needs: ["Instagram"] },
+  { name: "Late chess", city: "Miami", needs: ["US citizen", "18+", "Instagram"] },
+];
+const KEPT = [
+  { label: "Handle you chose", value: "@rae.builds" },
+  { label: "Circles you join", value: "3 circles" },
+  { label: "What you post", value: "Your posts" },
+  { label: "Magna receipts", value: "0x7c41..9e02" },
+];
+// Example values a document would expose. They are drawn only to be sealed.
+const SEALED = [
+  { label: "Passport scan", value: "P<USARAE<<BUILDS<<<<<<<" },
+  { label: "Date of birth", value: "1994-03-12" },
+  { label: "Passport number", value: "561 284 907" },
+  { label: "Instagram email", value: "security@mail.instagram.com" },
 ];
 
 function useLandingMotion(root: React.RefObject<HTMLElement | null>) {
@@ -75,9 +89,18 @@ function useLandingMotion(root: React.RefObject<HTMLElement | null>) {
         y: 60, rotate: -2, autoAlpha: 0, duration: 1.2, ease: "expo.out",
         scrollTrigger: { trigger: ".entry", start: "top 70%" },
       });
-      gsap.from(".circle-card", {
-        y: 40, autoAlpha: 0, duration: 0.9, stagger: 0.06, ease: "expo.out",
-        scrollTrigger: { trigger: ".circle-grid", start: "top 80%" },
+      gsap.from(".circle-row", {
+        y: 30, autoAlpha: 0, duration: 0.9, stagger: 0.06, ease: "expo.out",
+        scrollTrigger: { trigger: ".circle-matrix", start: "top 80%" },
+      });
+      gsap.from(".circle-row .need.on", {
+        scale: 0, duration: 0.5, stagger: 0.04, ease: "back.out(2.4)",
+        scrollTrigger: { trigger: ".circle-matrix", start: "top 70%" },
+      });
+      // The sealed values are visible for a beat, then ink covers them.
+      gsap.fromTo(".redact-bar", { scaleX: 0 }, {
+        scaleX: 1, duration: 0.8, stagger: 0.14, ease: "expo.inOut",
+        scrollTrigger: { trigger: ".ledger-board", start: "top 65%" },
       });
     }, el);
 
@@ -187,27 +210,66 @@ export function Landing(props: { onLaunch: () => void }) {
           <h2 data-reveal>Circles that know who belongs.</h2>
           <p data-reveal>Each room picks its own rules. Join with the proofs you already hold.</p>
         </div>
-        <div className="circle-grid">
+        <div className="circle-matrix" role="table" aria-label="Circles and the proofs they require">
+          <div className="circle-row circle-head" role="row">
+            <span role="columnheader">Circle</span>
+            {PROOF_COLUMNS.map(col => <span role="columnheader" className="need-col" key={col}>{col}</span>)}
+            <span aria-hidden="true" />
+          </div>
           {CIRCLES.map((circle, i) => (
-            <article className="circle-card" key={circle.name}>
-              <span className="circle-index">{String(i + 1).padStart(2, "0")}</span>
-              <h3>{circle.name}</h3>
-              <div className="circle-tags">
-                {circle.tags.map(tag => <span key={tag}><i aria-hidden="true" />{tag}</span>)}
-              </div>
-            </article>
+            <div className="circle-row" role="row" key={circle.name}>
+              <span role="cell" className="circle-name">
+                <small>{String(i + 1).padStart(2, "0")} {circle.city}</small>
+                <strong>{circle.name}</strong>
+              </span>
+              {PROOF_COLUMNS.map(col => {
+                const on = circle.needs.includes(col);
+                return (
+                  <span role="cell" className="need-col" key={col}>
+                    <i className={on ? "need on" : "need"} aria-label={on ? `${col} required` : `${col} not required`} />
+                  </span>
+                );
+              })}
+              <span className="circle-go" aria-hidden="true">
+                <svg viewBox="0 0 10 10" shapeRendering="crispEdges"><path d="M0 4h6V2h1v1h1v1h1v2H8v1H7v1H6V6H0z" fill="currentColor" /></svg>
+              </span>
+            </div>
           ))}
         </div>
       </section>
 
       <section className="ledger">
-        <div className="ledger-col" data-reveal>
-          <h3>Magna Social keeps</h3>
-          <ul><li>The handle you chose</li><li>The circles you join</li><li>What you post</li><li>Magna receipts</li></ul>
+        <div className="section-split">
+          <h2 data-reveal>What crosses the line.</h2>
+          <p data-reveal>
+            Magna Social keeps what you choose to share. Everything a document would reveal stays sealed in your
+            wallet and never reaches this app.
+          </p>
         </div>
-        <div className="ledger-col never" data-reveal>
-          <h3>Magna Social never receives</h3>
-          <ul><li>A passport scan</li><li>Your date of birth</li><li>Your passport number</li><li>Your Instagram email</li></ul>
+        <div className="ledger-board">
+          <div className="ledger-side">
+            <div className="ledger-head"><strong>Kept by Magna Social</strong><span>Shared by you</span></div>
+            <ul>
+              {KEPT.map(item => (
+                <li key={item.label}><span>{item.label}</span><code>{item.value}</code></li>
+              ))}
+            </ul>
+          </div>
+          <div className="ledger-side sealed">
+            <div className="ledger-head"><strong>Sealed in your wallet</strong><span>Never sent</span></div>
+            <ul>
+              {SEALED.map(item => (
+                <li key={item.label}>
+                  <span>{item.label}</span>
+                  <span className="redact">
+                    <code aria-hidden="true">{item.value}</code>
+                    <i className="redact-bar" aria-hidden="true"><b>Sealed</b></i>
+                    <span className="sr-only">not shared</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
       </section>
 
