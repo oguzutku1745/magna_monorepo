@@ -9,37 +9,37 @@ import { SealField } from "../brand/SealField";
 gsap.registerPlugin(ScrollTrigger);
 
 const ROOMS = ["New York builders", "Austin night market", "Denver mutual aid"];
-const PROOFS = ["Age gate", "US citizen gate", "Instagram next"];
+const PROOFS = ["Age gate", "Passport country check", "Instagram ownership"];
 const POSTS = [
-  { room: "New York builders", name: "Rae", text: "Demo night moved to the roof. Bring a laptop.", proof: "US citizen, 18+" },
+  { room: "New York builders", name: "Rae", text: "Demo night moved to the roof. Bring a laptop.", proof: "Passport country, 18+" },
   { room: "Austin night market", name: "Teo", text: "Two stalls left for Saturday. First come.", proof: "18+" },
-  { room: "Denver mutual aid", name: "Imani", text: "Pantry restock at 6. We need four hands.", proof: "US citizen" },
+  { room: "Denver mutual aid", name: "Imani", text: "Pantry restock at 6. We need four hands.", proof: "Passport country" },
 ];
 const DOOR = [
-  { n: "01", title: "Citizen of US", proves: "Nationality rule holds", never: "Passport number, name, photo" },
-  { n: "02", title: "Age greater than 18", proves: "Minimum age holds", never: "Date of birth" },
+  { n: "01", title: "Passport country", proves: "Required nationality verified", never: "Passport number, name, photo" },
+  { n: "02", title: "Age 18 or older", proves: "You meet the minimum age", never: "Date of birth" },
   { n: "03", title: "Instagram handle ownership", proves: "You own the handle", never: "The security email" },
 ];
 const STEPS = [
-  { n: "01", title: "Tap Login with Magna", copy: "Magna Social sends a policy, never a form." },
-  { n: "02", title: "Your wallet opens", copy: "The Magna wallet asks which passkey should answer." },
-  { n: "03", title: "The proof settles", copy: "An Aztec transaction carries a request-bound nullifier." },
-  { n: "04", title: "You are in", copy: "The app checks the receipt and opens your session." },
+  { n: "01", title: "Tap Login with Magna", copy: "See which facts the demo asks to verify." },
+  { n: "02", title: "Your wallet opens", copy: "Choose your wallet and unlock it with your passkey." },
+  { n: "03", title: "Your credentials are checked", copy: "Magna verifies the requested facts without sharing your documents." },
+  { n: "04", title: "See the result", copy: "The demo shows whether the requested checks passed." },
 ];
-const PROOF_COLUMNS = ["US citizen", "18+", "Instagram"] as const;
+const PROOF_COLUMNS = ["Passport country", "18+", "Instagram"] as const;
 const CIRCLES: { name: string; city: string; needs: (typeof PROOF_COLUMNS)[number][] }[] = [
-  { name: "Builders", city: "New York", needs: ["US citizen", "18+"] },
+  { name: "Builders", city: "New York", needs: ["Passport country", "18+"] },
   { name: "Night market", city: "Austin", needs: ["18+"] },
-  { name: "Mutual aid", city: "Denver", needs: ["US citizen"] },
+  { name: "Mutual aid", city: "Denver", needs: ["Passport country"] },
   { name: "Run club", city: "Chicago", needs: ["18+", "Instagram"] },
   { name: "Zine swap", city: "Seattle", needs: ["Instagram"] },
-  { name: "Late chess", city: "Miami", needs: ["US citizen", "18+", "Instagram"] },
+  { name: "Late chess", city: "Miami", needs: ["Passport country", "18+", "Instagram"] },
 ];
 const KEPT = [
   { label: "Handle you chose", value: "@rae.builds" },
   { label: "Circles you join", value: "3 circles" },
   { label: "What you post", value: "Your posts" },
-  { label: "Magna receipts", value: "0x7c41..9e02" },
+  { label: "Verification records", value: "0x7c41..9e02" },
 ];
 // Example values a document would expose. They are drawn only to be sealed.
 const SEALED = [
@@ -125,9 +125,9 @@ export function Landing(props: { onLaunch: () => void }) {
         <SealField shape="none" className="social-field" />
         <div className="stage-copy">
           <h1>Magna Social</h1>
-          <p className="lede">Follow people by proof, not by documents.</p>
+          <p className="lede">Join communities with verified credentials.</p>
           <div className="stage-actions">
-            <Cta label="Launch App" variant="ink" onClick={props.onLaunch} />
+            <Cta label="Try the demo" variant="ink" onClick={props.onLaunch} />
           </div>
           <p className="powered"><Logo variant="mark" className="powered-mark" />Entry checked by Login with Magna</p>
         </div>
@@ -136,7 +136,7 @@ export function Landing(props: { onLaunch: () => void }) {
             <strong>Circles</strong>
             <span>Near you</span>
           </div>
-          <div className="post-line">US citizen, 18+, no passport data exposed.</div>
+          <div className="post-line">Example: passport country and age verified privately.</div>
           {POSTS.map(post => (
             <article className="phone-post" key={post.name}>
               <span className="avatar" aria-hidden="true">{post.name[0]}</span>
@@ -147,11 +147,11 @@ export function Landing(props: { onLaunch: () => void }) {
               </div>
             </article>
           ))}
-          <div className="post-line thin">Follow people by proof, not by documents.</div>
+          <div className="post-line thin">Join communities with verified credentials.</div>
         </div>
         <div className="feed-columns">
           <div className="feed-column left">
-            <span>Citizen-only rooms</span>
+            <span>Example communities</span>
             <ul>{ROOMS.map(room => <li key={room}><strong>{room}</strong></li>)}</ul>
           </div>
           <div className="feed-column right">
@@ -163,10 +163,10 @@ export function Landing(props: { onLaunch: () => void }) {
 
       <section className="door">
         <div className="section-split">
-          <h2 data-reveal>Three proofs at the door. Nothing else comes in.</h2>
+          <h2 data-reveal>Three checks. Your documents stay private.</h2>
           <p data-reveal>
-            Every circle on Magna Social is gated by facts, not uploads. Magna proves each fact from your own wallet
-            and this app only learns that it holds.
+            This demo checks passport nationality, age 18 or older and Instagram ownership. The local demo accepts
+            zkPassport development passports (ZKR). The communities shown here illustrate how apps could use these checks.
           </p>
         </div>
         <div className="door-grid">
@@ -185,7 +185,7 @@ export function Landing(props: { onLaunch: () => void }) {
 
       <section className="entry">
         <div className="entry-copy">
-          <h2 data-reveal>Entry takes one tap and one passkey.</h2>
+          <h2 data-reveal>See how private entry works.</h2>
           <ol className="entry-steps">
             {STEPS.map(step => (
               <li className="entry-step" key={step.n}>
@@ -201,7 +201,7 @@ export function Landing(props: { onLaunch: () => void }) {
             <Logo className="mock-logo" />
             <span className="mock-kicker">Magna Wallet</span>
             <strong className="mock-title">Login with Magna</strong>
-            <p>Choose the named wallet whose private credential should authorize this login.</p>
+            <p>Choose the wallet with the credentials needed for this check.</p>
             <div className="mock-wallet"><span><b>Personal</b><small>0x2f9c..e41a</small></span><i>Open</i></div>
             <div className="mock-wallet"><span><b>Work</b><small>0x91d0..7b3c</small></span><i>Open</i></div>
           </div>
@@ -211,7 +211,7 @@ export function Landing(props: { onLaunch: () => void }) {
       <section className="circles">
         <div className="section-split">
           <h2 data-reveal>Circles that know who belongs.</h2>
-          <p data-reveal>Each room picks its own rules. Join with the proofs you already hold.</p>
+          <p data-reveal>These example communities show how different entry requirements could work. Try the demo to see your verification result.</p>
         </div>
         <div className="circle-matrix" role="table" aria-label="Circles and the proofs they require">
           <div className="circle-row circle-head" role="row">
@@ -245,8 +245,8 @@ export function Landing(props: { onLaunch: () => void }) {
         <div className="section-split">
           <h2 data-reveal>What crosses the line.</h2>
           <p data-reveal>
-            Magna Social keeps what you choose to share. Everything a document would reveal stays sealed in your
-            wallet and never reaches this app.
+            An app can keep the information you choose to share and a record of verification. Your passport details
+            and security email are not included in that record.
           </p>
         </div>
         <div className="ledger-board">
@@ -259,7 +259,7 @@ export function Landing(props: { onLaunch: () => void }) {
             </ul>
           </div>
           <div className="ledger-side sealed">
-            <div className="ledger-head"><strong>Sealed in your wallet</strong><span>Never sent</span></div>
+            <div className="ledger-head"><strong>Kept private by you</strong><span>Never sent</span></div>
             <ul>
               {SEALED.map(item => (
                 <li key={item.label}>
@@ -277,13 +277,13 @@ export function Landing(props: { onLaunch: () => void }) {
       </section>
 
       <section className="social-closing">
-        <h2 data-reveal>Find your circle.</h2>
+        <h2 data-reveal>Try verified entry.</h2>
         <div className="closing-actions" data-reveal>
-          <Cta label="Launch App" onClick={props.onLaunch} />
+          <Cta label="Try the demo" onClick={props.onLaunch} />
           <p className="powered"><Logo variant="mark" className="powered-mark" />Entry checked by Login with Magna</p>
         </div>
         <footer className="social-foot">
-          <span>Magna Social is a reference app for Login with Magna.</span>
+          <span>Magna Social is a demonstration of Login with Magna.</span>
           <span>©2026</span>
         </footer>
       </section>

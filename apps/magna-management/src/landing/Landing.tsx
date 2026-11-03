@@ -11,33 +11,33 @@ const HEADLINE = "Prove who you are, reveal nothing else.";
 const STEPS: { n: string; icon: PixelName; label: string; title: string; copy: string; stays: string; leaves: string }[] = [
   {
     n: "01", icon: "passkey", label: "Wallet",
-    title: "Open a wallet with your face.",
-    copy: "A passkey creates an Aztec account in the browser. No seed phrase, no custodian. The private key never leaves the authenticator.",
-    stays: "Passkey secret", leaves: "Account address",
+    title: "Your wallet, unlocked by you.",
+    copy: "Create a wallet and open it with a passkey on your device. Use your face, fingerprint or device PIN instead of remembering another password.",
+    stays: "Your passkey", leaves: "Your wallet address",
   },
   {
     n: "02", icon: "passport", label: "Passport",
     title: "Scan a passport. Keep the passport.",
-    copy: "zkPassport reads the chip on your phone and proves age and nationality claims. Magna issues them as a private credential in your wallet.",
-    stays: "Name, number, photo", leaves: "A proof of the claims",
+    copy: "Use the zkPassport app on your phone to verify your age and nationality. Save the verification in Magna so apps can check those facts without receiving your passport.",
+    stays: "Name, number, photo", leaves: "Verified age and nationality checks",
   },
   {
     n: "03", icon: "email", label: "Instagram",
-    title: "Prove a handle from a signed email.",
-    copy: "Your browser checks Instagram's DKIM signature on a security email and proves the handle locally. The email never leaves the device.",
-    stays: "The email, the handle", leaves: "A blinded commitment",
+    title: "Show that the account is yours.",
+    copy: "Add proof that you control an Instagram account. Use it with apps that ask to verify account ownership, without giving them access to your account.",
+    stays: "Your account access", leaves: "Account ownership verified",
   },
   {
     n: "04", icon: "login", label: "Login",
     title: "Log in with one answer.",
-    copy: "An app asks for a policy, such as age 18 or over. The wallet answers in an Aztec transaction; the SDK checks its request-bound nullifier.",
-    stays: "Notes, witnesses, documents", leaves: "Yes, and a transaction hash",
+    copy: "An app asks to check a fact, such as whether you are 18 or older. Approve the request in your wallet and the app receives the verification result.",
+    stays: "Your documents and private data", leaves: "The approved verification result",
   },
   {
     n: "05", icon: "recover", label: "Recovery",
     title: "Lose the device, not the identity.",
-    copy: "A fresh passport proof rotates your passport root to a new passkey. The old lineage is consumed, so a lost wallet cannot come back.",
-    stays: "The old wallet stays dead", leaves: "Root moves to the new key",
+    copy: "Verify your passport again to restore its credential to a new wallet. The old Passport and its linked credentials stop working. Add Instagram again after recovery.",
+    stays: "Your original documents", leaves: "Passport restored to your new wallet",
   },
 ];
 
@@ -46,16 +46,9 @@ const SEES = [
   ["Passport number", "Copy stored", "Never sent"],
   ["Date of birth", "Copy stored", "Never sent"],
   ["Age 18 or over", "Inferred", "Proven"],
-  ["Nationality rule", "Inferred", "Proven"],
+  ["Requested nationality check", "Inferred", "Proven"],
   ["Instagram handle owner", "Screenshot", "Proven"],
 ] as const;
-
-const STATS = [
-  { value: 0, label: "Documents an app receives" },
-  { value: 4, label: "Kinds of secret that never leave the wallet" },
-  { value: 2, label: "Live credential rails" },
-  { value: 1, label: "Passkey to open all of it" },
-];
 
 function Pixel(props: { name: PixelName; className?: string }) {
   return (
@@ -229,12 +222,12 @@ export function Landing(props: { go: (path: string) => void }) {
             <Words text={HEADLINE} className="w" />
           </h1>
           <p className="hero-copy hero-in">
-            Magna turns your passport and social proofs into private credentials held in a passkey wallet. Apps get a
-            simple yes or no, never your documents.
+            Keep verified facts about yourself in one private wallet. Prove your age, nationality or Instagram
+            ownership to apps without handing over your documents.
           </p>
           <div className="hero-actions hero-in">
-            <Cta label="User Login" onClick={() => props.go("/user/login")} />
-            <Cta label="Company Login" variant="outline" onClick={() => props.go("/company/login")} />
+            <Cta label="Open wallet" onClick={() => props.go("/user/login")} />
+            <Cta label="For companies" variant="outline" onClick={() => props.go("/company/login")} />
           </div>
         </div>
       </section>
@@ -254,22 +247,21 @@ export function Landing(props: { go: (path: string) => void }) {
 
       <section className="mission">
         <div className="split">
-          <h2 data-lines><Words text="Every app asks for the whole document." className="w" /></h2>
+          <h2 data-lines><Words text="Prove a fact. Keep the document." className="w" /></h2>
           <p data-reveal>
-            Age gates, KYC checks and creator verifications keep copies of passports and emails they never needed.
-            Magna keeps the document with you and lets apps check only the rule they care about. The answer is
-            enforced on Aztec, so the app can trust it without seeing anything behind it.
+            An age check should not need a copy of your passport. Magna lets apps verify the facts they need
+            while your personal documents stay with you. You choose which verification requests to approve.
           </p>
         </div>
         <div className="cards">
           {[
-            { k: "Passport", t: "Passport A2", c: "zkPassport proof of age and nationality claims, issued as a rooted private credential.", n: "001", icon: "passport" as const },
-            { k: "Social", t: "Instagram V2", c: "Handle ownership proven in the browser from a DKIM-signed Instagram security email.", n: "002", icon: "email" as const },
-            { k: "Recovery", t: "Recovery V3", c: "A fresh passport proof moves your passport root to a new passkey and retires the old one.", n: "003", icon: "recover" as const },
+            { k: "Passport", t: "Passport verification", c: "Verify your age and nationality without sharing your passport with apps.", n: "001", icon: "passport" as const },
+            { k: "Social", t: "Instagram ownership", c: "Prove that an Instagram account belongs to you without giving apps access to it.", n: "002", icon: "email" as const },
+            { k: "Recovery", t: "Passport recovery", c: "Lost access to your wallet? Verify your passport again to restore its credential to a new wallet.", n: "003", icon: "recover" as const },
           ].map(card => (
             <article className="brand-card" key={card.n} data-reveal>
               <span className="corner tl">{card.k}</span>
-              <span className="corner tr">Credential</span>
+              <span className="corner tr">{card.k === "Recovery" ? "Wallet access" : "Credential"}</span>
               <Pixel name={card.icon} className="card-pixel" />
               <h3>{card.t}</h3>
               <p>{card.c}</p>
@@ -282,7 +274,7 @@ export function Landing(props: { go: (path: string) => void }) {
 
       <section className="timeline" aria-label="The life of a Magna credential">
         <div className="tl-head">
-          <h2 className="tl-title">The life of a credential</h2>
+          <h2 className="tl-title">How Magna works</h2>
           <ol className="tl-step-index">
             {STEPS.map(step => (
               <li key={step.n}><i /><span>{step.n} {step.label}</span></li>
@@ -296,8 +288,8 @@ export function Landing(props: { go: (path: string) => void }) {
                 <span className="corner tl">Step {step.n}</span>
                 <span className="corner tr">{step.label}</span>
                 <Pixel name={step.icon} className="tl-pixel" />
-                <span className="corner bl">In the wallet</span>
-                <span className="corner br">To the app</span>
+                <span className="corner bl">Kept private</span>
+                <span className="corner br">Shared result</span>
               </div>
               <div className="tl-copy">
                 <span className="tl-number">{step.n}</span>
@@ -317,8 +309,8 @@ export function Landing(props: { go: (path: string) => void }) {
         <div className="split">
           <h2 data-lines><Words text="What the app actually sees." className="w" /></h2>
           <p data-reveal>
-            The dApp receives public request metadata and transaction hashes. Private notes, credential witnesses,
-            passkey secrets and passport or email data stay in the wallet.
+            Apps receive the results of the checks you approve and a verification record. They do not receive
+            your passport, date of birth or Instagram security email.
           </p>
         </div>
         <div className="sees-table" role="table" aria-label="Data an app receives">
@@ -337,38 +329,23 @@ export function Landing(props: { go: (path: string) => void }) {
         </div>
       </section>
 
-      <section className="stats">
-        {STATS.map(stat => (
-          <div className="stat" key={stat.label} data-reveal>
-            <span className="stat-value" data-count={stat.value}>{stat.value}</span>
-            <span className="stat-label">{stat.label}</span>
-          </div>
-        ))}
-      </section>
-
       <section className="devs">
         <div className="devs-copy">
-          <h2 data-lines><Words text="Ask for a rule, not a person." className="w" /></h2>
-          <p data-reveal>
-            <code>@magna-protocol/client</code> opens the wallet, binds your policy hash into the request and checks the
-            policy-bound nullifier in the successful Aztec transaction before it resolves.
-          </p>
+          <h2 data-lines><Words text="Build with Magna." className="w" /></h2>
         </div>
-        <pre className="code" data-reveal>
-          <span className="code-head"><span>login.ts</span><span>TypeScript</span></span>
-          <code>{`const passportGate: Policy = {
-  credentialType: CredentialType.Passport,
-  constraints: [
-    { claimId: ClaimId.AgeMinProven, op: ConstraintOp.Gte, value: 18n },
-  ],
-};
-
-const result = await magna.login(passportGate);
-
-if (result.verified) {
-  unlockProtectedAction();
-}`}</code>
-        </pre>
+        <div className="devs-copy" data-reveal>
+          <p>
+            Let people prove the facts your app needs without collecting their documents. The Magna SDK connects
+            your app to their wallet and checks the verification result.
+          </p>
+          <div className="hero-actions">
+            <Cta
+              label="Read the docs"
+              variant="outline"
+              onClick={() => window.location.assign("https://github.com/oguzutku1745/magna_monorepo/blob/main/docs/integration-guide.md")}
+            />
+          </div>
+        </div>
       </section>
 
       <section className="closing">
@@ -378,10 +355,10 @@ if (result.verified) {
         </div>
         <div className="paths" data-reveal>
           {[
-            { k: "For people", n: "01", label: "User Login", path: "/user/login", icon: "passkey" as const,
-              copy: "Open a passkey wallet, issue Passport and Instagram credentials, and recover them with a fresh proof." },
-            { k: "For companies", n: "02", label: "Company Login", path: "/company/login", icon: "login" as const,
-              copy: "Buy verification rights and sponsor the private checks your users run, without seeing their data." },
+            { k: "For people", n: "01", label: "Open wallet", path: "/user/login", icon: "passkey" as const,
+              copy: "Add Passport and Instagram credentials, approve app requests and recover Passport if you lose access." },
+            { k: "For companies", n: "02", label: "Company login", path: "/company/login", icon: "login" as const,
+              copy: "Buy verifications and cover your users' verification fees while their documents stay private." },
           ].map(item => (
             <button className="path" type="button" key={item.n} onClick={() => props.go(item.path)}>
               <span className="corner tl">{item.k}</span>

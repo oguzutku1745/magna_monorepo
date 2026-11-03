@@ -105,6 +105,7 @@ docs/*
 !docs/local-docker.md
 !docs/reviewer-guide.md
 !docs/sdk-release.md
+!docs/onboarding-gas-policy.md
 !docs/evidence/
 docs/evidence/*
 !docs/evidence/recovery-v3-gate-b-dev-2026-08-28.md

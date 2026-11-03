@@ -217,7 +217,7 @@ export function AuthorizePage() {
   useEffect(() => {
     const opener = window.opener as Window | null;
     if (!opener) {
-      setError("This page must be opened by a dApp using @magna-protocol/client.");
+      setError("Start Login with Magna from the app you want to use, then approve its request here.");
       setPhase("error");
       return;
     }
@@ -277,12 +277,12 @@ export function AuthorizePage() {
         {phase === "waiting" ? <p>Waiting for the requesting app...</p> : null}
         {phase === "choosing" ? (
           <>
-            <p>Choose the named wallet whose private credential should authorize this login.</p>
+            <p>Choose the wallet with the credentials this app needs.</p>
             <AuthorizeWalletPicker accounts={storedWallets} onSelect={account => void openStoredWallet(account)} />
           </>
         ) : null}
         {phase === "authenticating" ? <p>Confirm with your passkey to unlock your wallet account.</p> : null}
-        {phase === "verifying" ? <p>Running private verification through the registered gateway.</p> : null}
+        {phase === "verifying" ? <p>Checking the requested credentials. Keep this window open.</p> : null}
         {phase === "done" ? <p>Done. You can close this window.</p> : null}
         {phase === "error" ? <p role="alert">Login failed: {error}</p> : null}
       </section>

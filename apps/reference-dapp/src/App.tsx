@@ -44,7 +44,7 @@ export function App() {
     <div className="social-shell">
       <header className="social-nav">
         <button className="wordmark" type="button" onClick={() => route.go("/")}>Magna Social</button>
-        <button type="button" onClick={() => route.go("/app")}>Launch App</button>
+        <button type="button" onClick={() => route.go("/app")}>Try the demo</button>
       </header>
       {route.path === "/app" ? (
         <AppGate login={login} handle={handle} setHandle={setHandle} onLogin={() => void runLogin()} />
@@ -68,12 +68,12 @@ export function AppGate(props: {
       <SealField shape="none" className="gate-field" />
       <section className="gate-copy">
         <p className="eyebrow">Entry requirement</p>
-        <h1>Prove eligibility without handing over identity.</h1>
-        <p>Magna Social asks Magna for three facts only: US citizen, older than 18, and owner of the requested Instagram handle.</p>
+        <h1>Verify eligibility. Keep your documents private.</h1>
+        <p>This demo checks passport nationality, age 18 or older and ownership of your Instagram handle. The local demo uses zkPassport development passports (ZKR).</p>
         <ol className="gate-flow" aria-label="How entry works">
           <li><span>01</span>Enter your handle</li>
           <li><span>02</span>Approve in your Magna wallet</li>
-          <li><span>03</span>Join your circles</li>
+          <li><span>03</span>See your verification result</li>
         </ol>
       </section>
       <section className="requirement-panel">
@@ -81,8 +81,8 @@ export function AppGate(props: {
           <span>Entry pass</span>
           <Logo variant="mark" mono className="pass-mark" />
         </header>
-        <div><span>Requirement 01</span><strong>Citizen of US</strong></div>
-        <div><span>Requirement 02</span><strong>Age greater than 18</strong></div>
+        <div><span>Requirement 01</span><strong>Passport country (ZKR demo)</strong></div>
+        <div><span>Requirement 02</span><strong>Age 18 or older</strong></div>
         <div><span>Requirement 03</span><strong>Instagram handle ownership</strong></div>
         <label>
           Instagram handle
@@ -96,7 +96,7 @@ export function AppGate(props: {
           {props.login.status === "pending" ? "Opening Magna..." : "Login with Magna"}
         </button>
         {props.login.status === "blocked" ? <p className="blocked">{props.login.message}</p> : null}
-        <p className="pass-note">Magna opens in a popup. Your passport and email stay in your wallet.</p>
+        <p className="pass-note">Your Magna wallet opens to verify these requirements. This app does not receive your passport or security email.</p>
       </section>
     </main>
   );
@@ -117,8 +117,8 @@ export function Result(props: { login: LoginState }) {
     <main className="gate">
       <section className="gate-copy">
         <p className="eyebrow">Magna verified</p>
-        <h1>Your Magna Social session is ready.</h1>
-        <p>Magna verified passport eligibility and Instagram ownership without uploading documents to this app.</p>
+        <h1>Verification complete.</h1>
+        <p>The demo verified your Passport and Instagram requirements. Your documents were not shared with this app.</p>
       </section>
       <section className="requirement-panel">
         <p className="success">Verified @{props.login.instagramHandle}.</p>
