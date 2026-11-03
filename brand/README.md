@@ -2,7 +2,7 @@
 
 Everything here is generated. The logo is data in `logo.mjs`; the seal field is `source/ascii-field.js`.
 `render.mjs` writes the SVGs, the kit sheets, the logo PNGs and the files the apps use
-(`apps/*/src/brand/logo-data.ts`, `apps/*/src/brand/ascii-field.js`, `apps/*/public/favicon.svg`), so the
+(`apps/*/src/brand/logo-data.ts`, `apps/*/src/brand/ascii-field.js`, `apps/*/src/brand/favicon.svg`), so the
 mark and the field cannot drift between the brand kit and the product.
 
 ```sh
@@ -80,7 +80,7 @@ Light only. There is no dark theme: ink panels appear as single surfaces inside 
 | Signal | Geist Pixel Square | Step numbers, big counters, verified answers. Same square cell as the mark. Never sentences. |
 
 Fonts are self-hosted from `fonts/` (SIL Open Font License, `fonts/OFL.txt`) and copied into each app's
-`public/fonts/`.
+`src/brand/fonts/`. The apps run Vite with `publicDir: false`, so fonts and the favicon are bundled from `src`.
 
 ## System
 
