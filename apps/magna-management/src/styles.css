@@ -957,7 +957,6 @@ main.empty-state { margin: clamp(40px, 6vw, 88px) var(--gutter); }
 .authorize-card h1 { font-size: clamp(32px, 4vw, 44px); }
 .authorize-card > p { font-size: 15px; }
 .authorize-card > p[role="alert"] { color: var(--fault); padding: 12px 14px; background: var(--fault-wash); border-radius: var(--radius); }
-.authorize-brand { height: 16px; width: auto; color: var(--ink); }
 
 /* ------------------------------------------------------------- responsive */
 

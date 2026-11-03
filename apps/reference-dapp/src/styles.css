@@ -414,6 +414,8 @@ html.lenis, html.lenis body { height: auto; }
 .requirement-panel input:focus-visible { box-shadow: none; outline: none; }
 .handle-field:focus-within { box-shadow: 0 0 0 4px var(--signal); }
 .pass-note { padding: 0 20px 20px; font-size: 13px; }
+/* Result without a gate copy column: the pass sits alone in the middle. */
+.gate > .requirement-panel:only-child { grid-column: 1 / -1; justify-self: center; width: min(520px, 100%); }
 .requirement-panel > button { margin: 16px 20px 14px; height: 58px; font-size: 17px; }
 .magna-login { background: var(--signal); border-color: var(--signal-deep); color: var(--ink); font-size: 16px; }
 .magna-login:hover:not(:disabled) { background: #d6f75a; }
