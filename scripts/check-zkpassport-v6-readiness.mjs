@@ -5,12 +5,14 @@ import { createPublicClient, http, parseAbi } from 'viem';
 
 // Reviewed upstream candidate, not an active application configuration. Source:
 // https://github.com/zkpassport/circuits/pull/170
+// Pins refreshed 2026-11-04 from that commit's package.json and test circuit manifest.
+// This PR remains unpublished; never use this fixture root as production authority.
 export const ZKPASSPORT_V6_CANDIDATE = Object.freeze({
-  sourceCommit: 'b04153038a7ee9f80f4ae93fd1b9ea32eaf833e3',
+  sourceCommit: '89376cf429ac8d55ef7fb345b9e4582f7fd008b1',
   version: '0.22.0',
-  noirVersion: '1.0.0-rc.3',
+  noirVersion: '1.0.0',
   bbVersion: '6.0.0',
-  root: '0x0efa41b10bd6472a36da098fe5cef870bd583a94375ae4875f1e3719f7f6a73b',
+  root: '0x0289526299c3d1afa2ad1113678fb426ed587156a1a4ba622023d81989728210',
   vkeyHash: '0x173b45e348102428fe1a90201c381f7f34df6cd56236fb5649cd21460212451e',
 });
 

@@ -24,10 +24,11 @@
     "compile:circuit": "node ../../scripts/compile-standalone-circuit.mjs circuit-dev && node ../../scripts/sync-recovery-wrapper-artifact.mjs",
     "generate:solidity-verifier": "npm run build && node ../../scripts/generate-recovery-wrapper-solidity-verifier.mjs",
     "test": "npm run build && node ../../scripts/node-test-runner.mjs 'dist/**/*.spec.js'",
+    "test:proof-boundary": "npm run build && node --test dist/verification-key.proof-test.js",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@aztec/bb.js": "5.0.0",
+    "@aztec/bb.js": "5.2.1",
     "@magna/passport-wrapper-proof": "0.1.0",
     "@magna/recovery-v3": "0.1.0",
     "@noir-lang/noir_js": "1.0.0-beta.22",

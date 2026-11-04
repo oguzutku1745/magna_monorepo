@@ -135,11 +135,11 @@ type ZkPassportMessageHookTarget = {
   handleEncryptedMessage?: (topic: string, message: ZkPassportInternalMessage) => Promise<void>;
 };
 
-// @zkpassport/sdk 0.16.1 delegates local proof verification to bb.js 5.0.0
+// The SDK's BB5 backend delegates local proof verification to bb.js
 // without an explicit srsSize. bb.js therefore requests 2^19 points in a
 // desktop browser (2^18 on iOS). The cache is origin-wide and can contain the
 // 2^20 points required by Magna's recursive wrapper, so normalize it before
-// the SDK reads it. bb.js 5.0.0 otherwise passes the complete larger buffer to
+// the SDK reads it. Unpatched BB5 otherwise passes the complete larger buffer to
 // SrsInitSrs, which rejects it as 128 bytes per requested point.
 function zkPassportSdkBrowserSrsSize(): number {
   return typeof navigator !== "undefined" && /iPad|iPhone/.test(navigator.userAgent)
@@ -228,12 +228,14 @@ export async function startPassportZkRequest(options: {
     scope: options.metadata.scope,
     mode: options.proofMode,
     devMode: options.devMode,
+    // Preserve local verification; newer SDKs can otherwise fall back to their hosted API.
+    verifierMode: "local" as const,
   };
   const queryBuilder = options.devMode === true
     ? await zkPassport().request({
         ...requestMetadata,
         // The official ZKR developer passport produces NON_SALTED_MOCK = 2.
-        // Do not send an OPRF key: doing so makes SDK 0.16.1 force SALTED.
+        // Do not send an OPRF key: doing so makes the SDK force SALTED.
         uniqueIdentifierType: NullifierType.NON_SALTED,
       })
     : await zkPassport().request({

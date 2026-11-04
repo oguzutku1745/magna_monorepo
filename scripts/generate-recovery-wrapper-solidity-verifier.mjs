@@ -19,7 +19,7 @@ const { solidity, verificationKey } = await generateRecoveryWrapperSolidityVerif
 if (!solidity.includes("function verify(bytes calldata _proof, bytes32[] calldata _publicInputs)")) {
   throw new Error("Generated verifier does not expose the ABI required by MagnaRecoveryPortal.");
 }
-const source = `// GENERATED FILE: bb.js 5.0.0, verifierTarget=evm. DO NOT EDIT.\n${solidity}`;
+const source = `// GENERATED FILE: bb.js 5.2.1, verifierTarget=evm. DO NOT EDIT.\n${solidity}`;
 mkdirSync(dirname(outputPath), { recursive: true });
 writeFileSync(outputPath, source);
 writeFileSync(vkOutputPath, verificationKey);
