@@ -7,6 +7,7 @@ import {
   type Policy,
 } from "@magna-protocol/core";
 import {
+  checkMagnaConsumerLoginAllowance,
   computeInstagramHandleHash,
   createWebAuthnWalletSession,
   MagnaBrowserClient,
@@ -427,7 +428,9 @@ async function runWalletLoginWithSession(
     const client = new MagnaBrowserClient(session.wallet, env, ownerAddress);
     const receipts = [];
     let authorizationContract: string | undefined;
-    for (const [requirementIndex, requirement] of requirements.entries()) {
+    const verifications = [];
+    const checksPerCredential = new Map<string, number>();
+    for (const requirement of requirements) {
       const verification = await resolveRequirementCredential({
         client,
         requirement,
@@ -435,6 +438,18 @@ async function runWalletLoginWithSession(
         issuerAddress: env.issuerAddress,
         chainCredentials,
       });
+      const allowanceKey = `${verification.policy.credentialType}:${verification.credential.claimsHash}`;
+      const requiredSlots = (checksPerCredential.get(allowanceKey) ?? 0) + 1;
+      checksPerCredential.set(allowanceKey, requiredSlots);
+      try {
+        await checkMagnaConsumerLoginAllowance({ env, wallet: session.wallet, activeAddress: ownerAddress,
+          policy: verification.policy, credential: verification.credential, requiredSlots });
+      } catch (error) {
+        throw isMissingHintedNoteError(error) ? annotateMissingHintedNoteError(error, verification) : error;
+      }
+      verifications.push(verification);
+    }
+    for (const [requirementIndex, verification] of verifications.entries()) {
       let outcome: MagnaConsumerLoginOutcome;
       try {
         outcome = await runMagnaConsumerLogin({

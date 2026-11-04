@@ -21,7 +21,7 @@ export * from "./browser/pxe-cache.js";
 export * from "./browser/local-fee-juice.js";
 export * from "./browser/credential-chain-state.js";
 export type { MagnaConsumerLoginCredential, MagnaConsumerLoginOutcome } from "./browser/consumer-login.js";
-export { runMagnaConsumerLogin } from "./browser/consumer-login.js";
+export { checkMagnaConsumerLoginAllowance, runMagnaConsumerLogin } from "./browser/consumer-login.js";
 export type {
   ContractCompatibilityMatrix,
   DiscoveredMagnaCredentialRef,

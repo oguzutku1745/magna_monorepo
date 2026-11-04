@@ -1,5 +1,7 @@
 import { ClaimId, ConstraintOp, CredentialType, type Policy } from "@magna-protocol/core";
 import { AztecAddress } from "@aztec-labs/aztec.js/addresses";
+import type { AztecNode } from "@aztec-labs/aztec.js/node";
+import type { PXE } from "@aztec-labs/pxe/server";
 import type { Wallet } from "@aztec-labs/aztec.js/wallet";
 import { MagnaCompanySponsorContract, MagnaConsumerContract, MagnaIssuerContract } from "@magna/contracts-bindings";
 import { MagnaVerificationEngine, type SessionAuthorizationContext } from "../engine/verification-engine.js";
@@ -8,9 +10,10 @@ import type { PassportCommittedClaimsWitness } from "../engine/types.js";
 import { buildCompanySponsorNetworkFeeConfig } from "../engine/sponsorship.js";
 import { registerKnownIssuerSender } from "../embedded/note-discovery.js";
 import { syncEmbeddedWalletPxeIfAvailable } from "../embedded/lifecycle.js";
-import { readTxHash, registerContractArtifactAtAddress } from "./aztec.js";
+import { getAztecNode, readTxHash, registerContractArtifactAtAddress } from "./aztec.js";
 import { MagnaBrowserClient } from "./client.js";
 import type { MagnaBrowserEnv } from "./env.js";
+import { selectUnusedSponsorSlot, sendWithAvailableSponsorSlot } from "./sponsor-allowance.js";
 
 type StoredPassportCommittedClaimsWitness = {
   minAgeProven: number;
@@ -203,6 +206,47 @@ function assertConsumerCredential(
   return passportCredential as MagnaPassportConsumerLoginCredential;
 }
 
+type ConsumerCredentialInput = {
+  env: MagnaConsumerLoginEnv;
+  wallet: Wallet;
+  activeAddress: string;
+  policy: Policy;
+  credential: Partial<MagnaConsumerLoginCredential> | null | undefined;
+};
+
+async function fetchConsumerLoginHints(client: MagnaBrowserClient, credential: MagnaConsumerLoginCredential, policy: Policy) {
+  if (credential.mode === "rooted") {
+    return policy.credentialType === CredentialType.Instagram
+      ? client.fetchLinkedInstagramHints(credential.rootCommitment!, credential.claimsHash)
+      : client.fetchRootedPassportHintsByClaimsHash(credential.ownerAddress, credential.rootCommitment!, credential.claimsHash);
+  }
+  return client.fetchPassportHintsByClaimsHash(credential.ownerAddress, credential.claimsHash);
+}
+
+function allowanceInput(input: ConsumerCredentialInput, hintedStatusNote: unknown) {
+  const pxe = (input.wallet as Wallet & { pxe?: Pick<PXE, "getSyncedBlockHeader"> }).pxe;
+  return {
+    node: (input.wallet as Wallet & { aztecNode?: AztecNode }).aztecNode ?? getAztecNode(input.env.aztecNodeUrl),
+    issuerAddress: input.env.issuerAddress!,
+    credentialType: input.policy.credentialType,
+    claimsHash: input.credential!.claimsHash!,
+    hintedStatusNote,
+    getAnchorTimestamp: pxe?.getSyncedBlockHeader ? async () => {
+      await syncEmbeddedWalletPxeIfAvailable(input.wallet as never);
+      return (await pxe.getSyncedBlockHeader()).globalVariables.timestamp;
+    } : undefined,
+  };
+}
+
+/** Preflight only; does not reserve a slot or submit a transaction. */
+export async function checkMagnaConsumerLoginAllowance(input: ConsumerCredentialInput & { requiredSlots?: number }): Promise<void> {
+  const credential = assertConsumerCredential(input.credential, input.policy);
+  if (credential.ownerAddress !== input.activeAddress) throw new Error("Stored credential belongs to a different active wallet.");
+  const client = new MagnaBrowserClient(input.wallet, browserEnvForConsumerLogin(input.env), input.activeAddress);
+  const hints = await fetchConsumerLoginHints(client, credential, input.policy);
+  await selectUnusedSponsorSlot({ ...allowanceInput(input, hints.hintedStatusNote), requiredSlots: input.requiredSlots });
+}
+
 export async function runMagnaConsumerLogin(input: {
   env: MagnaConsumerLoginEnv;
   wallet: Wallet;
@@ -282,16 +326,19 @@ export async function runMagnaConsumerLogin(input: {
     ...input.sessionAuthorization,
     consumerGatewayAddress: input.consumerGatewayAddress,
   };
-  const receipt = input.policy.credentialType === CredentialType.Instagram
+  const fetchedHints = await fetchConsumerLoginHints(hintClient, credential, input.policy);
+  const hints = fetchedHints as typeof fetchedHints & { hintedRootStatusNote: unknown; hintedRootAuthorityNote: unknown };
+  const receipt = await sendWithAvailableSponsorSlot(allowanceInput(input, hints.hintedStatusNote), async sponsorSlot =>
+    input.policy.credentialType === CredentialType.Instagram
     ? await (async () => {
         const instagram = credential as MagnaInstagramConsumerLoginCredential;
         const claimsWitness = { handleHash: BigInt(instagram.handleHash), handleBlind: BigInt(instagram.handleBlind) };
         return instagram.mode === "rooted"
           ? engine.loginWithLinkedInstagramCompanySponsor({ policy: input.policy,
-              ...(await hintClient.fetchLinkedInstagramHints(instagram.rootCommitment!, instagram.claimsHash)), claimsWitness },
+              ...hints, sponsorSlot, claimsWitness },
               input.activeAddress, sponsor, sessionAuthorization)
           : engine.loginWithInstagramCompanySponsor({ policy: input.policy,
-              ...(await hintClient.fetchPassportHintsByClaimsHash(input.activeAddress, instagram.claimsHash)), claimsWitness },
+              ...hints, sponsorSlot, claimsWitness },
               input.activeAddress, sponsor, sessionAuthorization);
       })()
     : await (async () => {
@@ -301,11 +348,7 @@ export async function runMagnaConsumerLogin(input: {
           return passportCredential.mode === "rooted"
             ? engine.loginWithLinkedCompanySponsorV2({
                 policy: input.policy,
-                ...(await hintClient.fetchRootedPassportHintsByClaimsHash(
-                  input.activeAddress,
-                  passportCredential.rootCommitment!,
-                  passportCredential.claimsHash,
-                )),
+                ...hints, sponsorSlot,
                 claimsWitness: committedClaimsWitness,
               },
               input.activeAddress,
@@ -313,7 +356,7 @@ export async function runMagnaConsumerLogin(input: {
               sessionAuthorization)
             : engine.loginWithCompanySponsorV2({
                 policy: input.policy,
-                ...(await hintClient.fetchPassportHintsByClaimsHash(input.activeAddress, passportCredential.claimsHash)),
+                ...hints, sponsorSlot,
                 claimsWitness: committedClaimsWitness,
               },
               input.activeAddress,
@@ -327,11 +370,7 @@ export async function runMagnaConsumerLogin(input: {
         return passportCredential.mode === "rooted"
           ? engine.loginWithLinkedCompanySponsor({
               policy: input.policy,
-              ...(await hintClient.fetchRootedPassportHintsByClaimsHash(
-                input.activeAddress,
-                passportCredential.rootCommitment!,
-                passportCredential.claimsHash,
-              )),
+              ...hints, sponsorSlot,
               claimsWitness,
             },
             input.activeAddress,
@@ -339,13 +378,13 @@ export async function runMagnaConsumerLogin(input: {
             sessionAuthorization)
           : engine.loginWithCompanySponsor({
               policy: input.policy,
-              ...(await hintClient.fetchPassportHintsByClaimsHash(input.activeAddress, passportCredential.claimsHash)),
+              ...hints, sponsorSlot,
               claimsWitness,
             },
             input.activeAddress,
             sponsor,
             sessionAuthorization);
-      })();
+      })());
 
   return {
     verified: true,

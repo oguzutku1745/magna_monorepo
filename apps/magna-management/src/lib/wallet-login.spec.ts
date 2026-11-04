@@ -12,6 +12,7 @@ const testState = vi.hoisted(() => {
     metadata: { deploymentStatus: "deployed" },
     disconnect,
   }));
+  const checkMagnaConsumerLoginAllowance = vi.fn(async (_input: unknown) => undefined);
   const runMagnaConsumerLogin = vi.fn(async () => ({ verified: true, receipt: "0xlogin", authorizationContract: "0xsponsor" }));
   const discoverCredentialRefs = vi.fn<() => Promise<unknown[]>>(async () => []);
 
@@ -41,6 +42,7 @@ const testState = vi.hoisted(() => {
     discoverCredentialRefs,
     disconnect,
     runMagnaConsumerLogin,
+    checkMagnaConsumerLoginAllowance,
   };
 });
 
@@ -57,6 +59,7 @@ vi.mock("@magna/wallet", () => ({
   },
   isRootedPassportHints: (hints: object) => "hintedRootAuthorityNote" in hints,
   runMagnaConsumerLogin: testState.runMagnaConsumerLogin,
+  checkMagnaConsumerLoginAllowance: testState.checkMagnaConsumerLoginAllowance,
 }));
 
 vi.mock("./env", () => ({
@@ -164,6 +167,8 @@ describe("runWalletLoginForRequest", () => {
     testState.readInstagramChainState.mockReset();
     testState.readInstagramChainState.mockResolvedValue({ status: "active", reason: "chain-valid" });
     testState.disconnect.mockClear();
+    testState.checkMagnaConsumerLoginAllowance.mockReset();
+    testState.checkMagnaConsumerLoginAllowance.mockResolvedValue(undefined);
     testState.runMagnaConsumerLogin.mockReset();
     testState.runMagnaConsumerLogin.mockResolvedValue({ verified: true, receipt: "0xlogin", authorizationContract: "0xsponsor" });
   });
@@ -476,6 +481,34 @@ describe("runWalletLoginForRequest", () => {
     expect(testState.runMagnaConsumerLogin).toHaveBeenCalledWith(expect.objectContaining({
       credential: expect.objectContaining({ kind: "instagram", mode: "rooted", rootCommitment: "99", claimsHash: "456", handleBlind: "777" }),
     }));
+  });
+
+  it("preflights all credential allowances before spending any sponsored verification", async () => {
+    saveCredentialRefs([passportRef(), instagramRef()]);
+    const exhausted = new Error("Today's sponsored verification allowance for your Instagram credential has been used. Try again after tomorrow.");
+    testState.checkMagnaConsumerLoginAllowance.mockResolvedValueOnce(undefined).mockRejectedValueOnce(exhausted);
+    await expect(runWalletLoginForRequest({
+      policy,
+      requirements: [{ id: "passport", kind: "policy", policy }, { id: "instagram", kind: "instagram-handle", handle: "akinspur" }],
+      consumerGatewayAddress: "0xconsumer", sessionRequestId: "11".repeat(16),
+      sessionChallenge: `00${"22".repeat(31)}`, sessionExpiresAt: 1_800_000_000,
+    })).rejects.toBe(exhausted);
+    expect(testState.runMagnaConsumerLogin).not.toHaveBeenCalled();
+    expect(testState.disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("counts multiple requirements against the same credential during preflight", async () => {
+    saveCredentialRefs([passportRef()]);
+    const exhausted = new Error("Not enough sponsored verification allowance to complete this login.");
+    testState.checkMagnaConsumerLoginAllowance.mockImplementation(async (input: unknown) => {
+      if ((input as { requiredSlots: number }).requiredSlots === 2) throw exhausted;
+    });
+    await expect(runWalletLoginForRequest({
+      policy, requirements: [{ id: "age", kind: "policy", policy }, { id: "other", kind: "policy", policy }],
+      consumerGatewayAddress: "0xconsumer", sessionRequestId: "11".repeat(16),
+      sessionChallenge: `00${"22".repeat(31)}`, sessionExpiresAt: 1_800_000_000,
+    })).rejects.toBe(exhausted);
+    expect(testState.runMagnaConsumerLogin).not.toHaveBeenCalled();
   });
 
   it("runs mixed passport and instagram requirements in one wallet session", async () => {
