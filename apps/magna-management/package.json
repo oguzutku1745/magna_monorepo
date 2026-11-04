@@ -22,7 +22,7 @@
     "@magna/recovery-v3": "0.1.0",
     "@magna/recovery-wrapper-proof": "0.1.0",
     "@magna/wallet": "0.1.0",
-    "@zkpassport/sdk": "0.16.1",
+    "@zkpassport/sdk": "0.19.3",
     "buffer": "^6.0.3",
     "gsap": "^3.15.0",
     "lenis": "^1.3.27",

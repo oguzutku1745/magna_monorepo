@@ -113,6 +113,7 @@ describe("startPassportZkRequest", () => {
     });
     expect(mockState.sdk?.request).toHaveBeenCalledWith(expect.objectContaining({
       mode: "compressed",
+      verifierMode: "local",
       uniqueIdentifierType: 1,
       oprfKeyId: "1",
     }));
@@ -132,6 +133,7 @@ describe("startPassportZkRequest", () => {
     });
     expect(mockState.sdk?.request).toHaveBeenCalledWith(expect.objectContaining({
       devMode: true,
+      verifierMode: "local",
       uniqueIdentifierType: 0,
     }));
     expect(mockState.sdk?.request).not.toHaveBeenCalledWith(

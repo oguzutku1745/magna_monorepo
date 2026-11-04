@@ -1,3 +1,5 @@
 Synthetic BB5 WASM proof of eight public constants, generated with Noir beta.22. No Passport, face image or user witness is involved. This fixture tests the real API verifier after the decimal JSON conversion used by management. The circuit is supplied only through the verifier test option; API production verification continues to load its hash-pinned wrapper. Run with `npm run -w @magna/passport-wrapper-proof test:proof-boundary`.
 
+The proof was generated before the BB `5.2.1` patch. The same suite checks the patched API verifier and the SDK-style verifier that receives a separate verification key; both must accept the existing proof and reject changed public inputs. Recovery's separate `test:proof-boundary` checks that its EVM key still matches the deployed verifier.
+
 Run in `magna-local-app:aztec-6.0.0` to exercise the separate BB6 override regression. That test explicitly selects and checks the image's BB6 binary before verification; it is reported as skipped on hosts without that binary. The reviewer Docker suite runs both tests.

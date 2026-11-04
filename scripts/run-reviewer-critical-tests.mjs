@@ -20,6 +20,7 @@ const checks = [
   ["A2 browser/API proof boundary", ["run", "-w", "@magna/passport-wrapper-proof", "test:proof-boundary"]],
   ["Recovery V3 protocol", ["run", "test:recovery-v3"]],
   ["Recovery V3 recursive wrapper", ["run", "-w", "@magna/recovery-wrapper-proof", "test"]],
+  ["Recovery V3 deployed verification key", ["run", "-w", "@magna/recovery-wrapper-proof", "test:proof-boundary"]],
   ["Recovery V3 EVM portal", ["run", "test:recovery-portal"]],
   ["verification API boundaries", ["run", "-w", "@magna/verification-api", "test"]],
   ["management wallet flows", ["run", "-w", "@magna/management", "test"]],

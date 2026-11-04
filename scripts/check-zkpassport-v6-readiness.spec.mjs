@@ -73,3 +73,14 @@ test('one unpublished network blocks a shared production/developer cutover', asy
   assert.equal(report.ready, false);
   assert.equal(report.checks.find(check => check.kind === 'root' && check.network === 'sepolia').ready, false);
 });
+
+// The current upstream candidate now packages stable Noir rather than RC3.
+test('accepts the upstream stable Noir 1.0.0 artifact', async () => {
+  const report = await checkZkPassportV6Readiness(dependencies({ artifactBody: { ...artifact(), noir_version: '1.0.0' } }));
+  assert.equal(report.ready, true);
+});
+
+test('rejects the superseded RC3 compiler artifact', async () => {
+  const report = await checkZkPassportV6Readiness(dependencies({ artifactBody: { ...artifact(), noir_version: '1.0.0-rc.3' } }));
+  assert.equal(report.ready, false);
+});

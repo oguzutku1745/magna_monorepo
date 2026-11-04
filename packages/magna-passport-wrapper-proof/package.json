@@ -37,7 +37,7 @@
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@aztec/bb.js": "5.0.0",
+    "@aztec/bb.js": "5.2.1",
     "@magna-protocol/core": "0.1.1",
     "@magna/wallet": "0.1.0",
     "@noir-lang/noir_js": "1.0.0-beta.22",
