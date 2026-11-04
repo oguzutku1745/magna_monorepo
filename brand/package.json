@@ -1,0 +1,13 @@
+{
+  "name": "magna-brand",
+  "private": true,
+  "type": "module",
+  "description": "Magna brand kit renderer. Not a workspace: run `npm install` here once, then `node render.mjs`.",
+  "scripts": {
+    "render": "node render.mjs",
+    "serve": "node render.mjs --serve"
+  },
+  "devDependencies": {
+    "playwright": "1.57.0"
+  }
+}

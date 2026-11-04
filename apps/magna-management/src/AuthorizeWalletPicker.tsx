@@ -17,7 +17,7 @@ export function AuthorizeWalletPicker(props: {
     <div className="stored-wallet-picker authorize-wallet-picker" aria-label="Choose a Magna wallet">
       <div className="stored-wallet-picker-head">
         <span>Stored wallets</span>
-        <small>The selected passkey controls which private credentials are checked.</small>
+        <small>Choose the wallet containing the credentials this app requests.</small>
       </div>
       {props.accounts.map(account => (
         <button
@@ -28,7 +28,7 @@ export function AuthorizeWalletPicker(props: {
           onClick={() => props.onSelect(account)}
         >
           <span>
-            <strong>{account.displayName ?? "Legacy unnamed Magna passkey"}</strong>
+            <strong>{account.displayName ?? "Unnamed Magna wallet"}</strong>
             <small>{account.address}</small>
           </span>
           <b>Open</b>

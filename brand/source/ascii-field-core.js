@@ -1,0 +1,208 @@
+// Magna seal field, render core. Runs inside a Web Worker on an OffscreenCanvas when the browser allows it,
+// otherwise on the main thread. Pure drawing: no DOM, no events. Source of truth: brand/source/.
+
+export const MARK = ["11111", "10101", "10101", "10101", "101S1"];
+export const MRZ = "P<MAGNA<<CHARTER<<<<<<<<<<0123456789<<<SEAL<<<PROOF<<<<<<NULLIFIER<<<";
+export const RAMP = [".", ":", "-", "+", "x", "X", "#"];
+export const FONT = '"Geist Mono", ui-monospace, Menlo, Consolas, monospace';
+export const GLYPHS = [...new Set(MRZ + RAMP.join(""))];
+
+export const C = {
+  ink: [12, 12, 11],
+  graphite: [79, 78, 73],
+  ash: [143, 141, 134],
+  paper: [244, 243, 238],
+  signal: [200, 240, 49],
+};
+// Atlas rows, in order.
+export const INKS = [C.ink, C.ash, C.graphite, C.paper];
+const rgba = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+
+export function hash(x, y, t) {
+  let h = Math.imul(x, 374761393) ^ Math.imul(y, 668265263) ^ Math.imul(t, 1103515245);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+const smooth = (t) => t * t * (3 - 2 * t);
+
+/** Cell metrics for a host size. */
+export function metrics(W, H, dprRaw, cell, maxDpr = 1.5) {
+  const dpr = Math.min(maxDpr, dprRaw || 1);
+  const cw = cell || (W < 600 ? 8 : W < 1100 ? 9 : 10);
+  const ch = Math.round(cw * 1.5);
+  return { W, H, dpr, cw, ch, fs: Math.round(ch * 0.72), cols: Math.ceil(W / cw), rows: Math.ceil(H / ch) };
+}
+
+/** Draws every glyph once per colour. Runs where the brand font is loaded (the main thread). */
+export function drawAtlas(canvas, m) {
+  const pw = Math.ceil(m.cw * m.dpr), ph = Math.ceil(m.ch * m.dpr);
+  canvas.width = pw * GLYPHS.length; canvas.height = ph * INKS.length;
+  const a = canvas.getContext("2d");
+  a.clearRect(0, 0, canvas.width, canvas.height);
+  a.font = `500 ${m.fs * m.dpr}px ${FONT}`;
+  a.textAlign = "center";
+  a.textBaseline = "middle";
+  INKS.forEach((c, row) => {
+    a.fillStyle = rgba(c, 1);
+    GLYPHS.forEach((g, i) => a.fillText(g, i * pw + pw / 2, row * ph + ph / 2 + 0.5 * m.dpr));
+  });
+  return canvas;
+}
+
+export function createRenderer(canvas, initial) {
+  const ctx = canvas.getContext("2d");
+  const given = Object.fromEntries(Object.entries(initial ?? {}).filter(([, v]) => v !== undefined));
+  const opts = { shape: "mark", markBox: { x: 0.72, y: 0.5, size: 0.62 }, auto: false, ...given };
+  const GI = new Map(GLYPHS.map((g, i) => [g, i]));
+  let m = null, atlas = null;
+  let lanes = [], kind = new Uint8Array(0), halo = new Float32Array(0), front0 = new Float32Array(0), jitter = new Float32Array(0);
+  let time = 0, last = 0;
+  let progress = opts.auto ? 0 : opts.progress ?? 1;
+  let target = opts.progress ?? 1;
+  const pointer = { x: -1e4, y: -1e4, energy: 0 };
+
+  function computeCells() {
+    const { cols, rows, cw, ch, W, H } = m;
+    const n = cols * rows;
+    kind = new Uint8Array(n); halo = new Float32Array(n); front0 = new Float32Array(n); jitter = new Float32Array(n);
+    const size = Math.min(W, H) * opts.markBox.size, unit = size / 5;
+    const left = W * opts.markBox.x - size / 2, top = H * opts.markBox.y - size / 2;
+    for (let cy = 0; cy < rows; cy++) {
+      for (let cx = 0; cx < cols; cx++) {
+        const i = cy * cols + cx;
+        jitter[i] = hash(cx, cy, 11) * 0.18;
+        if (opts.shape !== "mark") continue;
+        const px = cx * cw + cw / 2, py = cy * ch + ch / 2;
+        front0[i] = (px - left) / size;
+        const gx = Math.floor((px - left) / unit), gy = Math.floor((py - top) / unit);
+        if (gx < 0 || gy < 0 || gx > 4 || gy > 4) {
+          const dx = Math.max(left - px, 0, px - (left + size)), dy = Math.max(top - py, 0, py - (top + size));
+          halo[i] = Math.max(0, 1 - Math.hypot(dx, dy) / (unit * 0.9));
+        } else {
+          const v = MARK[gy][gx];
+          kind[i] = v === "0" ? 0 : v === "S" ? 2 : 1;
+          halo[i] = v === "0" ? 0.55 : 0;
+        }
+      }
+    }
+    lanes = Array.from({ length: rows }, (_, y) => ({
+      on: hash(y, 7, 1) > 0.42,
+      speed: (hash(y, 3, 2) - 0.5) * 6,
+      offset: Math.floor(hash(y, 5, 3) * MRZ.length),
+      alpha: 0.18 + hash(y, 9, 4) * 0.28,
+    }));
+  }
+
+  function glyph(g, inkRow, alpha, x, y) {
+    if (alpha <= 0.01) return;
+    const pw = Math.ceil(m.cw * m.dpr), ph = Math.ceil(m.ch * m.dpr);
+    ctx.globalAlpha = alpha > 1 ? 1 : alpha;
+    ctx.drawImage(atlas, GI.get(g) * pw, inkRow * ph, pw, ph, x, y, m.cw, m.ch);
+  }
+
+  function render() {
+    if (!m || !atlas) return;
+    const { W, H, dpr, cw, ch, cols, rows } = m;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.clearRect(0, 0, W, H);
+    const tick = Math.floor(time * 1.6);
+    const fast = Math.floor(time * 12);
+    // The proof front sweeps left to right across the seal as progress grows.
+    const front = progress * 1.6 - 0.2;
+    const live = pointer.energy > 0.01 && pointer.x > -1e3;
+
+    // Tiles, grouped by colour so the fill style changes twice per frame.
+    for (const k of [1, 2]) {
+      ctx.fillStyle = rgba(k === 2 ? C.signal : C.ink, 1);
+      for (let i = 0; i < kind.length; i++) {
+        if (kind[i] !== k) continue;
+        const resolved = clamp((front - front0[i] - jitter[i]) * 5, 0, 1);
+        if (resolved <= 0) continue;
+        ctx.globalAlpha = smooth(resolved);
+        ctx.fillRect((i % cols) * cw + 0.5, ((i / cols) | 0) * ch + 0.5, cw - 1, ch - 1);
+      }
+    }
+
+    for (let cy = 0; cy < rows; cy++) {
+      const lane = lanes[cy];
+      const shift = Math.floor(time * lane.speed);
+      const y = cy * ch;
+      for (let cx = 0; cx < cols; cx++) {
+        const i = cy * cols + cx;
+        const x = cx * cw;
+        const k = kind[i];
+        const resolved = k || halo[i] > 0 ? clamp((front - front0[i] - jitter[i]) * 5, 0, 1) : 0;
+        let near = 0;
+        if (live) {
+          const pd = Math.hypot(x + cw / 2 - pointer.x, y + ch / 2 - pointer.y);
+          if (pd < 120) near = pointer.energy * (1 - pd / 120);
+        }
+
+        if (k && resolved > 0) {
+          const t = smooth(resolved);
+          const h = hash(cx, cy, tick + (near > 0.2 ? fast : 0));
+          glyph(RAMP[5 + (h > 0.5 ? 1 : 0)], k === 2 ? 0 : 3, (k === 2 ? 0.55 : 0.38) * t, x, y);
+          if (t >= 1) continue;
+        }
+
+        // Halo around a resolved seal: density ramp in graphite, so the mark reads as condensed data.
+        const hl = halo[i];
+        if (hl > 0 && resolved > 0) {
+          const h = hash(cx, cy, tick);
+          if (h < hl * 0.9) {
+            glyph(RAMP[Math.min(RAMP.length - 3, Math.floor(hl * resolved * (RAMP.length - 2)))], 2, 0.25 + hl * 0.45 * resolved, x, y);
+            continue;
+          }
+        }
+
+        // Drifting document data. Unresolved seal cells keep showing it, denser.
+        if (!lane.on && !k) continue;
+        const idx = ((cx + lane.offset + shift) % MRZ.length + MRZ.length) % MRZ.length;
+        let g = MRZ[idx];
+        const h = hash(cx, cy, tick);
+        if (near > 0.15 && h < near) g = RAMP[Math.floor(h * RAMP.length)];
+        if (g === "<" && h > 0.55 && !k) continue;
+        glyph(g, near > 0.3 ? 0 : 1, Math.min(0.85, (k ? 0.55 : lane.alpha) * (1 - resolved) + near * 0.5), x, y);
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  return {
+    layout(next) {
+      m = next;
+      canvas.width = Math.round(m.W * m.dpr); canvas.height = Math.round(m.H * m.dpr);
+      computeCells();
+      render();
+    },
+    setAtlas(image) { atlas = image; render(); },
+    setProgress(p) { target = clamp(p, 0, 1); },
+    jump(p) { progress = target = clamp(p, 0, 1); render(); },
+    setPointer(x, y, boost) {
+      pointer.x = x; pointer.y = y;
+      if (boost) pointer.energy = Math.min(1, pointer.energy + 0.25);
+    },
+    /** Advances and draws when a step is due. Returns false when the frame was skipped. */
+    tick(now) {
+      if (!last) { last = now; return false; }
+      const dt = Math.min(0.1, (now - last) / 1000);
+      // The seal steps 12 times a second at rest and 30 while the pointer or the proof front moves.
+      // Ambient fields (no seal) are background texture and step slower.
+      const active = pointer.energy > 0.01 || Math.abs(target - progress) > 0.002 || (opts.auto && progress < 0.998);
+      const ambient = opts.shape !== "mark";
+      if (dt < (active ? (ambient ? 1 / 20 : 1 / 30) : (ambient ? 1 / 8 : 1 / 12))) return false;
+      last = now;
+      time += dt;
+      if (opts.auto) target = 1;
+      progress += (target - progress) * Math.min(1, dt * 2.2);
+      pointer.energy = Math.max(0, pointer.energy - dt * 0.9);
+      render();
+      return true;
+    },
+    resetClock() { last = 0; },
+    render,
+  };
+}

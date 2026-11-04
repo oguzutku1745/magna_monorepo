@@ -46,10 +46,10 @@ describe("Recovery", () => {
       onCopyTargetPublicKey: () => undefined, onOpenTarget: () => undefined, onRecover: () => undefined,
     };
     const html = renderToStaticMarkup(<Recovery {...props} />);
-    expect(html).toMatch(/<button type="button">Create new passkey target/);
+    expect(html).toMatch(/<button type="button">Create recovery wallet/);
     expect(html).not.toContain("Wallet connection required");
     const ready = renderToStaticMarkup(<Recovery {...props} recoveryTarget={{ address: "0xtarget", walletKind: "passkey", publicKey: "04abcd", deploymentStatus: "deployed", createdAt: "2026-10-28" }} />);
-    expect(ready).toMatch(/<button type="button">Recover root to target/);
+    expect(ready).toMatch(/<button type="button">Restore Passport/);
   });
 
   it("offers link and revoke without locally stored Instagram claims", () => {
@@ -61,7 +61,7 @@ describe("Recovery", () => {
 
   it("allows root revocation when Passport authority is inactive and its local witness is absent", () => {
     const html = renderToStaticMarkup(<CredentialCard refData={{ id: "passport", ownerAddress: "owner", kind: "passport", mode: "rooted", rootCommitment: "99", claimsHash: "12", status: "active", createdAt: "2026-10-28" }} hintState={{ status: "loaded", chainState: { status: "inactive", reason: "root-authority-superseded", checkedAtBlock: 8, checkedAtTimestamp: "100" } }} onRevoke={() => undefined} />);
-    expect(html).toMatch(/<button class="secondary" type="button">Revoke Passport root/);
+    expect(html).toMatch(/<button class="secondary" type="button">Revoke Passport/);
   });
 
   it("gives new and recovery passkeys distinct user-visible names", () => {
@@ -186,11 +186,11 @@ describe("Recovery", () => {
       />,
     );
 
-    expect(html).toContain("Target passkey public key");
+    expect(html).toContain("Recovery wallet public key");
     expect(html).toContain("Magna recovery · test");
-    expect(html).toContain("Fund recovery target");
+    expect(html).toContain("Add recovery funds");
     expect(html).toContain(publicKey);
-    expect(html).toContain("Copy target public key");
+    expect(html).toContain("Copy wallet public key");
   });
 
   it("offers resumable destination finalization after the issuer transaction", () => {
@@ -242,9 +242,9 @@ describe("Recovery", () => {
       />,
     );
 
-    expect(html).toContain("Pending finalization");
+    expect(html).toContain("Recovery progress");
     expect(html).toContain("0xtx");
-    expect(html).toContain("Resume destination note finalization");
+    expect(html).toContain("Finish restoring Passport");
   });
 
   it("explains that completion moved the credential to the target wallet", () => {
@@ -289,10 +289,10 @@ describe("Recovery", () => {
       />,
     );
 
-    expect(html).toContain("Rotation complete");
-    expect(html).toContain("Independent Instagram credentials remain valid");
+    expect(html).toContain("Passport restored");
+    expect(html).toContain("Independent Instagram credentials keep their own validity");
     expect(html).not.toContain("credential count is zero");
-    expect(html).toContain("The passport credential now belongs to the new passkey.");
+    expect(html).toContain("Your Passport credential is ready in your new wallet.");
     expect(html).toContain("Active at Aztec L2 block 38");
     expect(html).toContain("Successful at Aztec L2 block 37");
     expect(html).toContain("0xtarget");
@@ -331,8 +331,8 @@ describe("Recovery", () => {
       />,
     );
 
-    expect(html).not.toContain("Rotation complete");
-    expect(html).toContain("Open saved recovery target");
+    expect(html).not.toContain("Passport restored");
+    expect(html).toContain("Open recovery wallet");
   });
 });
 
@@ -378,7 +378,7 @@ describe("UserLogin", () => {
     expect(html).toContain("Magna recovery · 2026-08-27 23:24:30");
     expect(html).toContain("0xrecovered");
     expect(html.match(/>Open</g)).toHaveLength(2);
-    expect(html).toContain("Create a different wallet");
+    expect(html).toContain("Create a new wallet");
   });
 
   it("offers an address-bound repair when an earlier build overwrote the previous wallet lookup", () => {
@@ -474,12 +474,12 @@ describe("Instagram handle input", () => {
       />,
     );
 
-    expect(html).toContain("Signed security email proof");
-    expect(html).toContain("Instagram .eml");
+    expect(html).toContain("Instagram ownership");
+    expect(html).toContain("Instagram security email (.eml)");
     expect(html).toContain("instagram-security.eml");
-    expect(html).toContain("Issue Instagram credential");
-    expect(html).toContain("generates the proof locally");
-    expect(html).toContain("Neither the email nor the Instagram");
+    expect(html).toContain("Verify Instagram");
+    expect(html).toContain("verifies the email locally");
+    expect(html).toContain("The email and handle are not sent to Magna");
     expect(html).not.toContain(".eml is sent");
   });
 });
@@ -487,7 +487,7 @@ describe("Instagram handle input", () => {
 describe("passportCredentialAuthenticityLabel", () => {
   it("labels rediscovered witness-missing passport refs explicitly", () => {
     expect(passportCredentialAuthenticityLabel({ kind: "passport" })).toBe(
-      "passport note found (local A2 committed-claims witness missing)",
+      "Passport found; local verification data needs restoring",
     );
   });
 
@@ -506,7 +506,7 @@ describe("passportCredentialAuthenticityLabel", () => {
           expiryBlind: "222",
         },
       }),
-    ).toBe("passport A2 recursive proof (PII-blind)");
+    ).toBe("Verified with Passport; personal details stay private");
   });
 
   it("does not infer A2 authenticity when issuance metadata is missing", () => {
@@ -523,6 +523,6 @@ describe("passportCredentialAuthenticityLabel", () => {
           expiryBlind: "222",
         },
       }),
-    ).toBe("passport note found (local A2 committed-claims witness missing)");
+    ).toBe("Passport found; local verification data needs restoring");
   });
 });

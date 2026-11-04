@@ -40,7 +40,9 @@ import {
   withWebAuthnAssertionDelegate,
 } from "@magna/wallet";
 import { AuthorizePage } from "./AuthorizePage";
-import { Threads } from "./components/Threads";
+import { Logo } from "./brand/Logo";
+import { SealField } from "./brand/SealField";
+import { Landing } from "./landing/Landing";
 import {
   getChainInfo,
   getRecoveryTransactionChainState,
@@ -205,24 +207,24 @@ const ISSUANCE_RAILS: CredentialRail[] = [
   {
     id: "passport",
     eyebrow: "zkPassport",
-    title: "Passport-backed private credential",
-    summary: "Prove age and passport eligibility without revealing the document.",
+    title: "Passport verification",
+    summary: "Verify your age and nationality without sharing your passport with apps.",
     status: "live",
     proofLabel: "Age / nationality proof",
   },
   {
     id: "instagram",
     eyebrow: "Instagram",
-    title: "Signed security email proof",
-    summary: "Confirm a social handle from a signed Instagram security email.",
+    title: "Instagram ownership",
+    summary: "Prove that an Instagram account belongs to you.",
     status: "live",
     proofLabel: "Handle ownership",
   },
   {
     id: "sanctions",
     eyebrow: "Sanctions / OFAC",
-    title: "not_sanctioned",
-    summary: "The floor for institutional and RWA flows.",
+    title: "Sanctions check",
+    summary: "Prove that you meet an app's sanctions-screening requirements.",
     status: "planned",
     proofLabel: "Compliance eligibility",
   },
@@ -230,7 +232,7 @@ const ISSUANCE_RAILS: CredentialRail[] = [
     id: "jurisdiction",
     eyebrow: "Jurisdiction",
     title: "Residency / region eligibility",
-    summary: "Asset and feature gating based on allowed regions.",
+    summary: "Prove that you live in a region an app supports.",
     status: "planned",
     proofLabel: "Regional access",
   },
@@ -238,7 +240,7 @@ const ISSUANCE_RAILS: CredentialRail[] = [
     id: "accredited",
     eyebrow: "Accredited investor",
     title: "Tokenized securities access",
-    summary: "Via a licensed KYC/accreditation issuer.",
+    summary: "Verify investor eligibility through an approved provider.",
     status: "partner",
     proofLabel: "Investor status",
   },
@@ -437,9 +439,9 @@ export function passportCredentialAuthenticityLabel(
     return undefined;
   }
   if (ref.issuanceKind === "a2" && ref.passportCommittedClaimsV2Witness) {
-    return "passport A2 recursive proof (PII-blind)";
+    return "Verified with Passport; personal details stay private";
   }
-  return "passport note found (local A2 committed-claims witness missing)";
+  return "Passport found; local verification data needs restoring";
 }
 
 function committedClaimsV2WitnessFromA2LocalWitness(
@@ -870,7 +872,7 @@ export function App() {
   function createClient(nextSession: WalletSession = session!): MagnaBrowserClient {
     if (!nextSession) throw new Error("Open a wallet session first.");
     if (!isDeployedSession(nextSession)) {
-      throw new Error("This passkey wallet is counterfactual. Deploy it before running sponsor or credential actions.");
+      throw new Error("This wallet is not ready yet. Finish setup before managing credentials or company verifications.");
     }
     return new MagnaBrowserClient(nextSession.wallet, env, requireSessionIdentityAddress(nextSession, env));
   }
@@ -885,7 +887,7 @@ export function App() {
       setNotice({
         tone: "danger",
         text:
-          "This passkey wallet is counterfactual, not deployed. Deployment must complete before issuance, renewal, recovery, or Login with Magna.",
+          "This wallet is not ready yet. Finish setup before adding credentials, recovering Passport or approving app requests.",
       });
       return null;
     }
@@ -1155,7 +1157,7 @@ export function App() {
       if (!isDeployedProfile(targetProfile)) {
         setNotice({
           tone: "danger",
-          text: "Recovery target is counterfactual. Deploy the new passkey wallet before rotating credentials to it.",
+          text: "Your recovery wallet is not ready yet. Finish its setup before restoring Passport.",
         });
         return;
       }
@@ -1228,7 +1230,7 @@ export function App() {
       setNotice({
         tone: "danger",
         text:
-          "Passkey wallet opened but is counterfactual, not deployed. Keep the Magna passkey public key, then fix funding/node state before issuing credentials.",
+          "Your wallet opened, but setup is incomplete. Save its public key and check the network connection and fee balance before adding credentials.",
       });
       return;
     }
@@ -1326,7 +1328,7 @@ export function App() {
     const activeOwner = requireSessionIdentityAddress(activeSession, env);
     const parsedAge = Number.parseInt(ageThreshold, 10);
     if (!Number.isFinite(parsedAge)) {
-      setNotice({ tone: "danger", text: "Age threshold must be a valid number." });
+      setNotice({ tone: "danger", text: "Enter a valid minimum age to prove." });
       return;
     }
     if (!env.verificationApiUrl) {
@@ -1476,7 +1478,7 @@ export function App() {
         await loadHintsForCredentialRefs(activeSession, chainRefs);
         setNotice({
           tone: "success",
-          text: "Passport A2 credential issued and stored for this wallet. Its committed-claims witness remains on this device.",
+          text: "Passport verified and added to your wallet. Keep the private verification data saved on this device to use it with apps.",
         });
         setZkStage("issued");
         appendLog(`Passport A2 credential issued. Local witness retained. Claims hash: ${issued.claimsHash}`);
@@ -1617,12 +1619,12 @@ export function App() {
     }
     const hintState = credentialHints[ref.id];
     if (!hintState?.hints || !isRootedPassportHints(hintState.hints)) {
-      setNotice({ tone: "danger", text: "Rooted hinted notes must load before renewal." });
+      setNotice({ tone: "danger", text: "Passport verification data is still loading. Reopen your wallet and try again." });
       return;
     }
     const rootedHints = hintState.hints;
     if (!ref.ghostOwner) {
-      setNotice({ tone: "danger", text: "Rooted renewal requires the credential ghost owner." });
+      setNotice({ tone: "danger", text: "The Passport recovery account could not be found. Reopen your wallet and try again." });
       return;
     }
     if (!isPassportA2Credential(ref) || !ref.issuerAddress) {
@@ -1736,7 +1738,7 @@ export function App() {
         await loadHintsForCredentialRefs(activeSession, [renewedRef]);
         setNotice({
           tone: "success",
-          text: "Rooted passport authority renewed with A2. The refreshed claims witness remains on this device.",
+          text: "Passport verification renewed. The updated private verification data is saved on this device.",
         });
         setZkStage("renewed");
       })
@@ -1790,14 +1792,14 @@ export function App() {
   async function resumeRecoveryV3Finalization() {
     const pending = pendingRecoveryFinalization ?? loadPendingRecoveryV3Finalization();
     if (!pending) {
-      setNotice({ tone: "warning", text: "No pending Recovery V3 finalization is stored." });
+      setNotice({ tone: "warning", text: "There is no unfinished Passport recovery to resume." });
       return;
     }
     if (!pending.target.publicKey) {
       setNotice({ tone: "danger", text: "Pending recovery is missing the target passkey public key." });
       return;
     }
-    const result = await runAction("Resume Recovery V3 finalization", async () => {
+    const result = await runAction("Finish Passport recovery", async () => {
       const { session: workingSession, target: preparedTarget } = await prepareRecoveryWorkingDestination({
         passkeyName: pending.target.label,
         publicKeyRecoveryBundle: pending.target.publicKey,
@@ -1852,14 +1854,14 @@ export function App() {
     );
     setNotice({
       tone: "success",
-      text: "Recovery V3 finalization completed from the stored destination-bound metadata.",
+      text: "Passport recovery finished. Open your recovery wallet to use it.",
     });
     setZkStage("recovery_v3_complete");
   }
 
   async function startRootRecovery() {
     if (!recoveryTarget) {
-      setNotice({ tone: "danger", text: "Create or open the new passkey target before recovering root lineage." });
+      setNotice({ tone: "danger", text: "Open or create your recovery wallet before restoring Passport." });
       return;
     }
     if (!recoveryTarget.publicKey) {
@@ -1867,7 +1869,7 @@ export function App() {
       return;
     }
     if (!isDeployedProfile(recoveryTarget)) {
-      setNotice({ tone: "danger", text: "The recovery target is counterfactual. Deploy the target wallet before root recovery." });
+      setNotice({ tone: "danger", text: "Your recovery wallet is not ready yet. Finish its setup before restoring Passport." });
       return;
     }
     if (isFeePayerIdentityAddress(recoveryTarget.address, null, recoveryTarget, env)) {
@@ -1914,7 +1916,7 @@ export function App() {
     }
     const age = Number.parseInt(ageThreshold, 10);
     if (!Number.isFinite(age)) {
-      setNotice({ tone: "danger", text: "Age threshold must be a valid number." });
+      setNotice({ tone: "danger", text: "Enter a valid minimum age to prove." });
       return;
     }
     const working = await runAction("Open recovery destination", () => prepareRecoveryWorkingDestination({
@@ -2210,18 +2212,18 @@ export function App() {
       setCredentialHints(current => ({ ...current, [linked.ref.id]: { status: "loaded", ...linked, message: "Link settled; chain state confirmed" } }));
       return linked;
     });
-    if (result) setNotice({ tone: "success", text: "Instagram is linked to this Passport root. Its independent copy is revoked." });
+    if (result) setNotice({ tone: "success", text: "Instagram is now linked to Passport. The previous independent credential can no longer be used." });
   }
 
   async function revokeExistingCredential(ref: StoredCredentialRef) {
     const activeSession = requireDeployedWallet("revoking a credential");
     if (!activeSession || normalizeAddress(ref.ownerAddress) !== normalizeAddress(requireSessionIdentityAddress(activeSession, env))) return;
-    await runAction(ref.kind === "passport" ? "Revoke Passport root" : "Revoke credential", async () => {
+    await runAction(ref.kind === "passport" ? "Revoke Passport" : "Revoke credential", async () => {
       await revokeOwnedCredential(createClient(), ref);
       await loadHintsForCredentialRefs(activeSession, activeCredentialRefs);
       setNotice({ tone: "success", text: ref.kind === "passport"
-        ? "Passport root revoked. Linked credentials stop working; independent credentials remain usable."
-        : "Credential revocation settled." });
+        ? "Passport revoked. Its linked credentials stop working; independent credentials remain usable."
+        : "Credential revoked. It can no longer be used." });
       return true;
     });
   }
@@ -2505,9 +2507,13 @@ export function App() {
     <div className="app-shell">
       <header className="topbar">
         <button className="brand-mark" type="button" onClick={() => goTo("/")}>
-          MAGNA
+          <Logo />
         </button>
-        <div className="topbar-state" />
+        <div className="topbar-state">
+          {route.path === "/" ? (
+            <button className="topbar-cta" type="button" onClick={() => goTo("/user/login")}>Open app</button>
+          ) : null}
+        </div>
       </header>
       {notice ? <div className={`notice ${notice.tone}`}>{notice.text}</div> : null}
       <div className="app-page">{page}</div>
@@ -2532,34 +2538,34 @@ function WalletStatusPanel(props: {
   return (
     <article className={`wallet-status-panel ${isReady ? "ready" : "blocked"}`}>
       <div className="card-head">
-        <span>Wallet readiness</span>
-        <strong>{status}</strong>
+        <span>Wallet status</span>
+        <strong>{isReady ? "Ready" : identityAddress ? "Setup incomplete" : "Not opened"}</strong>
       </div>
-      <KeyValue label="Wallet name" value={props.profile?.label ?? props.session?.metadata?.passkeyName ?? "legacy unnamed passkey"} />
+      <KeyValue label="Wallet name" value={props.profile?.label ?? props.session?.metadata?.passkeyName ?? "Unnamed wallet"} />
       <KeyValue label="Address" value={identityAddress ?? "not opened"} />
-      <KeyValue label="Session origin" value={sessionOriginFor(props.session, props.profile)} />
-      <KeyValue label="Fee payer" value={feePayerFor(props.session, props.profile)} />
+      <KeyValue label="How this wallet was opened" value={sessionOriginFor(props.session, props.profile)} />
+      <KeyValue label="Network fee account" value={feePayerFor(props.session, props.profile)} />
       {props.localFundingEnabled ? (
         <div className="local-funding-strip">
           <div>
-            <span>Local Fee Juice</span>
+            <span>Network fee balance</span>
             <strong>{feeJuiceBalanceLabel(props.feeJuiceBalance)}</strong>
           </div>
           <button className="secondary" type="button" disabled={props.busy || !isReady} onClick={props.onFund}>
-            Fund active wallet
+            Add funds
           </button>
         </div>
       ) : null}
       <KeyValue label="Last opened" value={props.profile?.lastOpenedAt ?? "unknown"} />
       {!isReady ? (
         <p className="fine-print danger-text">
-          This wallet is not ready for issuance, recovery, sponsor actions, or Login with Magna until deployment is confirmed.
+          Finish setting up this wallet before adding credentials, recovering Passport or approving app requests.
         </p>
       ) : null}
       {props.recoveryBundle ? (
         <div className="recovery-bundle">
           <label>
-            Magna passkey public key
+            Wallet public key
             <textarea readOnly value={props.recoveryBundle} />
           </label>
           <button className="secondary" type="button" onClick={props.onCopyRecoveryBundle}>
@@ -2577,8 +2583,8 @@ function StoredPasskeyInput(props: { value: string; onChange: (value: string) =>
     <div className="stored-passkey-input">
       <div className="stored-passkey-head">
         <span>Stored passkey</span>
-        <strong>Magna passkey public key</strong>
-        <small>Paste the public key copied when this passkey wallet was created. It is not a secret.</small>
+        <strong>Wallet public key</strong>
+        <small>Already have the passkey for this wallet? Paste its saved public key to find it. This value is safe to share; you still need the matching passkey.</small>
       </div>
       <label htmlFor={inputId}>Public key</label>
       <textarea
@@ -2589,7 +2595,7 @@ function StoredPasskeyInput(props: { value: string; onChange: (value: string) =>
         rows={3}
         spellCheck={false}
       />
-      <p>Expected format: uncompressed P-256 public key hex, starting with 04.</p>
+      <p>Use the complete public key copied from Magna, starting with 04.</p>
     </div>
   );
 }
@@ -2611,7 +2617,7 @@ function PasskeyNameInput(props: {
         autoComplete="off"
         spellCheck={false}
       />
-      <small>Passkey name that is being used to create the wallet.</small>
+      <small>Choose a name that helps you recognise this wallet.</small>
     </div>
   );
 }
@@ -2619,49 +2625,13 @@ function PasskeyNameInput(props: {
 function WalletBlockBanner(props: { onReconnect?: () => void }) {
   return (
     <div className="wallet-block-banner" role="alert">
-      <span>Wallet is counterfactual or the live passkey session is not open. Reopen or deploy the wallet before running this action.</span>
+      <span>Open your wallet and finish its setup before continuing.</span>
       {props.onReconnect ? (
         <button className="secondary" type="button" onClick={props.onReconnect}>
-          Reopen passkey
+          Open wallet
         </button>
       ) : null}
     </div>
-  );
-}
-
-function Landing(props: { go: (path: string) => void }) {
-  const headline = "Prove who you are, reveal nothing else.";
-  return (
-    <main className="landing">
-      <Threads
-        className="threads-bg"
-        color={[0.95, 0.5, 0.32]}
-        amplitude={1.7}
-        distance={0.35}
-        enableMouseInteraction
-      />
-      <section className="landing-hero">
-        <p className="eyebrow reveal-up" style={{ animationDelay: "0.05s" }}>Private identity layer</p>
-        <h1 className="landing-title">
-          {headline.split(" ").map((word, index) => (
-            <span className="word" key={`${word}-${index}`} style={{ animationDelay: `${0.15 + index * 0.07}s` }}>
-              {word}&nbsp;
-            </span>
-          ))}
-        </h1>
-        <p className="hero-copy reveal-up" style={{ animationDelay: "0.78s" }}>
-          Magna turns your passport and social proofs into private credentials held in a passkey wallet. Apps get a
-          simple yes or no, never your documents.
-        </p>
-        <div className="hero-actions reveal-up" style={{ animationDelay: "0.92s" }}>
-          <button className="magnetic" type="button" onClick={() => props.go("/user/login")}>User Login</button>
-          <button className="secondary magnetic" type="button" onClick={() => props.go("/company/login")}>
-            Company Login
-          </button>
-        </div>
-      </section>
-
-    </main>
   );
 }
 
@@ -2681,8 +2651,8 @@ function CompanyLogin(props: {
     <main className="login-split">
       <section>
         <p className="eyebrow">Company operator</p>
-        <h1>Sponsorship console login</h1>
-        <p className="hero-copy">Open an operator passkey wallet before reading sponsor state or preparing top-ups.</p>
+        <h1>Company login</h1>
+        <p className="hero-copy">Open your company wallet to manage verification balances and purchases.</p>
         <WalletStatusPanel
           env={props.env}
           session={props.session}
@@ -2692,10 +2662,10 @@ function CompanyLogin(props: {
         />
       </section>
       <section className="action-panel">
-        <button type="button" disabled={Boolean(props.busy)} onClick={props.onOpen}>Use company passkey</button>
+        <button type="button" disabled={Boolean(props.busy)} onClick={props.onOpen}>Open company wallet</button>
         <StoredPasskeyInput value={props.storedPublicKeyInput} onChange={props.setStoredPublicKeyInput} />
         <button className="secondary" type="button" disabled={Boolean(props.busy)} onClick={props.onStored}>
-          Use stored passkey wallet
+          Open an existing wallet
         </button>
       </section>
     </main>
@@ -2716,19 +2686,18 @@ export function UserLogin(props: {
   const busy = Boolean(props.busy);
   return (
     <main className="auth-screen">
-      <Threads className="threads-bg soft" color={[0.48, 0.85, 0.8]} amplitude={1.1} distance={0.25} />
+      <SealField shape="mark" auto markBox={{ x: 0.5, y: 0.5, size: 0.52 }} />
       <section className="auth-card">
         <p className="eyebrow">Magna wallet</p>
         <h1>Sign in to Magna</h1>
         <p className="auth-sub">
-          Choose the wallet you intend to open. Your face or fingerprint unlocks its passkey; private wallet material
-          never leaves the authenticator.
+          Open your wallet with the passkey saved on your device. Your device may ask for your face, fingerprint or PIN.
         </p>
         {props.storedAccounts.length > 0 ? (
           <div className="stored-wallet-picker" aria-label="Stored Magna wallets">
             <div className="stored-wallet-picker-head">
               <span>Stored wallets</span>
-              <small>Choose the passkey account you intend to open.</small>
+              <small>Choose the wallet you want to use.</small>
             </div>
             {props.storedAccounts.map(account => (
               <button
@@ -2739,7 +2708,7 @@ export function UserLogin(props: {
                 onClick={() => props.onExisting(account)}
               >
                 <span>
-                  <strong>{account.displayName ?? "Legacy unnamed Magna passkey"}</strong>
+                  <strong>{account.displayName ?? "Unnamed Magna wallet"}</strong>
                   <small>{account.address}</small>
                 </span>
                 <b>Open</b>
@@ -2747,18 +2716,17 @@ export function UserLogin(props: {
             ))}
           </div>
         ) : (
-          <p className="auth-empty-wallets">No Magna passkeys are remembered by this browser profile.</p>
+          <p className="auth-empty-wallets">No wallets are saved in this browser yet.</p>
         )}
         {props.missingRememberedWallet ? (
           <div className="remembered-wallet-repair">
             <div>
               <span>Previous wallet record</span>
-              <strong>{props.missingRememberedWallet.label ?? "Legacy unnamed Magna passkey"}</strong>
+              <strong>{props.missingRememberedWallet.label ?? "Unnamed Magna wallet"}</strong>
               <small>{props.missingRememberedWallet.address}</small>
             </div>
             <p>
-              Its passkey lookup entry was replaced by an earlier single-wallet build. Select the matching passkey to
-              restore the lookup record; Magna verifies the derived Aztec address before accepting it.
+              This browser needs to reconnect your saved wallet. Select its matching passkey so Magna can confirm it is the same wallet.
             </p>
             <button
               type="button"
@@ -2772,18 +2740,18 @@ export function UserLogin(props: {
         ) : null}
         <div className="create-wallet-panel">
           <div className="create-wallet-panel-head">
-            <span>Create a different wallet</span>
-            <small>This name applies only to the new passkey.</small>
+            <span>Create a new wallet</span>
+            <small>Give your new wallet a name you will recognise.</small>
           </div>
           <PasskeyNameInput value={props.passkeyName} onChange={props.setPasskeyName} purpose="wallet" />
           <div className="auth-actions">
             <button type="button" disabled={busy || !props.passkeyName.trim()} onClick={props.onCreate}>
-              {busy ? "Opening wallet\u2026" : "Create new passkey wallet"}
+              {busy ? "Opening wallet\u2026" : "Create wallet"}
             </button>
           </div>
         </div>
         <button className="auth-link" type="button" disabled={busy} onClick={props.onRecovery}>
-          I forgot my account
+          Lost access to your wallet?
         </button>
       </section>
     </main>
@@ -2811,7 +2779,7 @@ function UserFrame(props: {
   return (
     <main className="workspace">
       <aside className="sidebar">
-        <p className="eyebrow">User surface</p>
+        <p className="eyebrow">Your wallet</p>
         <span>{props.credentials.length} credential{props.credentials.length === 1 ? "" : "s"} in active wallet</span>
         <nav>
           {tabs.map(([id, path, label]) => (
@@ -2826,7 +2794,7 @@ function UserFrame(props: {
             </button>
           ))}
           <button type="button" className={props.active === "issue" ? "active" : ""} onClick={() => props.go("/user/issue")}>
-            Issue
+            Add credential
           </button>
         </nav>
         {props.session ? (
@@ -2845,7 +2813,7 @@ function UserFrame(props: {
             disabled={Boolean(props.busy)}
             onClick={props.onReconnect}
           >
-            Reopen passkey
+            Open wallet
           </button>
         ) : null}
       </aside>
@@ -2869,8 +2837,8 @@ function Dashboard(props: {
       <section className="dashboard-surface">
         <div className="empty-state">
           <p className="eyebrow">No credentials</p>
-          <h2>Issue zkPassport or collect Instagram next.</h2>
-          <button type="button" onClick={() => props.go("/user/issue")}>Go to issuance</button>
+          <h2>Add your first credential.</h2>
+          <button type="button" onClick={() => props.go("/user/issue")}>Add a credential</button>
         </div>
       </section>
     );
@@ -2880,9 +2848,9 @@ function Dashboard(props: {
       <div className="section-heading">
         <div>
           <p className="eyebrow">Dashboard</p>
-          <h2>Credentials loaded on wallet open</h2>
+          <h2>Your credentials</h2>
         </div>
-        <button className="secondary" type="button" onClick={() => props.go("/user/issue")}>Issue another</button>
+        <button className="secondary" type="button" onClick={() => props.go("/user/issue")}>Add another</button>
       </div>
       <div className="credential-grid">
         {props.credentials.map(ref => <CredentialCard key={ref.id} refData={ref} hintState={props.hints[ref.id]} busy={props.busy} liveRoots={props.liveRoots} onLink={props.onLink} onRevoke={props.onRevoke} />)}
@@ -2916,17 +2884,17 @@ export function CredentialCard(props: {
           {displayedStatus}
         </strong>
       </div>
-      <KeyValue label="Claims hash" value={ref.claimsHash} />
+      <KeyValue label="Credential ID" value={ref.claimsHash} />
       {passportAuthenticity ? <KeyValue label="Authenticity" value={passportAuthenticity} /> : null}
-      {props.hintState ? <KeyValue label="Hinted notes" value={props.hintState.message ?? props.hintState.status} /> : null}
-      {chainReason ? <KeyValue label="Chain state" value={chainReason} /> : null}
+      {props.hintState ? <KeyValue label="Verification data" value={props.hintState.message ?? props.hintState.status} /> : null}
+      {chainReason ? <KeyValue label="Verification status" value={chainReason} /> : null}
       {props.hintState?.chainState ? (
         <KeyValue label="Checked at" value={`Aztec L2 block ${props.hintState.chainState.checkedAtBlock}`} />
       ) : null}
-      <KeyValue label="Protection" value={ref.kind === "passport" ? "Passport root" : ref.mode === "rooted" ? "Passport-linked" : "Independent"} />
-      {ref.rootCommitment ? <KeyValue label="Root commitment" value={ref.rootCommitment} /> : null}
-      {ref.ghostOwner ? <KeyValue label="Ghost owner" value={ref.ghostOwner} /> : null}
-      {ref.passportCommittedClaimsV2Witness ? <KeyValue label="A2 witness" value="available locally" /> : null}
+      <KeyValue label="Protection" value={ref.kind === "passport" ? "Passport recovery" : ref.mode === "rooted" ? "Passport-linked" : "Independent"} />
+      {ref.rootCommitment ? <KeyValue label="Passport link ID" value={ref.rootCommitment} /> : null}
+      {ref.ghostOwner ? <KeyValue label="Recovery account" value={ref.ghostOwner} /> : null}
+      {ref.passportCommittedClaimsV2Witness ? <KeyValue label="Private verification data" value="available locally" /> : null}
       {ref.normalizedClaims ? (
         <>
           <KeyValue label="Nationality" value={ref.normalizedClaims.nationalityAlpha3} />
@@ -2940,9 +2908,9 @@ export function CredentialCard(props: {
           Link to Passport{props.liveRoots!.length > 1 ? ` · ${root.slice(0, 12)}` : ""}
         </button>) : null}
       {props.onRevoke ? <button className="secondary" type="button" disabled={Boolean(props.busy)} onClick={() => props.onRevoke?.(ref)}>
-        {ref.kind === "passport" ? "Revoke Passport root" : "Revoke credential"}
+        {ref.kind === "passport" ? "Revoke Passport" : "Revoke credential"}
       </button> : null}
-      {ref.kind === "passport" && props.onRevoke ? <p className="fine-print">Revokes Passport and credentials linked to this root. Independent credentials remain usable. Fresh Passport recovery remains available.</p> : null}
+      {ref.kind === "passport" && props.onRevoke ? <p className="fine-print">Stops this Passport and its linked credentials from being used. Independent credentials are unaffected. You can still recover Passport by verifying it again.</p> : null}
     </article>
   );
 }
@@ -2952,20 +2920,20 @@ export function rootedChainStateReasonLabel(reason: RootedCredentialChainState["
     case "chain-valid":
       return "Active according to on-chain credential status";
     case "root-lineage-revoked-or-recovered":
-      return "Root lineage was revoked or recovered on-chain";
+      return "This Passport was revoked or replaced during recovery";
     case "root-authority-superseded":
-      return "Root authority was superseded on-chain";
+      return "This Passport verification was replaced by a newer one";
     case "root-owner-revoked":
-      return "Passport root was revoked by its owner";
+      return "You revoked this Passport";
     case "root-version-mismatch":
-      return "Linked credential belongs to an earlier recovered root version; reissue Instagram";
+      return "This Instagram credential was linked to a recovered Passport. Add Instagram again.";
     case "credential-revoked":
     case "linked-credential-revoked":
       return "Credential was revoked on-chain";
     case "credential-expired":
-      return "Credential expired at the checked chain timestamp";
+      return "This credential has expired";
     case "root-authority-expired":
-      return "Root authority expired at the checked chain timestamp";
+      return "Passport verification has expired; renew it to continue";
   }
 }
 
@@ -2976,9 +2944,9 @@ function zkUserStatus(stage: string): "pending" | "success" | "failed" {
 }
 
 function zkStatusMessage(status: "pending" | "success" | "failed"): string {
-  if (status === "success") return "Success. Credential issuance completed.";
-  if (status === "failed") return "Failed. Check the error banner and browser console for details.";
-  return "Pending. Credential issuance is being finalized.";
+  if (status === "success") return "Verification complete. Your credential is ready.";
+  if (status === "failed") return "Failed. Check the message above and try again.";
+  return "Follow the steps on your phone. Keep this page open until verification finishes.";
 }
 
 export function Issuance(props: {
@@ -3008,23 +2976,23 @@ export function Issuance(props: {
       return (
         <>
           <label>
-            Age threshold
+            Minimum age to prove
             <input value={props.ageThreshold} onChange={event => props.setAgeThreshold(event.target.value)} inputMode="numeric" />
           </label>
           <button type="button" disabled={Boolean(props.busy || props.zkRequest || !props.walletReady)} onClick={props.onStartZkPassport}>
-            Start zkPassport issuance
+            Verify Passport
           </button>
           <div className={`zk-status-card ${status === "success" ? "success" : status === "failed" ? "danger" : ""}`}>
             <KeyValue label="Status" value={status} />
-            <KeyValue label="zkPassport stage" value={props.zkStage} />
-            <KeyValue label="Proofs generated" value={String(props.zkProofCount)} />
+            <KeyValue label="Passport verification step" value={props.zkStage} />
+            <KeyValue label="Proofs prepared" value={String(props.zkProofCount)} />
             <KeyValue
-              label="A2 wrapper status"
-              value="local recursive proving enabled"
+              label="Privacy check"
+              value="Verification is prepared on this device"
             />
             <KeyValue
-              label="A2 local witness"
-              value={props.passportA2LocalWitnessAvailable ? "available locally" : "not retained"}
+              label="Private verification data"
+              value={props.passportA2LocalWitnessAvailable ? "available locally" : "not yet saved"}
             />
             <p>{zkStatusMessage(status)}</p>
           </div>
@@ -3036,7 +3004,7 @@ export function Issuance(props: {
           ) : null}
           {!props.walletReady ? (
             <button className="secondary" type="button" disabled={Boolean(props.busy)} onClick={props.onReconnect}>
-              Reopen passkey wallet
+              Open wallet
             </button>
           ) : null}
         </>
@@ -3054,7 +3022,7 @@ export function Issuance(props: {
             />
           </label>
           <label>
-            Instagram .eml
+            Instagram security email (.eml)
             <input
               type="file"
               accept=".eml,message/rfc822,text/plain"
@@ -3063,12 +3031,10 @@ export function Issuance(props: {
           </label>
           {props.instagramEmailFileName ? <KeyValue label="Selected email" value={props.instagramEmailFileName} /> : null}
           <button type="button" disabled={Boolean(props.busy || !props.walletReady)} onClick={props.onIssueInstagram}>
-            Issue Instagram credential
+            Verify Instagram
           </button>
           <p className="fine-print">
-            Your browser verifies the .eml and generates the proof locally. Neither the email nor the Instagram
-            handle leaves this device; Magna API receives only the proof and its proof-bound public fields, including
-            the blinded handle commitment.
+            Use an original English-language Instagram security email whose footer says “and intended for” followed by your username. In your email app, choose “Download message” or “Show original” and save the .eml file; a screenshot or forwarded copy will not work. Your browser verifies the email locally. The email and handle are not sent to Magna during this verification.
           </p>
         </>
       );
@@ -3077,10 +3043,10 @@ export function Issuance(props: {
       <div className="coming-soon-panel">
         <span>Coming Soon</span>
         <p>
-          This credential rail is reserved, but the issuer inputs and verification handoff are not finalized yet.
+          This verification is coming soon. You can already add Passport and Instagram credentials.
         </p>
         <button className="secondary" type="button" disabled>
-          Input contract pending
+          Not available yet
         </button>
       </div>
     );
@@ -3090,8 +3056,8 @@ export function Issuance(props: {
     <section className="issuance-surface">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">Credential issuance</p>
-          <h2>Choose a credential rail</h2>
+          <p className="eyebrow">Add a credential</p>
+          <h2>Choose what to verify</h2>
         </div>
       </div>
       {!props.walletReady ? <WalletBlockBanner onReconnect={props.onReconnect} /> : null}
@@ -3117,7 +3083,7 @@ export function Issuance(props: {
                   <span className="issue-rail-proof">{rail.proofLabel}</span>
                 </span>
                 <span className={`issue-rail-status ${rail.status}`}>{rail.status === "live" ? "Live" : "Coming Soon"}</span>
-                <span className="issue-rail-toggle" aria-hidden="true">{isOpen ? "Close" : "Issue"}</span>
+                <span className="issue-rail-toggle" aria-hidden="true">{isOpen ? "Close" : "Details"}</span>
               </button>
               {isOpen ? (
                 <div className="issue-rail-body" id={panelId}>
@@ -3149,18 +3115,18 @@ function Renewal(props: {
       <div className="section-heading">
         <div>
           <p className="eyebrow">Renewal</p>
-          <h2>{rootedPassport ? "Renew rooted passport authority" : "No rooted passport credential found."}</h2>
+          <h2>{rootedPassport ? "Renew Passport verification" : "Add a Passport credential before renewing it."}</h2>
         </div>
       </div>
       {!props.walletReady ? <WalletBlockBanner /> : null}
       {rootedPassport ? (
         <article className="credential-card">
-          <KeyValue label="Claims hash" value={rootedPassport.claimsHash} />
-          <KeyValue label="Root commitment" value={rootedPassport.rootCommitment ?? "missing"} />
-          <KeyValue label="Ghost owner" value={rootedPassport.ghostOwner ?? "missing"} />
-          <KeyValue label="Hinted notes" value={hintState?.message ?? hintState?.status ?? "not loaded"} />
-          <KeyValue label="zkPassport stage" value={props.zkStage} />
-          <KeyValue label="Proofs generated" value={String(props.zkProofCount)} />
+          <KeyValue label="Credential ID" value={rootedPassport.claimsHash} />
+          <KeyValue label="Passport link ID" value={rootedPassport.rootCommitment ?? "missing"} />
+          <KeyValue label="Recovery account" value={rootedPassport.ghostOwner ?? "missing"} />
+          <KeyValue label="Verification data" value={hintState?.message ?? hintState?.status ?? "not loaded"} />
+          <KeyValue label="Passport verification step" value={props.zkStage} />
+          <KeyValue label="Proofs prepared" value={String(props.zkProofCount)} />
           <button
             type="button"
             disabled={Boolean(
@@ -3173,7 +3139,7 @@ function Renewal(props: {
             )}
             onClick={() => props.onRenew(rootedPassport)}
           >
-            Start zkPassport renewal
+            Renew Passport verification
           </button>
         </article>
       ) : null}
@@ -3222,17 +3188,16 @@ export function Recovery(props: {
       <div className="section-heading">
         <div>
           <p className="eyebrow">Recovery</p>
-          <h2>Create the new owner before rotating credentials</h2>
+          <h2>Restore Passport to a new wallet</h2>
         </div>
       </div>
-      <p className="fine-print">Open or create a destination passkey, then scan your Passport. The lost wallet and its local claims witness are not required.</p>
+      <p className="fine-print">First open or create the wallet you want to use. Then verify your passport again. You do not need access to your old wallet.</p>
       {recoveryComplete && props.recoveryTarget ? (
         <article className="recovery-complete-state recovery-complete-banner" role="status">
-          <p className="eyebrow">Rotation complete</p>
-          <h4>The passport credential now belongs to the new passkey.</h4>
+          <p className="eyebrow">Passport restored</p>
+          <h4>Your Passport credential is ready in your new wallet.</h4>
           <p>
-            Passport was restored. Old linked Instagram credentials remain invalid and need fresh issuance.
-            Independent Instagram credentials remain valid until their own revocation or expiry; they are not restored by Passport recovery.
+            Your old Passport and its linked Instagram credentials can no longer be used. Add Instagram again in this wallet. Independent Instagram credentials keep their own validity and are not restored by Passport recovery.
           </p>
           <KeyValue
             label="Recovery transaction"
@@ -3242,7 +3207,7 @@ export function Recovery(props: {
             label="Chain verification"
             value={`Active at Aztec L2 block ${props.recoveredCredentialChainState?.checkedAtBlock ?? "unknown"}`}
           />
-          <KeyValue label="Recovered owner" value={props.recoveryTarget.address} />
+          <KeyValue label="New wallet address" value={props.recoveryTarget.address} />
           <KeyValue label="Recovered wallet" value={props.recoveryTarget.label ?? "recovered passkey"} />
           {props.recoveryTarget.publicKey ? (
             <button type="button" disabled={Boolean(props.busy)} onClick={props.onOpenTarget}>
@@ -3250,37 +3215,36 @@ export function Recovery(props: {
             </button>
           ) : (
             <p className="fine-print danger-text">
-              Paste the target public key below and choose “Use stored passkey target” once. Magna will verify that it
-              derives this exact recovered owner before enabling the wallet switch.
+              Paste this wallet's saved public key below and choose “Use an existing wallet.” Magna will check that it matches your recovered wallet.
             </p>
           )}
         </article>
       ) : null}
       <div className="issue-grid">
         <article className="issue-card">
-          <h3>New passkey target</h3>
+          <h3>Recovery wallet</h3>
           <PasskeyNameInput value={props.passkeyName} onChange={props.setPasskeyName} purpose="recovery" />
           <button
             type="button"
             disabled={Boolean(props.busy || !props.passkeyName.trim())}
             onClick={props.onCreateTarget}
           >
-            Create new passkey target
+            Create recovery wallet
           </button>
           <StoredPasskeyInput value={props.storedPublicKeyInput} onChange={props.setStoredPublicKeyInput} />
           <button className="secondary" type="button" disabled={Boolean(props.busy)} onClick={props.onStoredTarget}>
-            Use stored passkey target
+            Use an existing wallet
           </button>
           {props.recoveryTarget ? (
             <>
-              <KeyValue label="Target address" value={props.recoveryTarget.address} />
-              <KeyValue label="Target wallet name" value={props.recoveryTarget.label ?? "legacy unnamed passkey"} />
-              <KeyValue label="Target deployment" value={props.recoveryTarget.deploymentStatus ?? "unknown"} />
-              <KeyValue label="Target fee payer" value={props.recoveryTarget.feePayer ?? "not configured"} />
+              <KeyValue label="Recovery wallet address" value={props.recoveryTarget.address} />
+              <KeyValue label="Recovery wallet name" value={props.recoveryTarget.label ?? "Unnamed wallet"} />
+              <KeyValue label="Wallet setup" value={props.recoveryTarget.deploymentStatus ?? "unknown"} />
+              <KeyValue label="Network fee account" value={props.recoveryTarget.feePayer ?? "not configured"} />
               {props.localFundingEnabled ? (
                 <div className="local-funding-strip">
                   <div>
-                    <span>Target Fee Juice</span>
+                    <span>Recovery fee balance</span>
                     <strong>{feeJuiceBalanceLabel(props.targetFeeJuiceBalance)}</strong>
                   </div>
                   <button
@@ -3289,33 +3253,31 @@ export function Recovery(props: {
                     disabled={Boolean(props.busy || !props.onFundTarget)}
                     onClick={props.onFundTarget}
                   >
-                    Fund recovery target
+                    Add recovery funds
                   </button>
                 </div>
               ) : null}
               {props.recoveryTarget.publicKey ? (
                 <div className="recovery-bundle">
                   <label>
-                    Target passkey public key
+                    Recovery wallet public key
                     <textarea readOnly value={props.recoveryTarget.publicKey} />
                   </label>
                   <button className="secondary" type="button" onClick={props.onCopyTargetPublicKey}>
-                    Copy target public key
+                    Copy wallet public key
                   </button>
                   <button type="button" disabled={Boolean(props.busy)} onClick={props.onOpenTarget}>
-                    Open saved recovery target
+                    Open recovery wallet
                   </button>
                   <p className="fine-print">
-                    The saved target identifies the passkey to open. Credential validity is independently checked from
-                    Aztec after the wallet is opened.
+                    Open this wallet with its passkey. Magna will then check that your recovered Passport is ready to use.
                   </p>
                 </div>
               ) : (
                 <>
-                  <KeyValue label="Target public key" value="not available" />
+                  <KeyValue label="Recovery wallet public key" value="not available" />
                   <p className="fine-print danger-text">
-                    This browser does not have the target public-key bundle. Paste that target's bundle above; the
-                    derived address must match before Magna will save or open it.
+                    This browser does not have the recovery wallet's public key. Paste its saved public key above to reconnect the matching wallet.
                   </p>
                 </>
               )}
@@ -3323,11 +3285,11 @@ export function Recovery(props: {
           ) : null}
         </article>
         <article className="issue-card">
-          <h3>Root rotation</h3>
+          <h3>Restore your Passport</h3>
           {props.pendingRecoveryFinalization ? (
             <div className="recovery-bundle">
-              <KeyValue label="Pending finalization" value={props.pendingRecoveryFinalization.phase} />
-              <KeyValue label="Pending target" value={props.pendingRecoveryFinalization.target.address} />
+              <KeyValue label="Recovery progress" value={props.pendingRecoveryFinalization.phase} />
+              <KeyValue label="Recovery wallet" value={props.pendingRecoveryFinalization.target.address} />
               <KeyValue
                 label="Recovery transaction"
                 value={props.pendingRecoveryFinalization.recoveryTxHash ?? "submission status unknown"}
@@ -3338,20 +3300,20 @@ export function Recovery(props: {
                 disabled={Boolean(props.busy)}
                 onClick={props.onFinalizePending}
               >
-                Resume destination note finalization
+                Finish restoring Passport
               </button>
             </div>
           ) : null}
           {!recoveryComplete ? (
             <>
               <label>
-                Passport age threshold
+                Minimum age to prove
                 <input value={props.ageThreshold ?? "18"} onChange={event => props.setAgeThreshold?.(event.target.value)} inputMode="numeric" />
               </label>
-              <KeyValue label="Rooted credential" value={rootedPassport?.claimsHash ?? "derived from fresh Passport proof"} />
-              <KeyValue label="Hinted notes" value={hintState?.message ?? hintState?.status ?? "not loaded"} />
-              <KeyValue label="zkPassport stage" value={props.zkStage} />
-              <KeyValue label="Proofs generated" value={String(props.zkProofCount)} />
+              <KeyValue label="Passport credential" value={rootedPassport?.claimsHash ?? "Found when you verify your passport"} />
+              <KeyValue label="Verification data" value={hintState?.message ?? hintState?.status ?? "not loaded"} />
+              <KeyValue label="Passport verification step" value={props.zkStage} />
+              <KeyValue label="Proofs prepared" value={String(props.zkProofCount)} />
               <button
                 type="button"
                 disabled={Boolean(
@@ -3362,7 +3324,7 @@ export function Recovery(props: {
                 )}
                 onClick={props.onRecover}
               >
-                Recover root to target
+                Restore Passport
               </button>
             </>
           ) : null}
@@ -3395,7 +3357,7 @@ function Settings(props: {
       <div className="section-heading">
         <div>
           <p className="eyebrow">Settings</p>
-          <h2>Wallet and derivation context</h2>
+          <h2>Wallet settings</h2>
         </div>
       </div>
       <div className="settings-grid">
@@ -3415,9 +3377,9 @@ function Settings(props: {
           <KeyValue label="Wallet kind" value={props.profile?.walletKind ?? "unknown"} />
           <KeyValue label="Created at" value={props.profile?.createdAt ?? "unknown"} />
           <KeyValue label="Deployment" value={identityAddress ? deploymentStatusFor(props.session, props.profile) : "not opened"} />
-          <KeyValue label="Session origin" value={sessionOriginFor(props.session, props.profile)} />
-          <KeyValue label="Fee payer" value={feePayerFor(props.session, props.profile)} />
-          <KeyValue label="RP ID" value={props.profile?.rpId ?? "unknown"} />
+          <KeyValue label="How this wallet was opened" value={sessionOriginFor(props.session, props.profile)} />
+          <KeyValue label="Network fee account" value={feePayerFor(props.session, props.profile)} />
+          <KeyValue label="Passkey website" value={props.profile?.rpId ?? "unknown"} />
           <KeyValue label="Origin" value={props.profile?.origin ?? window.location.origin} />
           <KeyValue label="Public key" value={props.profile?.publicKey ?? "not available"} />
         </article>
@@ -3463,70 +3425,70 @@ function CompanyDashboard(props: {
     <main className="company-grid">
       <section className="section-heading wide-heading">
         <div>
-          <p className="eyebrow">Sponsor operations</p>
-          <h1>Company sponsorship dashboard</h1>
+          <p className="eyebrow">Company account</p>
+          <h1>Verification dashboard</h1>
         </div>
       </section>
       <article className="credential-card">
-        <h3>Sponsor identity</h3>
+        <h3>Company wallet</h3>
         <KeyValue label="Operator" value={identityAddress ?? "not connected"} />
         <KeyValue label="Deployment" value={identityAddress ? deploymentStatusFor(props.session, props.profile) : "not opened"} />
-        <KeyValue label="Session origin" value={sessionOriginFor(props.session, props.profile)} />
-        <KeyValue label="Fee payer" value={feePayerFor(props.session, props.profile)} />
-        <KeyValue label="Active sponsor" value={props.env.activeCompanySponsorAddress ?? "not configured"} />
-        <KeyValue label="Sponsor count" value={String(props.env.companySponsors.length)} />
+        <KeyValue label="How this wallet was opened" value={sessionOriginFor(props.session, props.profile)} />
+        <KeyValue label="Network fee account" value={feePayerFor(props.session, props.profile)} />
+        <KeyValue label="Verification account" value={props.env.activeCompanySponsorAddress ?? "not configured"} />
+        <KeyValue label="Verification accounts" value={String(props.env.companySponsors.length)} />
         {!walletReady ? <WalletBlockBanner /> : null}
       </article>
       <article className="credential-card">
-        <h3>Rights balance</h3>
+        <h3>Verification balance</h3>
         <label>
-          Sponsor address
+          Verification account
           <select value={props.sponsorAddress} onChange={event => props.setSponsorAddress(event.target.value)}>
-            {props.env.companySponsors.length === 0 ? <option value="">No sponsor configured</option> : null}
+            {props.env.companySponsors.length === 0 ? <option value="">No verification account configured</option> : null}
             {props.env.companySponsors.map(sponsor => (
               <option key={sponsor.address} value={sponsor.address}>{sponsor.address}</option>
             ))}
           </select>
         </label>
         <button type="button" disabled={Boolean(props.busy || !walletReady || !props.sponsorAddress)} onClick={props.onReadRights}>
-          Read sponsor rights
+          Check verification balance
         </button>
         {props.snapshot ? (
           <>
-            <KeyValue label="Remaining" value={props.snapshot.remainingVerifies.toString()} />
-            <KeyValue label="Consumed" value={props.snapshot.consumedVerifies.toString()} />
+            <KeyValue label="Verifications remaining" value={props.snapshot.remainingVerifies.toString()} />
+            <KeyValue label="Verifications used" value={props.snapshot.consumedVerifies.toString()} />
             <KeyValue label="Next purchase id" value={props.snapshot.nextPurchaseId.toString()} />
-            <KeyValue label="Price per verify" value={props.snapshot.l2PricePerVerify.toString()} />
+            <KeyValue label="Price per verification (token base units)" value={props.snapshot.l2PricePerVerify.toString()} />
           </>
         ) : null}
       </article>
       <article className="credential-card">
-        <h3>Top-up</h3>
+        <h3>Buy verifications</h3>
         <KeyValue label="Rights registry" value={props.env.rightsRegistryAddress ?? "not configured"} />
         <KeyValue label="Purchase contract" value={props.env.rightsPurchaseL2Address ?? "not configured"} />
         <label>
-          Rights amount
+          Number of verifications
           <input value={props.topUpRightsAmount} onChange={event => props.setTopUpRightsAmount(event.target.value)} inputMode="numeric" />
         </label>
         <label>
-          Package id
+          Package reference
           <input value={props.topUpPackageId} onChange={event => props.setTopUpPackageId(event.target.value)} placeholder="optional" />
         </label>
-        <button type="button" disabled={Boolean(props.busy || !walletReady || !props.sponsorAddress)} onClick={props.onTopUpL1}>Top up via L1</button>
+        <button type="button" disabled={Boolean(props.busy || !walletReady || !props.sponsorAddress)} onClick={props.onTopUpL1}>Buy on Ethereum</button>
         <button className="secondary" type="button" disabled={Boolean(props.busy || !walletReady || !props.sponsorAddress)} onClick={props.onTopUpL2}>
-          Top up via L2
+          Buy on Aztec
         </button>
       </article>
       <article className="credential-card">
         <h3>Admin</h3>
         <KeyValue label="Real sends" value={props.env.requireRealSends ? "enabled" : "disabled"} />
-        <button type="button" disabled={Boolean(props.busy || !walletReady)} onClick={props.onInspectRuntime}>Inspect compatibility</button>
+        <button type="button" disabled={Boolean(props.busy || !walletReady)} onClick={props.onInspectRuntime}>Check account setup</button>
         <label>
-          Gateway address
+          App verification contract address
           <input value={props.gatewayCandidate} onChange={event => props.setGatewayCandidate(event.target.value)} />
         </label>
         <button className="secondary" type="button" disabled={Boolean(props.busy || !walletReady || !props.gatewayCandidate)} onClick={props.onAddGateway}>
-          Add sponsor gateway
+          Allow app verification contract
         </button>
         {props.statuses.map(status => (
           <div key={status.sponsorAddress} className="runtime-row">

@@ -1,0 +1,39 @@
+<!doctype html>
+<!-- Brand kit sheet 02: colour. -->
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .row { display: grid; grid-template-columns: 2.2fr 1fr 1fr 1fr 1fr; gap: 16px; margin-top: 36px; flex: 1; }
+  .sw { display: flex; flex-direction: column; border: 1px solid var(--rule); background: var(--white); }
+  .chip { flex: 1; border-bottom: 1px solid var(--rule); position: relative; }
+  .meta { padding: 14px 16px 16px; display: grid; gap: 6px; align-content: start; height: 156px; }
+  .name { font-family: var(--mono); font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .hex { font-family: var(--mono); font-size: 13px; color: var(--graphite); }
+  .role { font-size: 15px; line-height: 1.4; color: var(--graphite); }
+  .lower { display: grid; grid-template-columns: repeat(6, 1fr); gap: 16px; margin-top: 16px; height: 210px; }
+  .ratio { position: absolute; left: 16px; bottom: 14px; font-family: var(--mono); font-size: 12px; }
+</style></head>
+<body>
+  <div class="canvas sheet">
+    <div class="sheet-head">
+      <span class="label">02 Colour</span>
+      <img src="../logo/wordmark.svg" style="height:26px" alt="">
+    </div>
+    <div class="h-sheet">Paper and ink. Signal only where a proof answers.</div>
+    <div class="row">
+      <div class="sw"><div class="chip" style="background:#f4f3ee"><span class="ratio">Ground</span></div><div class="meta"><span class="name">Paper</span><span class="hex">#F4F3EE</span><span class="role">The ground of every screen. Warm, like the vellum a charter is written on.</span></div></div>
+      <div class="sw"><div class="chip" style="background:#0c0c0b"><span class="ratio" style="color:#f4f3ee">17.6 : 1 on paper</span></div><div class="meta"><span class="name">Ink</span><span class="hex">#0C0C0B</span><span class="role">Text, the mark, primary buttons, rules that carry meaning.</span></div></div>
+      <div class="sw"><div class="chip" style="background:#c8f031"><span class="ratio">Ink on signal 14.9 : 1</span></div><div class="meta"><span class="name">Signal</span><span class="hex">#C8F031</span><span class="role">The seal. A verified answer, the active step, the main action. Never text.</span></div></div>
+      <div class="sw"><div class="chip" style="background:#4f4e49"><span class="ratio" style="color:#f4f3ee">7.5 : 1</span></div><div class="meta"><span class="name">Graphite</span><span class="hex">#4F4E49</span><span class="role">Body copy and secondary labels.</span></div></div>
+      <div class="sw"><div class="chip" style="background:#8f8d86"></div><div class="meta"><span class="name">Ash</span><span class="hex">#8F8D86</span><span class="role">Placeholders, disabled, corner labels on ink.</span></div></div>
+    </div>
+    <div class="lower">
+      <div class="sw"><div class="chip" style="background:#ffffff"></div><div class="meta" style="min-height:0"><span class="name">White</span><span class="hex">#FFFFFF</span></div></div>
+      <div class="sw"><div class="chip" style="background:#eceae3"></div><div class="meta" style="min-height:0"><span class="name">Wash</span><span class="hex">#ECEAE3</span></div></div>
+      <div class="sw"><div class="chip" style="background:#d9d7cf"></div><div class="meta" style="min-height:0"><span class="name">Rule</span><span class="hex">#D9D7CF</span></div></div>
+      <div class="sw"><div class="chip" style="background:#a9d10f"></div><div class="meta" style="min-height:0"><span class="name">Signal deep</span><span class="hex">#A9D10F</span></div></div>
+      <div class="sw"><div class="chip" style="background:#b8301e"></div><div class="meta" style="min-height:0"><span class="name">Fault</span><span class="hex">#B8301E</span></div></div>
+      <div class="sw"><div class="chip" style="background:#8f5a08"></div><div class="meta" style="min-height:0"><span class="name">Caution</span><span class="hex">#8F5A08</span></div></div>
+    </div>
+  </div>
+  <script type="module">import { ready } from "./ready.js"; ready();</script>
+</body></html>
